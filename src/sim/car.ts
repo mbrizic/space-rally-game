@@ -28,11 +28,12 @@ export type CarParams = {
   lateralDampingHighSpeedPerS: number;
   rollingResistanceN: number;
   aeroDragNPerMS2: number;
+  maxReverseSpeedMS: number;
 };
 
 export type CarControls = {
   steer: number; // [-1..1]
-  throttle: number; // [0..1]
+  throttle: number; // [-1..1] (reverse allowed)
   brake: number; // [0..1]
   handbrake: number; // [0..1]
 };
@@ -99,10 +100,11 @@ export function defaultCarParams(): CarParams {
     lowSpeedForceFadeMS: 1.4,
     yawDampingPerS: 2.2,
     lateralDampingPerS: 1.4,
-    yawDampingHighSpeedPerS: 2.6,
-    lateralDampingHighSpeedPerS: 1.8,
+    yawDampingHighSpeedPerS: 3.2,
+    lateralDampingHighSpeedPerS: 2.2,
     rollingResistanceN: 260,
-    aeroDragNPerMS2: 10
+    aeroDragNPerMS2: 10,
+    maxReverseSpeedMS: 6.5
   };
 }
 
@@ -127,8 +129,10 @@ export function stepCar(
   dtSeconds: number,
   environment?: { frictionMu?: number; rollingResistanceN?: number; aeroDragNPerMS2?: number }
 ): { state: CarState; telemetry: CarTelemetry } {
+  const surfaceMu = environment?.frictionMu ?? params.frictionMu;
+
   const steerInput = clamp(controls.steer, -1, 1);
-  const throttle = clamp(controls.throttle, 0, 1);
+  const throttle = clamp(controls.throttle, -1, 1);
   const brake = clamp(controls.brake, 0, 1);
   const handbrake = clamp(controls.handbrake, 0, 1);
 
@@ -160,8 +164,13 @@ export function stepCar(
   const driveFrontN = driveTotalN * clamp(params.driveBiasFront, 0, 1);
   const driveRearN = driveTotalN - driveFrontN;
 
-  const brakeFrontN = brakeTotalN * clamp(params.brakeBiasFront, 0, 1);
-  const brakeRearN = brakeTotalN - brakeFrontN + handbrake * params.handbrakeForceN;
+  const brakeFrontNMag = brakeTotalN * clamp(params.brakeBiasFront, 0, 1);
+  const brakeRearNMag = brakeTotalN - brakeFrontNMag + handbrake * params.handbrakeForceN;
+
+  const longDir =
+    Math.abs(state.vxMS) > 0.2 ? Math.sign(state.vxMS) : throttle !== 0 ? Math.sign(throttle) : 1;
+  const brakeFrontN = brakeFrontNMag * longDir;
+  const brakeRearN = brakeRearNMag * longDir;
 
   const fxFrontRequestN = driveFrontN - brakeFrontN;
   const fxRearRequestN = driveRearN - brakeRearN;
@@ -198,9 +207,8 @@ export function stepCar(
     state.alphaRearRad + (slipAngleRearInstantRad - state.alphaRearRad) * clamp(blendRear, 0, 1);
 
   // Traction circle per axle: Fx steals available Fy.
-  const frictionMu = environment?.frictionMu ?? params.frictionMu;
-  const maxFFront = frictionMu * normalLoadFrontN;
-  const maxFRear = frictionMu * normalLoadRearN;
+  const maxFFront = surfaceMu * normalLoadFrontN;
+  const maxFRear = surfaceMu * normalLoadRearN;
 
   const longitudinalForceFrontN = clamp(fxFrontRequestN, -maxFFront, maxFFront);
   const longitudinalForceRearN = clamp(fxRearRequestN, -maxFRear, maxFRear);
@@ -244,19 +252,25 @@ export function stepCar(
   const dvy = (fyBodyN + dragY) / m - vx * r;
   const dr = (a * (lateralForceFrontN * cosSteer) - b * lateralForceRearN) / iz;
 
-  const nextVx = Math.max(0, state.vxMS + dvx * dtSeconds);
+  let nextVx = state.vxMS + dvx * dtSeconds;
+  nextVx = clamp(nextVx, -Math.max(0.5, params.maxReverseSpeedMS), 1e9);
   const nextVy = state.vyMS + dvy * dtSeconds;
   const nextR = state.yawRateRadS + dr * dtSeconds;
 
   // Simple damping to avoid low-speed self-spinning and endless sideways drift.
   const lowSpeedStability = clamp(1 - speedMS / 3, 0, 1);
   const highSpeedStability = clamp(speedMS / 12, 0, 1);
+  const muRef = 1.02;
+  const muMin = 0.55;
+  const lowMu01 = clamp((muRef - surfaceMu) / Math.max(0.01, muRef - muMin), 0, 1);
+  const surfaceDampingScale = 0.35 + 0.65 * lowMu01;
+
   const yawDampingPerS =
     Math.max(0, params.yawDampingPerS) * lowSpeedStability +
-    Math.max(0, params.yawDampingHighSpeedPerS) * highSpeedStability;
+    Math.max(0, params.yawDampingHighSpeedPerS) * highSpeedStability * surfaceDampingScale;
   const lateralDampingPerS =
     Math.max(0, params.lateralDampingPerS) * lowSpeedStability +
-    Math.max(0, params.lateralDampingHighSpeedPerS) * highSpeedStability;
+    Math.max(0, params.lateralDampingHighSpeedPerS) * highSpeedStability * surfaceDampingScale;
   const dampYaw = Math.exp(-yawDampingPerS * dtSeconds);
   const dampLat = Math.exp(-lateralDampingPerS * dtSeconds);
   const nextVyDamped = nextVy * dampLat;

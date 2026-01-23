@@ -125,9 +125,18 @@ export class Game {
 
     const inputsEnabled = this.damage01 < 1;
     const steer = inputsEnabled ? this.input.axis("steer") : 0; // [-1..1]
-    const throttle = inputsEnabled ? this.input.axis("throttle") : 0; // [0..1]
-    const brake = inputsEnabled ? this.input.axis("brake") : 0; // [0..1]
+    const throttleForward = inputsEnabled ? this.input.axis("throttle") : 0; // [0..1]
+    const brakeOrReverse = inputsEnabled ? this.input.axis("brake") : 0; // [0..1]
     const handbrake = inputsEnabled ? this.input.axis("handbrake") : 0; // [0..1]
+
+    // Reverse-on-brake: if we're basically stopped and not pressing throttle, treat brake as reverse.
+    // When we're already moving backwards, brake remains brake (to stop).
+    let throttle = throttleForward;
+    let brake = brakeOrReverse;
+    if (throttleForward === 0 && brakeOrReverse > 0 && this.speedMS() < 0.9 && this.state.car.vxMS > -0.6) {
+      throttle = -brakeOrReverse;
+      brake = 0;
+    }
 
     const projectionBefore = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
     const roadHalfWidthM = this.track.widthM * 0.5;
@@ -215,7 +224,7 @@ export class Game {
         `FPS: ${this.fps.toFixed(0)}`,
         `t: ${this.state.timeSeconds.toFixed(2)}s`,
         `speed: ${speedMS.toFixed(2)} m/s (${speedKmH.toFixed(0)} km/h)`,
-        `steer: ${this.input.axis("steer").toFixed(2)}  throttle: ${this.input.axis("throttle").toFixed(2)}  brake: ${this.input
+        `steer: ${this.input.axis("steer").toFixed(2)}  throttle: ${this.input.axis("throttle").toFixed(2)}  brake/rev: ${this.input
           .axis("brake")
           .toFixed(2)}`,
         `handbrake: ${this.input.axis("handbrake").toFixed(2)}`,
@@ -233,7 +242,7 @@ export class Game {
       title: "Controls",
       lines: [
         `W / ↑  throttle`,
-        `S / ↓  brake`,
+        `S / ↓  brake / reverse`,
         `A/D or ←/→ steer`,
         `Space  handbrake`,
         `R      reset`,
