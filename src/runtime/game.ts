@@ -1,15 +1,12 @@
 import { KeyboardInput } from "./input";
 import { Renderer2D } from "./renderer2d";
 import { clamp } from "./math";
+import { createCarState, defaultCarParams, stepCar, type CarTelemetry } from "../sim/car";
 
 type GameState = {
   timeSeconds: number;
-  car: {
-    x: number;
-    y: number;
-    headingRad: number;
-    speed: number;
-  };
+  car: ReturnType<typeof createCarState>;
+  carTelemetry: CarTelemetry;
 };
 
 export class Game {
@@ -28,8 +25,18 @@ export class Game {
 
   private state: GameState = {
     timeSeconds: 0,
-    car: { x: 0, y: 0, headingRad: 0, speed: 0 }
+    car: createCarState(),
+    carTelemetry: {
+      steerAngleRad: 0,
+      slipAngleFrontRad: 0,
+      slipAngleRearRad: 0,
+      lateralForceFrontN: 0,
+      lateralForceRearN: 0,
+      normalLoadFrontN: 0,
+      normalLoadRearN: 0
+    }
   };
+  private readonly carParams = defaultCarParams();
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer2D(canvas);
@@ -76,15 +83,14 @@ export class Game {
     const throttle = this.input.axis("throttle"); // [0..1]
     const brake = this.input.axis("brake"); // [0..1]
 
-    const car = this.state.car;
-    const accel = throttle * 10 - brake * 16 - car.speed * 1.2;
-    car.speed = Math.max(0, car.speed + accel * dtSeconds);
-
-    const steerRate = steer * (2.5 - Math.min(2, car.speed * 0.08));
-    car.headingRad += steerRate * dtSeconds;
-
-    car.x += Math.cos(car.headingRad) * car.speed * dtSeconds;
-    car.y += Math.sin(car.headingRad) * car.speed * dtSeconds;
+    const stepped = stepCar(
+      this.state.car,
+      this.carParams,
+      { steer, throttle, brake },
+      dtSeconds
+    );
+    this.state.car = stepped.state;
+    this.state.carTelemetry = stepped.telemetry;
   }
 
   private render(): void {
@@ -94,13 +100,18 @@ export class Game {
     ctx.clearRect(0, 0, width, height);
 
     this.renderer.beginCamera({
-      centerX: this.state.car.x,
-      centerY: this.state.car.y,
+      centerX: this.state.car.xM,
+      centerY: this.state.car.yM,
       pixelsPerMeter: 36
     });
 
     this.renderer.drawGrid({ spacingMeters: 1, majorEvery: 5 });
-    this.renderer.drawCar(this.state.car);
+    this.renderer.drawCar({
+      x: this.state.car.xM,
+      y: this.state.car.yM,
+      headingRad: this.state.car.headingRad,
+      speed: this.speedMS()
+    });
 
     this.renderer.endCamera();
 
@@ -111,17 +122,18 @@ export class Game {
       lines: [
         `FPS: ${this.fps.toFixed(0)}`,
         `t: ${this.state.timeSeconds.toFixed(2)}s`,
-        `speed: ${this.state.car.speed.toFixed(2)} m/s`,
+        `speed: ${this.speedMS().toFixed(2)} m/s`,
         `steer: ${this.input.axis("steer").toFixed(2)}  throttle: ${this.input.axis("throttle").toFixed(2)}  brake: ${this.input
           .axis("brake")
           .toFixed(2)}`,
+        `yawRate: ${this.state.car.yawRateRadS.toFixed(2)} rad/s`
       ]
     });
 
     this.renderer.drawPanel({
       x: width - 12,
       y: 12,
-      anchor: "right",
+      anchorX: "right",
       title: "Controls",
       lines: [
         `W / ↑  throttle`,
@@ -130,6 +142,26 @@ export class Game {
         `Space  handbrake (reserved)`
       ]
     });
+
+    const deg = (rad: number) => (rad * 180) / Math.PI;
+    this.renderer.drawPanel({
+      x: 12,
+      y: height - 12,
+      title: "Tires",
+      lines: [
+        `steerAngle: ${deg(this.state.carTelemetry.steerAngleRad).toFixed(1)}°`,
+        `alphaF: ${deg(this.state.carTelemetry.slipAngleFrontRad).toFixed(1)}°`,
+        `alphaR: ${deg(this.state.carTelemetry.slipAngleRearRad).toFixed(1)}°`,
+        `FyF: ${this.state.carTelemetry.lateralForceFrontN.toFixed(0)} N`,
+        `FyR: ${this.state.carTelemetry.lateralForceRearN.toFixed(0)} N`
+      ],
+      anchorX: "left",
+      anchorY: "bottom"
+    });
+  }
+
+  private speedMS(): number {
+    return Math.hypot(this.state.car.vxMS, this.state.car.vyMS);
   }
 
   private updateFps(deltaMs: number): void {

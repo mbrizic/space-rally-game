@@ -138,7 +138,14 @@ export class Renderer2D {
     ctx.restore();
   }
 
-  drawPanel(opts: { x: number; y: number; anchor?: "left" | "right"; title?: string; lines: string[] }): void {
+  drawPanel(opts: {
+    x: number;
+    y: number;
+    anchorX?: "left" | "right";
+    anchorY?: "top" | "bottom";
+    title?: string;
+    lines: string[];
+  }): void {
     const ctx = this.ctx;
     ctx.save();
 
@@ -157,8 +164,8 @@ export class Renderer2D {
     const panelWidth = Math.ceil(width + paddingX * 2);
     const panelHeight = Math.ceil(textLines.length * lineHeight + paddingY * 2);
 
-    const x = (opts.anchor ?? "left") === "right" ? Math.max(0, opts.x - panelWidth) : opts.x;
-    const y = opts.y;
+    const x = (opts.anchorX ?? "left") === "right" ? Math.max(0, opts.x - panelWidth) : opts.x;
+    const y = (opts.anchorY ?? "top") === "bottom" ? Math.max(0, opts.y - panelHeight) : opts.y;
 
     ctx.fillStyle = "rgba(0,0,0,0.55)";
     ctx.fillRect(x, y, panelWidth, panelHeight);
