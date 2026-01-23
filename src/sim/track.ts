@@ -11,6 +11,7 @@ export type Track = {
 export type TrackProjection = {
   sM: number; // distance along centerline [0..totalLength)
   closest: Vec2;
+  normal: Vec2; // left-hand normal of the closest segment (unit)
   segmentIndex: number;
   t: number; // [0..1] along segment
   lateralOffsetM: number; // signed distance from centerline (approx)
@@ -144,6 +145,7 @@ export function projectToTrack(track: Track, p: Vec2): TrackProjection {
     best = {
       sM,
       closest: { x: cx, y: cy },
+      normal: { x: nx, y: ny },
       segmentIndex: i,
       t,
       lateralOffsetM: lateral,
@@ -155,6 +157,7 @@ export function projectToTrack(track: Track, p: Vec2): TrackProjection {
     return {
       sM: 0,
       closest: { x: 0, y: 0 },
+      normal: { x: 0, y: 1 },
       segmentIndex: 0,
       t: 0,
       lateralOffsetM: 0,

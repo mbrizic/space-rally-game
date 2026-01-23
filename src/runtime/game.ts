@@ -2,7 +2,7 @@ import { KeyboardInput } from "./input";
 import { Renderer2D } from "./renderer2d";
 import { clamp } from "./math";
 import { createCarState, defaultCarParams, stepCar, type CarTelemetry } from "../sim/car";
-import { createDefaultTrack, pointOnTrack, projectToTrack } from "../sim/track";
+import { createDefaultTrack, pointOnTrack, projectToTrack, type TrackProjection } from "../sim/track";
 import { surfaceForTrackSM, type Surface } from "../sim/surface";
 
 type GameState = {
@@ -119,10 +119,10 @@ export class Game {
     const brake = this.input.axis("brake"); // [0..1]
     const handbrake = this.input.axis("handbrake"); // [0..1]
 
-    const projection = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
-    const offTrack = projection.distanceToCenterlineM > this.track.widthM * 0.5;
-    this.lastSurface = surfaceForTrackSM(this.track.totalLengthM, projection.sM, offTrack);
-    this.lastTrackS = projection.sM;
+    const projectionBefore = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
+    const roadHalfWidthM = this.track.widthM * 0.5;
+    const offTrack = projectionBefore.distanceToCenterlineM > roadHalfWidthM;
+    this.lastSurface = surfaceForTrackSM(this.track.totalLengthM, projectionBefore.sM, offTrack);
 
     const stepped = stepCar(
       this.state.car,
@@ -134,7 +134,12 @@ export class Game {
     this.state.car = stepped.state;
     this.state.carTelemetry = stepped.telemetry;
 
-    this.updateCheckpointsAndLap(projection);
+    const projectionAfter = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
+    this.resolveHardBoundary(projectionAfter);
+
+    const projectionFinal = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
+    this.lastTrackS = projectionFinal.sM;
+    this.updateCheckpointsAndLap(projectionFinal);
   }
 
   private render(): void {
@@ -258,7 +263,7 @@ export class Game {
     this.lapStartTimeSeconds = this.state.timeSeconds;
   }
 
-  private updateCheckpointsAndLap(proj: { sM: number; distanceToCenterlineM: number }): void {
+  private updateCheckpointsAndLap(proj: TrackProjection): void {
     const speed = this.speedMS();
     if (speed < 1.5) {
       this.insideActiveGate = false;
@@ -288,6 +293,43 @@ export class Game {
     } else if (!insideGate) {
       this.insideActiveGate = false;
     }
+  }
+
+  private resolveHardBoundary(proj: TrackProjection): void {
+    const roadHalfWidthM = this.track.widthM * 0.5;
+    const hardBoundaryHalfWidthM = roadHalfWidthM + 3.5;
+    if (proj.distanceToCenterlineM <= hardBoundaryHalfWidthM) return;
+
+    const sign = proj.lateralOffsetM >= 0 ? 1 : -1;
+    const nx = proj.normal.x * sign;
+    const ny = proj.normal.y * sign;
+
+    const boundaryX = proj.closest.x + nx * hardBoundaryHalfWidthM;
+    const boundaryY = proj.closest.y + ny * hardBoundaryHalfWidthM;
+    this.state.car.xM = boundaryX;
+    this.state.car.yM = boundaryY;
+
+    const cosH = Math.cos(this.state.car.headingRad);
+    const sinH = Math.sin(this.state.car.headingRad);
+    const vxW = this.state.car.vxMS * cosH - this.state.car.vyMS * sinH;
+    const vyW = this.state.car.vxMS * sinH + this.state.car.vyMS * cosH;
+
+    const vN = vxW * nx + vyW * ny;
+    const tx = -ny;
+    const ty = nx;
+    const vT = vxW * tx + vyW * ty;
+
+    const restitution = 0.18;
+    const tangentialDamping = 0.55;
+    const newVN = vN > 0 ? -vN * restitution : vN;
+    const newVT = vT * tangentialDamping;
+
+    const newVxW = newVN * nx + newVT * tx;
+    const newVyW = newVN * ny + newVT * ty;
+
+    this.state.car.vxMS = newVxW * cosH + newVyW * sinH;
+    this.state.car.vyMS = -newVxW * sinH + newVyW * cosH;
+    this.state.car.yawRateRadS *= 0.6;
   }
 
   private updateFps(deltaMs: number): void {
