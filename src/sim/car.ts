@@ -92,7 +92,7 @@ export function defaultCarParams(): CarParams {
     brakeForceN: 19000,
     handbrakeForceN: 7000,
     handbrakeRearGripScale: 0.55,
-    driveBiasFront: 0.22,
+    driveBiasFront: 1.0,
     brakeBiasFront: 0.65,
     // Shorter relaxation => less "springy" snap, still enough transient for flicks.
     relaxationLengthFrontM: 1.2,
