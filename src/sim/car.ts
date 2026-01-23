@@ -80,18 +80,18 @@ export function defaultCarParams(): CarParams {
     wheelbaseM,
     cgToFrontAxleM,
     cgToRearAxleM,
-    cgHeightM: 0.62,
+    cgHeightM: 0.52,
     corneringStiffnessFrontNPerRad: 76000,
     corneringStiffnessRearNPerRad: 72000,
     frictionMu: 1.02,
-    maxSteerRad: 0.52,
-    maxSteerRateRadS: 1.6,
+    maxSteerRad: 0.60,
+    maxSteerRateRadS: 2.1,
     engineForceN: 14000,
     engineFadeSpeedMS: 33,
     brakeForceN: 19000,
     handbrakeForceN: 7000,
     handbrakeRearGripScale: 0.55,
-    driveBiasFront: 0.48,
+    driveBiasFront: 0.32,
     brakeBiasFront: 0.65,
     // Shorter relaxation => less "springy" snap, still enough transient for flicks.
     relaxationLengthFrontM: 1.2,
@@ -99,8 +99,8 @@ export function defaultCarParams(): CarParams {
     lowSpeedForceFadeMS: 1.4,
     yawDampingPerS: 2.2,
     lateralDampingPerS: 1.4,
-    yawDampingHighSpeedPerS: 1.35,
-    lateralDampingHighSpeedPerS: 0.95,
+    yawDampingHighSpeedPerS: 1.85,
+    lateralDampingHighSpeedPerS: 1.25,
     rollingResistanceN: 260,
     aeroDragNPerMS2: 10
   };
@@ -133,7 +133,7 @@ export function stepCar(
   const handbrake = clamp(controls.handbrake, 0, 1);
 
   const speedMS = Math.hypot(state.vxMS, state.vyMS);
-  const steerLimiter = clamp(1 - speedMS * 0.03, 0.25, 1);
+  const steerLimiter = clamp(1 - speedMS * 0.02, 0.32, 1);
   const steerCmdRad = steerInput * params.maxSteerRad * steerLimiter;
   const maxDeltaSteer = Math.max(0.1, params.maxSteerRateRadS) * dtSeconds;
   const steerAngleRad = state.steerAngleRad + clamp(steerCmdRad - state.steerAngleRad, -maxDeltaSteer, maxDeltaSteer);
