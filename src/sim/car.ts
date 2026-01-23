@@ -57,7 +57,7 @@ export function defaultCarParams(): CarParams {
   const cgToFrontAxleM = 1.1;
   const cgToRearAxleM = wheelbaseM - cgToFrontAxleM;
   return {
-    massKg: 1200,
+    massKg: 980,
     inertiaYawKgM2: 1650,
     wheelbaseM,
     cgToFrontAxleM,
@@ -67,14 +67,14 @@ export function defaultCarParams(): CarParams {
     corneringStiffnessRearNPerRad: 80000,
     frictionMu: 1.05,
     maxSteerRad: 0.62,
-    engineForceN: 8200,
-    brakeForceN: 14000,
+    engineForceN: 21000,
+    brakeForceN: 19000,
     handbrakeForceN: 9000,
     handbrakeRearGripScale: 0.32,
     driveBiasFront: 0.48,
     brakeBiasFront: 0.65,
     rollingResistanceN: 260,
-    aeroDragNPerMS2: 24
+    aeroDragNPerMS2: 18
   };
 }
 

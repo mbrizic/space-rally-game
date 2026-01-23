@@ -206,7 +206,7 @@ export class Game {
       lines: [
         `FPS: ${this.fps.toFixed(0)}`,
         `t: ${this.state.timeSeconds.toFixed(2)}s`,
-        `speed: ${this.speedMS().toFixed(2)} m/s`,
+        `speed: ${this.speedMS().toFixed(2)} m/s (${(this.speedMS() * 3.6).toFixed(0)} km/h)`,
         `steer: ${this.input.axis("steer").toFixed(2)}  throttle: ${this.input.axis("throttle").toFixed(2)}  brake: ${this.input
           .axis("brake")
           .toFixed(2)}`,
