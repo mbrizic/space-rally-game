@@ -141,7 +141,13 @@ export class Game {
     });
 
     this.renderer.drawGrid({ spacingMeters: 1, majorEvery: 5 });
-    this.renderer.drawTrack(this.track);
+    const segmentFillStyles: string[] = [];
+    for (let i = 0; i < this.track.points.length; i++) {
+      const midSM = this.track.cumulativeLengthsM[i] + this.track.segmentLengthsM[i] * 0.5;
+      const surface = surfaceForTrackSM(this.track.totalLengthM, midSM, false);
+      segmentFillStyles.push(surfaceFillStyle(surface));
+    }
+    this.renderer.drawTrack({ ...this.track, segmentFillStyles });
     const start = pointOnTrack(this.track, 0);
     this.renderer.drawStartLine({
       x: start.p.x,
@@ -295,4 +301,17 @@ export class Game {
 function circularDistance(a: number, b: number, period: number): number {
   const d = Math.abs(a - b) % period;
   return Math.min(d, period - d);
+}
+
+function surfaceFillStyle(surface: Surface): string {
+  switch (surface.name) {
+    case "tarmac":
+      return "rgba(210, 220, 235, 0.11)";
+    case "gravel":
+      return "rgba(210, 190, 140, 0.11)";
+    case "dirt":
+      return "rgba(165, 125, 90, 0.11)";
+    case "offtrack":
+      return "rgba(120, 170, 120, 0.10)";
+  }
 }

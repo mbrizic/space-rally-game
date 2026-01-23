@@ -111,7 +111,7 @@ export class Renderer2D {
     ctx.stroke();
   }
 
-  drawTrack(track: { points: { x: number; y: number }[]; widthM: number }): void {
+  drawTrack(track: { points: { x: number; y: number }[]; widthM: number; segmentFillStyles?: string[] }): void {
     const ctx = this.ctx;
     if (track.points.length < 2) return;
 
@@ -120,13 +120,26 @@ export class Renderer2D {
     ctx.lineCap = "round";
 
     // Road fill.
-    ctx.strokeStyle = "rgba(210, 220, 235, 0.10)";
     ctx.lineWidth = track.widthM;
-    ctx.beginPath();
-    ctx.moveTo(track.points[0].x, track.points[0].y);
-    for (let i = 1; i < track.points.length; i++) ctx.lineTo(track.points[i].x, track.points[i].y);
-    ctx.closePath();
-    ctx.stroke();
+    const fillStyles = track.segmentFillStyles;
+    if (fillStyles && fillStyles.length === track.points.length) {
+      for (let i = 0; i < track.points.length; i++) {
+        const a = track.points[i];
+        const b = track.points[(i + 1) % track.points.length];
+        ctx.strokeStyle = fillStyles[i];
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      }
+    } else {
+      ctx.strokeStyle = "rgba(210, 220, 235, 0.10)";
+      ctx.beginPath();
+      ctx.moveTo(track.points[0].x, track.points[0].y);
+      for (let i = 1; i < track.points.length; i++) ctx.lineTo(track.points[i].x, track.points[i].y);
+      ctx.closePath();
+      ctx.stroke();
+    }
 
     // Road border.
     ctx.strokeStyle = "rgba(210, 220, 235, 0.26)";

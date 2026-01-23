@@ -21,13 +21,23 @@ export function createDefaultTrack(): Track {
   // Simple loop with a couple of bends; coordinates in meters.
   const points: Vec2[] = [
     { x: 0, y: 0 },
-    { x: 30, y: 0 },
-    { x: 55, y: 18 },
-    { x: 55, y: 55 },
-    { x: 28, y: 75 },
-    { x: -10, y: 70 },
-    { x: -30, y: 45 },
-    { x: -28, y: 15 }
+    { x: 42, y: 0 },
+    { x: 65, y: 12 },
+    { x: 78, y: 34 },
+    { x: 70, y: 58 },
+    { x: 48, y: 72 },
+    { x: 22, y: 66 },
+    { x: 8, y: 46 },
+    { x: -6, y: 30 },
+    { x: -28, y: 22 },
+    { x: -48, y: 30 },
+    { x: -62, y: 52 },
+    { x: -50, y: 78 },
+    { x: -20, y: 88 },
+    { x: 10, y: 82 },
+    { x: 34, y: 64 },
+    { x: 44, y: 40 },
+    { x: 30, y: 18 }
   ];
   const widthM = 10;
 
@@ -143,4 +153,3 @@ function wrapS(sM: number, totalLengthM: number): number {
   const t = sM % totalLengthM;
   return t < 0 ? t + totalLengthM : t;
 }
-
