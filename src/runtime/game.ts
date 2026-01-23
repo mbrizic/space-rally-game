@@ -352,7 +352,7 @@ export class Game {
   private applyTuning(): void {
     if (!this.tuning) return;
     const t = this.tuning.values;
-    this.carParams.engineForceN = clamp(t.engineForceN, 4000, 30000);
+    this.carParams.engineForceN = clamp(t.engineForceN, 4000, 45000);
     this.carParams.maxSteerRad = clamp((t.maxSteerDeg * Math.PI) / 180, 0.15, 1.2);
     this.carParams.driveBiasFront = clamp(t.driveBiasFront01, 0, 1);
 
@@ -575,7 +575,7 @@ export class Game {
   private resolveTreeCollisions(): void {
     if (this.damage01 >= 1) return;
 
-    const carRadius = 1.55;
+    const carRadius = 1.12;
     for (const tree of this.trees) {
       const dx = this.state.car.xM - tree.x;
       const dy = this.state.car.yM - tree.y;

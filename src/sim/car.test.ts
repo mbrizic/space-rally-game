@@ -93,21 +93,32 @@ describe("car physics sanity", () => {
 
   it("turns under full throttle (tarmac)", () => {
     const params = defaultCarParams();
-    const state = createCarState();
+    const env = { frictionMu: 1.10, rollingResistanceN: 260, aeroDragNPerMS2: 10 };
+    const dt = 1 / 120;
 
-    let cur = state;
-    for (let i = 0; i < 360; i++) {
-      cur = stepCar(
-        cur,
-        params,
-        { steer: 1, throttle: 1, brake: 0, handbrake: 0 },
-        1 / 120,
-        { frictionMu: 1.02, rollingResistanceN: 260, aeroDragNPerMS2: 10 }
-      ).state;
+    // Warm up to a meaningful speed, then check if we can still arc under full throttle.
+    let warm = createCarState();
+    for (let i = 0; i < 240; i++) {
+      warm = stepCar(warm, params, { steer: 0, throttle: 1, brake: 0, handbrake: 0 }, dt, env).state;
     }
+    const warmSpeed = Math.hypot(warm.vxMS, warm.vyMS);
+    expect(warmSpeed).toBeGreaterThan(7);
 
-    // Under full throttle + full steer, we should still arc noticeably (not go nearly straight).
-    expect(cur.headingRad).toBeGreaterThan(0.25);
-    expect(cur.yM).toBeGreaterThan(2.0);
+    const runTurnPhase = (steer: number) => {
+      let cur = warm;
+      let maxAbsYDelta = 0;
+      const y0 = warm.yM;
+      for (let i = 0; i < 240; i++) {
+        cur = stepCar(cur, params, { steer, throttle: 1, brake: 0, handbrake: 0 }, dt, env).state;
+        maxAbsYDelta = Math.max(maxAbsYDelta, Math.abs(cur.yM - y0));
+      }
+      return { cur, maxAbsYDelta };
+    };
+
+    const straight = runTurnPhase(0);
+    const turning = runTurnPhase(1);
+
+    expect(straight.maxAbsYDelta).toBeLessThan(1.0);
+    expect(turning.maxAbsYDelta).toBeGreaterThan(6.0);
   });
 });

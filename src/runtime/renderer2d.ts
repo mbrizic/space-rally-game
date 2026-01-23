@@ -267,8 +267,8 @@ export class Renderer2D {
     ctx.translate(car.x, car.y);
     ctx.rotate(car.headingRad);
 
-    const length = 2.56;
-    const width = 1.28;
+    const length = 1.85;
+    const width = 0.93;
 
     const rollOffset = clamp(car.rollOffsetM ?? 0, -0.22, 0.22);
 

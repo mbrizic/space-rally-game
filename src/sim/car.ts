@@ -33,6 +33,8 @@ export type CarParams = {
   torqueCutOnSteer01: number; // 0..1, reduces drive when steering
   tractionEllipseP: number; // >= 1 (lower => less understeer under power)
   frontFxLimitAtFullSteer01: number; // 0..1, reserve lateral grip on steer (assist)
+  aligningYawDampingNmPerRadS: number;
+  aligningYawDampingSpeedMS: number;
 };
 
 export type CarControls = {
@@ -80,40 +82,44 @@ export function defaultCarParams(): CarParams {
   const cgToFrontAxleM = 1.1;
   const cgToRearAxleM = wheelbaseM - cgToFrontAxleM;
   return {
-    massKg: 1200,
-    inertiaYawKgM2: 1650,
+    massKg: 1080,
+    inertiaYawKgM2: 1350,
     wheelbaseM,
     cgToFrontAxleM,
     cgToRearAxleM,
-    cgHeightM: 0.52,
-    corneringStiffnessFrontNPerRad: 76000,
-    corneringStiffnessRearNPerRad: 72000,
-    frictionMu: 1.02,
-    maxSteerRad: 0.78,
-    maxSteerRateRadS: 3.4,
-    engineForceN: 14000,
-    engineFadeSpeedMS: 33,
+    cgHeightM: 0.55,
+    corneringStiffnessFrontNPerRad: 105000,
+    corneringStiffnessRearNPerRad: 98000,
+    frictionMu: 1.22,
+    maxSteerRad: 1.0,
+    maxSteerRateRadS: 7.5,
+    engineForceN: 28500,
+    engineFadeSpeedMS: 58,
     brakeForceN: 19000,
     handbrakeForceN: 7000,
     handbrakeRearGripScale: 0.55,
     driveBiasFront: 1.0,
     brakeBiasFront: 0.65,
     // Shorter relaxation => less "springy" snap, still enough transient for flicks.
-    relaxationLengthFrontM: 1.2,
-    relaxationLengthRearM: 1.6,
-    lowSpeedForceFadeMS: 1.4,
-    yawDampingPerS: 2.2,
-    lateralDampingPerS: 1.4,
+    relaxationLengthFrontM: 0.7,
+    relaxationLengthRearM: 0.9,
+    lowSpeedForceFadeMS: 1.2,
+    yawDampingPerS: 2.0,
+    lateralDampingPerS: 1.1,
     // Keep any additional damping as "assist" (handled via UI later); defaults off.
     yawDampingHighSpeedPerS: 0,
     lateralDampingHighSpeedPerS: 0,
     rollingResistanceN: 260,
     aeroDragNPerMS2: 10,
     maxReverseSpeedMS: 12,
-    reverseEngineScale: 2.0,
-    torqueCutOnSteer01: 0.55,
-    tractionEllipseP: 1.6,
-    frontFxLimitAtFullSteer01: 0.6
+    reverseEngineScale: 2.2,
+    // Key to "steering with pedals": under power we lose some steering, but not all.
+    // This also prevents full-throttle from consuming *all* front capacity on a FWD car.
+    torqueCutOnSteer01: 0.32,
+    tractionEllipseP: 5.5,
+    frontFxLimitAtFullSteer01: 0.72,
+    aligningYawDampingNmPerRadS: 1200,
+    aligningYawDampingSpeedMS: 3.5
   };
 }
 
@@ -148,7 +154,7 @@ export function stepCar(
   const speedMS = Math.hypot(state.vxMS, state.vyMS);
   // Steering limit should follow momentum (speed), not throttle. Keep full steering at low speed
   // (e.g. launch) and reduce only after we're moving quickly.
-  const steerLimiter = clamp(1 - Math.max(0, speedMS - 8) * 0.012, 0.42, 1);
+  const steerLimiter = lerp(1, 0.38, clamp((speedMS - 5) / 20, 0, 1));
   const steerCmdRad = steerInput * params.maxSteerRad * steerLimiter;
   const maxDeltaSteer = Math.max(0.1, params.maxSteerRateRadS) * dtSeconds;
   const steerAngleRad = state.steerAngleRad + clamp(steerCmdRad - state.steerAngleRad, -maxDeltaSteer, maxDeltaSteer);
@@ -194,11 +200,29 @@ export function stepCar(
   const dragX = speedMS > 1e-6 ? -dragMagN * (state.vxMS / speedMS) : 0;
   const dragY = speedMS > 1e-6 ? -dragMagN * (state.vyMS / speedMS) : 0;
 
-  // Weight transfer approximation from longitudinal accel (positive = accelerating).
-  const axApproxMS2 = (fxFrontRequestN + fxRearRequestN + dragX) / params.massKg;
-  const loadTransferN = (params.massKg * axApproxMS2 * params.cgHeightM) / params.wheelbaseM;
-  const normalLoadFrontN = clamp(normalLoadFrontStaticN - loadTransferN, 0.15 * weightN, 0.85 * weightN);
-  const normalLoadRearN = clamp(normalLoadRearStaticN + loadTransferN, 0.15 * weightN, 0.85 * weightN);
+  // Weight transfer approximation from *realized* longitudinal accel (positive = accelerating).
+  // Important: using the raw requested drive force here can massively over-unload the front axle on a
+  // FWD car (because the request can be far above tire limits), making the launch and turning feel wrong.
+  const normalLoadsFromAx = (axMS2: number) => {
+    const loadTransferN = (params.massKg * axMS2 * params.cgHeightM) / params.wheelbaseM;
+    const frontN = clamp(normalLoadFrontStaticN - loadTransferN, 0.15 * weightN, 0.85 * weightN);
+    const rearN = clamp(normalLoadRearStaticN + loadTransferN, 0.15 * weightN, 0.85 * weightN);
+    return { frontN, rearN };
+  };
+
+  // First pass: clamp longitudinal forces with static loads, then estimate ax from that.
+  const cosSteer0 = Math.cos(steerAngleRad);
+  const steerFrac01_0 = steerFrac01;
+  const maxFFront0 = surfaceMu * normalLoadFrontStaticN;
+  const maxFRear0 = surfaceMu * normalLoadRearStaticN;
+  const fxLimitFront0 =
+    maxFFront0 * lerp(1, clamp(params.frontFxLimitAtFullSteer01, 0.2, 1), steerFrac01_0);
+  const longFront0 = clamp(fxFrontRequestN, -fxLimitFront0, fxLimitFront0);
+  const longRear0 = clamp(fxRearRequestN, -maxFRear0, maxFRear0);
+  const fxLongBodyApprox0 = longRear0 + longFront0 * cosSteer0;
+  const axApproxMS2 = (fxLongBodyApprox0 + dragX) / Math.max(1, params.massKg);
+
+  const { frontN: normalLoadFrontN, rearN: normalLoadRearN } = normalLoadsFromAx(axApproxMS2);
 
   // Slip angles (instantaneous). At very low speed, slip is ill-defined; fade to 0.
   const slipDenom = Math.max(0.75, Math.abs(vx), speedMS);
@@ -208,7 +232,7 @@ export function stepCar(
 
   // Tire relaxation (first-order lag based on distance traveled). If speed is very low, we still want
   // slip to settle quickly (no "stuck" slip angle after a handbrake turn).
-  const relaxSpeedMS = Math.max(speedMS, 7);
+  const relaxSpeedMS = Math.max(speedMS, 14);
   const relaxKFront = relaxSpeedMS / Math.max(0.5, params.relaxationLengthFrontM);
   const relaxKRear = relaxSpeedMS / Math.max(0.5, params.relaxationLengthRearM);
   const blendFront = 1 - Math.exp(-relaxKFront * dtSeconds);
@@ -262,14 +286,23 @@ export function stepCar(
   const cosSteer = Math.cos(steerAngleRad);
   const sinSteer = Math.sin(steerAngleRad);
 
-  // Treat longitudinal wheel forces as body-longitudinal (no sideways component from steer),
-  // but rotate lateral force from the steered front wheel back into the body frame.
-  const fxBodyN = longitudinalForceRearN + longitudinalForceFrontN - lateralForceFrontN * sinSteer;
-  const fyBodyN = lateralForceRearN + lateralForceFrontN * cosSteer;
+  // Resolve front wheel forces (steered) into the body frame.
+  const fxBodyN =
+    longitudinalForceRearN + longitudinalForceFrontN * cosSteer - lateralForceFrontN * sinSteer;
+  const fyBodyN =
+    lateralForceRearN + lateralForceFrontN * cosSteer + longitudinalForceFrontN * sinSteer;
 
   const dvx = (fxBodyN + dragX) / m + vy * r;
   const dvy = (fyBodyN + dragY) / m - vx * r;
-  const dr = (a * (lateralForceFrontN * cosSteer) - b * lateralForceRearN) / iz;
+  let dr =
+    (a * (lateralForceFrontN * cosSteer + longitudinalForceFrontN * sinSteer) - b * lateralForceRearN) /
+    iz;
+
+  // Approximate pneumatic trail / aligning torque: damps yaw-rate at speed without directly
+  // killing lateral velocity. This reduces post-handbrake wobble while keeping motion physical-ish.
+  const alignScale = clamp(speedMS / Math.max(0.5, params.aligningYawDampingSpeedMS), 0, 1);
+  const mzAlign = -state.yawRateRadS * Math.max(0, params.aligningYawDampingNmPerRadS) * alignScale;
+  dr += mzAlign / iz;
 
   let nextVx = state.vxMS + dvx * dtSeconds;
   nextVx = clamp(nextVx, -Math.max(0.5, params.maxReverseSpeedMS), 1e9);

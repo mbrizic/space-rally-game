@@ -14,8 +14,8 @@ export class TuningPanel {
 
   constructor(container: HTMLElement, initial?: Partial<TuningValues>) {
     this.values = {
-      engineForceN: initial?.engineForceN ?? 18000,
-      maxSteerDeg: initial?.maxSteerDeg ?? 45,
+      engineForceN: initial?.engineForceN ?? 28500,
+      maxSteerDeg: initial?.maxSteerDeg ?? 60,
       driveBiasFront01: initial?.driveBiasFront01 ?? 1,
       showArrows: initial?.showArrows ?? true
     };
@@ -38,10 +38,10 @@ export class TuningPanel {
     this.root.appendChild(this.titleRow("Tuning"));
 
     this.root.appendChild(
-      this.sliderRow("engineForceN", "Acceleration", 7000, 22000, 100, this.values.engineForceN)
+      this.sliderRow("engineForceN", "Acceleration", 7000, 45000, 100, this.values.engineForceN)
     );
     this.root.appendChild(
-      this.sliderRow("maxSteerDeg", "Steering", 22, 52, 1, this.values.maxSteerDeg)
+      this.sliderRow("maxSteerDeg", "Steering", 22, 70, 1, this.values.maxSteerDeg)
     );
     this.root.appendChild(
       this.sliderRow("driveBiasFront01", "FWD %", 0, 1, 0.01, this.values.driveBiasFront01)
