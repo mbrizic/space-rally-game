@@ -20,6 +20,9 @@ export type CarParams = {
   brakeBiasFront: number; // 0 = rear-only, 1 = front-only
   relaxationLengthFrontM: number;
   relaxationLengthRearM: number;
+  lowSpeedForceFadeMS: number;
+  yawDampingPerS: number;
+  lateralDampingPerS: number;
   rollingResistanceN: number;
   aeroDragNPerMS2: number;
 };
@@ -85,6 +88,9 @@ export function defaultCarParams(): CarParams {
     brakeBiasFront: 0.65,
     relaxationLengthFrontM: 7.5,
     relaxationLengthRearM: 9.5,
+    lowSpeedForceFadeMS: 1.4,
+    yawDampingPerS: 2.2,
+    lateralDampingPerS: 1.4,
     rollingResistanceN: 260,
     aeroDragNPerMS2: 10
   };
@@ -124,7 +130,7 @@ export function stepCar(
   const normalLoadFrontStaticN = (weightN * params.cgToRearAxleM) / params.wheelbaseM;
   const normalLoadRearStaticN = (weightN * params.cgToFrontAxleM) / params.wheelbaseM;
 
-  const vx = Math.max(0.25, state.vxMS);
+  const vx = state.vxMS;
   const vy = state.vyMS;
   const r = state.yawRateRadS;
   const a = params.cgToFrontAxleM;
@@ -157,18 +163,23 @@ export function stepCar(
   const normalLoadFrontN = clamp(normalLoadFrontStaticN - loadTransferN, 0.15 * weightN, 0.85 * weightN);
   const normalLoadRearN = clamp(normalLoadRearStaticN + loadTransferN, 0.15 * weightN, 0.85 * weightN);
 
-  // Slip angles (instantaneous).
-  const slipAngleFrontInstantRad = Math.atan2(vy + a * r, vx) - steerAngleRad;
-  const slipAngleRearInstantRad = Math.atan2(vy - b * r, vx);
+  // Slip angles (instantaneous). At very low speed, slip is ill-defined; fade to 0.
+  const slipDenom = Math.max(0.75, Math.abs(vx), speedMS);
+  const slipAngleFrontInstantRad =
+    speedMS < 0.4 ? 0 : Math.atan2(vy + a * r, slipDenom) - steerAngleRad;
+  const slipAngleRearInstantRad = speedMS < 0.4 ? 0 : Math.atan2(vy - b * r, slipDenom);
 
   // Tire relaxation (first-order lag based on distance traveled).
-  const relaxKFront = vx / Math.max(0.5, params.relaxationLengthFrontM);
-  const relaxKRear = vx / Math.max(0.5, params.relaxationLengthRearM);
+  const relaxKFront = Math.max(0, speedMS) / Math.max(0.5, params.relaxationLengthFrontM);
+  const relaxKRear = Math.max(0, speedMS) / Math.max(0.5, params.relaxationLengthRearM);
   const blendFront = 1 - Math.exp(-relaxKFront * dtSeconds);
   const blendRear = 1 - Math.exp(-relaxKRear * dtSeconds);
 
-  const alphaFrontRad = state.alphaFrontRad + (slipAngleFrontInstantRad - state.alphaFrontRad) * clamp(blendFront, 0, 1);
-  const alphaRearRad = state.alphaRearRad + (slipAngleRearInstantRad - state.alphaRearRad) * clamp(blendRear, 0, 1);
+  const alphaFrontRad =
+    state.alphaFrontRad +
+    (slipAngleFrontInstantRad - state.alphaFrontRad) * clamp(blendFront, 0, 1);
+  const alphaRearRad =
+    state.alphaRearRad + (slipAngleRearInstantRad - state.alphaRearRad) * clamp(blendRear, 0, 1);
 
   // Traction circle per axle: Fx steals available Fy.
   const frictionMu = environment?.frictionMu ?? params.frictionMu;
@@ -183,16 +194,22 @@ export function stepCar(
   const rearGripScale = lerp(1, clamp(params.handbrakeRearGripScale, 0.05, 1), handbrake);
   const lateralCapRearN = lateralCapRearBaseN * rearGripScale;
 
-  const lateralForceFrontN = clamp(
-    -params.corneringStiffnessFrontNPerRad * alphaFrontRad,
-    -lateralCapFrontN,
-    lateralCapFrontN
-  );
-  const lateralForceRearN = clamp(
-    -params.corneringStiffnessRearNPerRad * rearGripScale * alphaRearRad,
-    -lateralCapRearN,
-    lateralCapRearN
-  );
+  const lowSpeedForceFade = clamp(speedMS / Math.max(0.4, params.lowSpeedForceFadeMS), 0, 1);
+
+  const lateralForceFrontN =
+    lowSpeedForceFade *
+    clamp(
+      -params.corneringStiffnessFrontNPerRad * alphaFrontRad,
+      -lateralCapFrontN,
+      lateralCapFrontN
+    );
+  const lateralForceRearN =
+    lowSpeedForceFade *
+    clamp(
+      -params.corneringStiffnessRearNPerRad * rearGripScale * alphaRearRad,
+      -lateralCapRearN,
+      lateralCapRearN
+    );
 
   // Bicycle model equations in body frame.
   const m = params.massKg;
@@ -212,21 +229,27 @@ export function stepCar(
   const nextVy = state.vyMS + dvy * dtSeconds;
   const nextR = state.yawRateRadS + dr * dtSeconds;
 
-  const nextHeading = state.headingRad + nextR * dtSeconds;
+  // Simple damping to avoid low-speed self-spinning and endless sideways drift.
+  const dampYaw = Math.exp(-Math.max(0, params.yawDampingPerS) * dtSeconds);
+  const dampLat = Math.exp(-Math.max(0, params.lateralDampingPerS) * dtSeconds);
+  const nextVyDamped = nextVy * dampLat;
+  const nextRDamped = nextR * dampYaw;
 
-  const midHeading = state.headingRad + nextR * dtSeconds * 0.5;
+  const nextHeading = state.headingRad + nextRDamped * dtSeconds;
+
+  const midHeading = state.headingRad + nextRDamped * dtSeconds * 0.5;
   const cosH = Math.cos(midHeading);
   const sinH = Math.sin(midHeading);
-  const xDot = nextVx * cosH - nextVy * sinH;
-  const yDot = nextVx * sinH + nextVy * cosH;
+  const xDot = nextVx * cosH - nextVyDamped * sinH;
+  const yDot = nextVx * sinH + nextVyDamped * cosH;
 
   const nextState: CarState = {
     xM: state.xM + xDot * dtSeconds,
     yM: state.yM + yDot * dtSeconds,
     headingRad: nextHeading,
     vxMS: nextVx,
-    vyMS: nextVy,
-    yawRateRadS: nextR,
+    vyMS: nextVyDamped,
+    yawRateRadS: nextRDamped,
     alphaFrontRad,
     alphaRearRad
   };

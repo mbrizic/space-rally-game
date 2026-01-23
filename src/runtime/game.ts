@@ -130,6 +130,8 @@ export class Game {
       this.state.car.vxMS = 0;
       this.state.car.vyMS = 0;
       this.state.car.yawRateRadS = 0;
+      this.state.car.alphaFrontRad = 0;
+      this.state.car.alphaRearRad = 0;
       if (this.countdownSecondsRemaining === 0 && !this.lapActive) {
         this.lapActive = true;
         this.lapStartTimeSeconds = this.state.timeSeconds;
@@ -176,6 +178,8 @@ export class Game {
       this.state.car.vxMS = 0;
       this.state.car.vyMS = 0;
       this.state.car.yawRateRadS = 0;
+      this.state.car.alphaFrontRad = 0;
+      this.state.car.alphaRearRad = 0;
     }
   }
 
