@@ -24,6 +24,7 @@ export class Game {
   private lapCount = 0;
   private bestLapTimeSeconds: number | null = null;
   private countdownSecondsRemaining = 0;
+  private goFlashSecondsRemaining = 0;
   private lastSurface: Surface = { name: "tarmac", frictionMu: 1, rollingResistanceN: 260 };
   private lastTrackS = 0;
   private running = false;
@@ -125,7 +126,11 @@ export class Game {
         this.lapStartTimeSeconds = this.state.timeSeconds;
         this.nextCheckpointIndex = 1;
         this.insideActiveGate = false;
+        this.goFlashSecondsRemaining = 0.9;
       }
+    }
+    if (this.goFlashSecondsRemaining > 0) {
+      this.goFlashSecondsRemaining = Math.max(0, this.goFlashSecondsRemaining - dtSeconds);
     }
 
     const inputsEnabled = this.countdownSecondsRemaining === 0;
@@ -207,7 +212,7 @@ export class Game {
           .toFixed(2)}`,
         `handbrake: ${this.input.axis("handbrake").toFixed(2)}`,
         `yawRate: ${this.state.car.yawRateRadS.toFixed(2)} rad/s`,
-        `checkpoint: ${this.nextCheckpointIndex + 1}/${this.checkpointSM.length}`,
+        `next gate: ${gateLabel(this.nextCheckpointIndex)}`,
         `surface: ${this.lastSurface.name}  (μ=${this.lastSurface.frictionMu.toFixed(2)})`
       ]
     });
@@ -222,7 +227,8 @@ export class Game {
         `S / ↓  brake`,
         `A/D or ←/→ steer`,
         `Space  handbrake`,
-        `R      reset`
+        `R      reset`,
+        `pass CPs then START`
       ]
     });
 
@@ -245,6 +251,12 @@ export class Game {
     });
 
     const lapTime = this.lapActive ? this.state.timeSeconds - this.lapStartTimeSeconds : 0;
+    const stageLine =
+      this.countdownSecondsRemaining > 0
+        ? `start in: ${Math.ceil(this.countdownSecondsRemaining)}…`
+        : this.goFlashSecondsRemaining > 0
+          ? `GO!`
+          : `running`;
     this.renderer.drawPanel({
       x: width - 12,
       y: height - 12,
@@ -256,9 +268,15 @@ export class Game {
         `time: ${lapTime.toFixed(2)}s`,
         `best: ${this.bestLapTimeSeconds ? `${this.bestLapTimeSeconds.toFixed(2)}s` : "--"}`,
         `s: ${this.lastTrackS.toFixed(1)}m`,
-        this.countdownSecondsRemaining > 0 ? `start in: ${Math.ceil(this.countdownSecondsRemaining)}…` : `start: GO`
+        stageLine
       ]
     });
+
+    if (this.countdownSecondsRemaining > 0) {
+      this.renderer.drawCenterText({ text: `${Math.ceil(this.countdownSecondsRemaining)}`, subtext: "Get ready" });
+    } else if (this.goFlashSecondsRemaining > 0) {
+      this.renderer.drawCenterText({ text: "GO!", subtext: "Pedal steer" });
+    }
   }
 
   private speedMS(): number {
@@ -278,6 +296,7 @@ export class Game {
     this.lapActive = false;
     this.lapStartTimeSeconds = this.state.timeSeconds;
     this.countdownSecondsRemaining = 3;
+    this.goFlashSecondsRemaining = 0;
   }
 
   private updateCheckpointsAndLap(proj: TrackProjection): void {
@@ -360,6 +379,11 @@ export class Game {
 function circularDistance(a: number, b: number, period: number): number {
   const d = Math.abs(a - b) % period;
   return Math.min(d, period - d);
+}
+
+function gateLabel(index: number): string {
+  if (index === 0) return "START";
+  return `CP${index}`;
 }
 
 function surfaceFillStyle(surface: Surface): string {

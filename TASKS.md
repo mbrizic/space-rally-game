@@ -8,4 +8,7 @@
 - [x] Pedal steering core (traction circle + weight transfer)
 - [x] Handbrake turns
 - [x] Track (polyline ribbon) + checkpoints + timer
+- [x] Smooth track (spline sampling)
 - [x] Surfaces (tarmac/gravel/dirt) + off-track penalties
+- [x] Hard track-edge collisions
+- [x] Start countdown + GO

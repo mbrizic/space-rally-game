@@ -290,4 +290,36 @@ export class Renderer2D {
     }
     ctx.restore();
   }
+
+  drawCenterText(opts: { text: string; subtext?: string }): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+
+    const w = this.viewportWidthCssPx || this.canvas.clientWidth;
+    const h = this.viewportHeightCssPx || this.canvas.clientHeight;
+    const cx = w / 2;
+    const cy = h / 2;
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    const mainSize = Math.max(44, Math.min(84, Math.floor(Math.min(w, h) * 0.13)));
+    const subSize = Math.max(16, Math.min(22, Math.floor(mainSize * 0.28)));
+
+    ctx.fillStyle = "rgba(0,0,0,0.40)";
+    ctx.fillRect(cx - 170, cy - 78, 340, 156);
+
+    ctx.font = `${mainSize}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
+    ctx.fillStyle = "rgba(232,236,241,0.98)";
+    ctx.fillText(opts.text, cx, cy - (opts.subtext ? 10 : 0));
+
+    if (opts.subtext) {
+      ctx.font = `${subSize}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
+      ctx.fillStyle = "rgba(170, 210, 255, 0.95)";
+      ctx.fillText(opts.subtext, cx, cy + mainSize * 0.42);
+    }
+
+    ctx.restore();
+  }
 }
