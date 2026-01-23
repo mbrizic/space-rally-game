@@ -88,8 +88,8 @@ export function defaultCarParams(): CarParams {
     corneringStiffnessFrontNPerRad: 76000,
     corneringStiffnessRearNPerRad: 72000,
     frictionMu: 1.02,
-    maxSteerRad: 0.68,
-    maxSteerRateRadS: 2.2,
+    maxSteerRad: 0.72,
+    maxSteerRateRadS: 3.0,
     engineForceN: 14000,
     engineFadeSpeedMS: 33,
     brakeForceN: 19000,
@@ -110,7 +110,7 @@ export function defaultCarParams(): CarParams {
     aeroDragNPerMS2: 10,
     maxReverseSpeedMS: 12,
     reverseEngineScale: 2.0,
-    torqueCutOnSteer01: 0.78,
+    torqueCutOnSteer01: 0.45,
     tractionEllipseP: 1.6
   };
 }

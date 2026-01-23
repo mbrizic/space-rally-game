@@ -267,8 +267,8 @@ export class Renderer2D {
     ctx.translate(car.x, car.y);
     ctx.rotate(car.headingRad);
 
-    const length = 1.1;
-    const width = 0.55;
+    const length = 1.28;
+    const width = 0.64;
 
     const rollOffset = clamp(car.rollOffsetM ?? 0, -0.22, 0.22);
 
@@ -402,6 +402,114 @@ export class Renderer2D {
       ctx.fillStyle = "rgba(170, 210, 255, 0.95)";
       ctx.fillText(opts.subtext, cx, cy + mainSize * 0.42);
     }
+
+    ctx.restore();
+  }
+
+  drawVectorPanel(opts: {
+    x: number;
+    y: number;
+    anchorX?: "left" | "right";
+    anchorY?: "top" | "bottom";
+    title: string;
+    vectors: { label: string; x: number; y: number; color: string }[];
+    scale: number;
+  }): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+
+    const padding = 10;
+    const plotSize = 132;
+    const titleH = 18;
+    const linesH = 16;
+    const height = titleH + plotSize + padding * 2 + opts.vectors.length * linesH;
+    const width = 280;
+
+    const x = (opts.anchorX ?? "left") === "right" ? Math.max(0, opts.x - width) : opts.x;
+    const y = (opts.anchorY ?? "top") === "bottom" ? Math.max(0, opts.y - height) : opts.y;
+
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(x, y, width, height);
+    ctx.strokeStyle = "rgba(255,255,255,0.10)";
+    ctx.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1);
+
+    ctx.font = "13px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.fillStyle = "rgba(170, 210, 255, 0.95)";
+    ctx.fillText(opts.title, x + padding, y + padding + 2);
+
+    const plotX = x + padding;
+    const plotY = y + padding + titleH;
+    const cx = plotX + plotSize / 2;
+    const cy = plotY + plotSize / 2;
+
+    ctx.strokeStyle = "rgba(255,255,255,0.14)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx, plotY);
+    ctx.lineTo(cx, plotY + plotSize);
+    ctx.moveTo(plotX, cy);
+    ctx.lineTo(plotX + plotSize, cy);
+    ctx.stroke();
+
+    ctx.strokeStyle = "rgba(255,255,255,0.06)";
+    ctx.beginPath();
+    ctx.rect(plotX, plotY, plotSize, plotSize);
+    ctx.stroke();
+
+    // Arrows.
+    for (const v of opts.vectors) {
+      const dx = v.x * opts.scale;
+      const dy = -v.y * opts.scale; // y up in plot
+      this.drawHudArrow(cx, cy, dx, dy, v.color);
+    }
+
+    // Legend + numeric.
+    ctx.font = "12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.fillStyle = "rgba(232,236,241,0.92)";
+    let ly = plotY + plotSize + 14;
+    for (const v of opts.vectors) {
+      ctx.fillStyle = v.color;
+      ctx.fillRect(x + padding, ly - 9, 10, 10);
+      ctx.fillStyle = "rgba(232,236,241,0.92)";
+      ctx.fillText(`${v.label}: (${v.x.toFixed(2)}, ${v.y.toFixed(2)})`, x + padding + 16, ly);
+      ly += linesH;
+    }
+
+    ctx.restore();
+  }
+
+  private drawHudArrow(fromX: number, fromY: number, dx: number, dy: number, color: string): void {
+    const ctx = this.ctx;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-3) return;
+    const toX = fromX + dx;
+    const toY = fromY + dy;
+    const ux = dx / len;
+    const uy = dy / len;
+
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = 2;
+
+    ctx.beginPath();
+    ctx.moveTo(fromX, fromY);
+    ctx.lineTo(toX, toY);
+    ctx.stroke();
+
+    const head = Math.min(12, Math.max(6, len * 0.18));
+    const leftX = toX - ux * head - uy * head * 0.55;
+    const leftY = toY - uy * head + ux * head * 0.55;
+    const rightX = toX - ux * head + uy * head * 0.55;
+    const rightY = toY - uy * head - ux * head * 0.55;
+
+    ctx.beginPath();
+    ctx.moveTo(toX, toY);
+    ctx.lineTo(leftX, leftY);
+    ctx.lineTo(rightX, rightY);
+    ctx.closePath();
+    ctx.fill();
 
     ctx.restore();
   }

@@ -308,6 +308,38 @@ export class Game {
       ]
     });
 
+    // Side visualization of vectors (body frame: +x forward, +y left).
+    if (this.showForceArrows) {
+      const t = this.state.carTelemetry;
+      const cosSteer = Math.cos(t.steerAngleRad);
+      const sinSteer = Math.sin(t.steerAngleRad);
+      const fxBody =
+        (t.longitudinalForceFrontN + t.longitudinalForceRearN) - t.lateralForceFrontN * sinSteer;
+      const fyBody = t.lateralForceRearN + t.lateralForceFrontN * cosSteer;
+
+      const vx = this.state.car.vxMS;
+      const vy = this.state.car.vyMS;
+
+      this.renderer.drawVectorPanel({
+        x: width - 12,
+        y: height * 0.5,
+        anchorX: "right",
+        anchorY: "top",
+        title: "Vectors (body frame)",
+        scale: 48,
+        vectors: [
+          { label: "v (m/s)", x: vx, y: vy, color: "rgba(232, 236, 241, 0.72)" },
+          {
+            label: "p (x0.01)",
+            x: vx * this.carParams.massKg * 0.01,
+            y: vy * this.carParams.massKg * 0.01,
+            color: "rgba(210, 210, 255, 0.55)"
+          },
+          { label: "F (kN)", x: fxBody / 1000, y: fyBody / 1000, color: "rgba(255, 205, 105, 0.88)" }
+        ]
+      });
+    }
+
     if (this.damage01 >= 1) {
       this.renderer.drawCenterText({ text: "WRECKED", subtext: "Press R to reset" });
     }
@@ -543,7 +575,7 @@ export class Game {
   private resolveTreeCollisions(): void {
     if (this.damage01 >= 1) return;
 
-    const carRadius = 0.65;
+    const carRadius = 0.78;
     for (const tree of this.trees) {
       const dx = this.state.car.xM - tree.x;
       const dy = this.state.car.yM - tree.y;

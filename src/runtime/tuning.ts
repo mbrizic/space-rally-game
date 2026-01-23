@@ -14,16 +14,16 @@ export class TuningPanel {
 
   constructor(container: HTMLElement, initial?: Partial<TuningValues>) {
     this.values = {
-      engineForceN: initial?.engineForceN ?? 14000,
-      maxSteerDeg: initial?.maxSteerDeg ?? 39,
+      engineForceN: initial?.engineForceN ?? 18000,
+      maxSteerDeg: initial?.maxSteerDeg ?? 45,
       driveBiasFront01: initial?.driveBiasFront01 ?? 1,
       showArrows: initial?.showArrows ?? true
     };
 
     this.root = document.createElement("div");
     this.root.style.position = "fixed";
-    this.root.style.left = "12px";
-    this.root.style.bottom = "12px";
+    this.root.style.right = "12px";
+    this.root.style.bottom = "160px";
     this.root.style.padding = "10px 12px";
     this.root.style.background = "rgba(0,0,0,0.55)";
     this.root.style.border = "1px solid rgba(255,255,255,0.12)";
@@ -32,7 +32,7 @@ export class TuningPanel {
     this.root.style.fontFamily =
       "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
     this.root.style.fontSize = "12px";
-    this.root.style.width = "320px";
+    this.root.style.width = "300px";
     this.root.style.pointerEvents = "auto";
 
     this.root.appendChild(this.titleRow("Tuning"));
@@ -162,4 +162,3 @@ export class TuningPanel {
     if (bias) bias.textContent = `${Math.round(this.values.driveBiasFront01 * 100)}%`;
   }
 }
-
