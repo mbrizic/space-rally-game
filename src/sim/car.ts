@@ -194,7 +194,8 @@ export function stepCar(
   const rearGripScale = lerp(1, clamp(params.handbrakeRearGripScale, 0.05, 1), handbrake);
   const lateralCapRearN = lateralCapRearBaseN * rearGripScale;
 
-  const lowSpeedForceFade = clamp(speedMS / Math.max(0.4, params.lowSpeedForceFadeMS), 0, 1);
+  const lowSpeedBase = clamp(speedMS / Math.max(0.4, params.lowSpeedForceFadeMS), 0, 1);
+  const lowSpeedForceFade = lowSpeedBase * lowSpeedBase;
 
   const lateralForceFrontN =
     lowSpeedForceFade *
@@ -230,8 +231,9 @@ export function stepCar(
   const nextR = state.yawRateRadS + dr * dtSeconds;
 
   // Simple damping to avoid low-speed self-spinning and endless sideways drift.
-  const dampYaw = Math.exp(-Math.max(0, params.yawDampingPerS) * dtSeconds);
-  const dampLat = Math.exp(-Math.max(0, params.lateralDampingPerS) * dtSeconds);
+  const lowSpeedStability = clamp(1 - speedMS / 3, 0, 1);
+  const dampYaw = Math.exp(-Math.max(0, params.yawDampingPerS) * lowSpeedStability * dtSeconds);
+  const dampLat = Math.exp(-Math.max(0, params.lateralDampingPerS) * lowSpeedStability * dtSeconds);
   const nextVyDamped = nextVy * dampLat;
   const nextRDamped = nextR * dampYaw;
 
