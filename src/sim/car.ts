@@ -12,6 +12,7 @@ export type CarParams = {
   frictionMu: number;
   maxSteerRad: number;
   engineForceN: number;
+  engineFadeSpeedMS: number;
   brakeForceN: number;
   handbrakeForceN: number;
   handbrakeRearGripScale: number; // 0..1 (lower = more slide)
@@ -57,7 +58,7 @@ export function defaultCarParams(): CarParams {
   const cgToFrontAxleM = 1.1;
   const cgToRearAxleM = wheelbaseM - cgToFrontAxleM;
   return {
-    massKg: 980,
+    massKg: 1200,
     inertiaYawKgM2: 1650,
     wheelbaseM,
     cgToFrontAxleM,
@@ -67,14 +68,15 @@ export function defaultCarParams(): CarParams {
     corneringStiffnessRearNPerRad: 80000,
     frictionMu: 1.05,
     maxSteerRad: 0.62,
-    engineForceN: 21000,
+    engineForceN: 14000,
+    engineFadeSpeedMS: 33,
     brakeForceN: 19000,
     handbrakeForceN: 9000,
     handbrakeRearGripScale: 0.32,
     driveBiasFront: 0.48,
     brakeBiasFront: 0.65,
     rollingResistanceN: 260,
-    aeroDragNPerMS2: 18
+    aeroDragNPerMS2: 10
   };
 }
 
@@ -117,7 +119,8 @@ export function stepCar(
   const b = params.cgToRearAxleM;
 
   // Longitudinal forces (requested).
-  const driveTotalN = throttle * params.engineForceN;
+  const engineFade = clamp(1 - speedMS / Math.max(1, params.engineFadeSpeedMS), 0.35, 1);
+  const driveTotalN = throttle * params.engineForceN * engineFade;
   const brakeTotalN = brake * params.brakeForceN;
 
   const rollingResistanceN = environment?.rollingResistanceN ?? params.rollingResistanceN;
