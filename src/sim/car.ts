@@ -13,6 +13,8 @@ export type CarParams = {
   maxSteerRad: number;
   engineForceN: number;
   brakeForceN: number;
+  handbrakeForceN: number;
+  handbrakeRearGripScale: number; // 0..1 (lower = more slide)
   driveBiasFront: number; // 0 = RWD, 1 = FWD
   brakeBiasFront: number; // 0 = rear-only, 1 = front-only
   rollingResistanceN: number;
@@ -23,6 +25,7 @@ export type CarControls = {
   steer: number; // [-1..1]
   throttle: number; // [0..1]
   brake: number; // [0..1]
+  handbrake: number; // [0..1]
 };
 
 export type CarState = {
@@ -66,6 +69,8 @@ export function defaultCarParams(): CarParams {
     maxSteerRad: 0.62,
     engineForceN: 8200,
     brakeForceN: 14000,
+    handbrakeForceN: 9000,
+    handbrakeRearGripScale: 0.32,
     driveBiasFront: 0.48,
     brakeBiasFront: 0.65,
     rollingResistanceN: 260,
@@ -94,6 +99,7 @@ export function stepCar(
   const steerInput = clamp(controls.steer, -1, 1);
   const throttle = clamp(controls.throttle, 0, 1);
   const brake = clamp(controls.brake, 0, 1);
+  const handbrake = clamp(controls.handbrake, 0, 1);
 
   const speedMS = Math.hypot(state.vxMS, state.vyMS);
   const steerLimiter = clamp(1 - speedMS * 0.03, 0.25, 1);
@@ -122,7 +128,7 @@ export function stepCar(
   const driveRearN = driveTotalN - driveFrontN;
 
   const brakeFrontN = brakeTotalN * clamp(params.brakeBiasFront, 0, 1);
-  const brakeRearN = brakeTotalN - brakeFrontN;
+  const brakeRearN = brakeTotalN - brakeFrontN + handbrake * params.handbrakeForceN;
 
   const resistFrontN = resistN * (normalLoadFrontStaticN / weightN);
   const resistRearN = resistN - resistFrontN;
@@ -149,7 +155,9 @@ export function stepCar(
   const longitudinalForceRearN = clamp(fxRearRequestN, -maxFRear, maxFRear);
 
   const lateralCapFrontN = Math.sqrt(Math.max(0, maxFFront * maxFFront - longitudinalForceFrontN * longitudinalForceFrontN));
-  const lateralCapRearN = Math.sqrt(Math.max(0, maxFRear * maxFRear - longitudinalForceRearN * longitudinalForceRearN));
+  const lateralCapRearBaseN = Math.sqrt(Math.max(0, maxFRear * maxFRear - longitudinalForceRearN * longitudinalForceRearN));
+  const rearGripScale = lerp(1, clamp(params.handbrakeRearGripScale, 0.05, 1), handbrake);
+  const lateralCapRearN = lateralCapRearBaseN * rearGripScale;
 
   const lateralForceFrontN = clamp(
     -params.corneringStiffnessFrontNPerRad * slipAngleFrontRad,
@@ -157,7 +165,7 @@ export function stepCar(
     lateralCapFrontN
   );
   const lateralForceRearN = clamp(
-    -params.corneringStiffnessRearNPerRad * slipAngleRearRad,
+    -params.corneringStiffnessRearNPerRad * rearGripScale * slipAngleRearRad,
     -lateralCapRearN,
     lateralCapRearN
   );
@@ -210,4 +218,8 @@ export function stepCar(
       normalLoadRearN
     }
   };
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
 }

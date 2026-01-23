@@ -108,6 +108,7 @@ export class Game {
     const steer = this.input.axis("steer"); // [-1..1]
     const throttle = this.input.axis("throttle"); // [0..1]
     const brake = this.input.axis("brake"); // [0..1]
+    const handbrake = this.input.axis("handbrake"); // [0..1]
 
     const projection = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
     const offTrack = projection.distanceToCenterlineM > this.track.widthM * 0.5;
@@ -117,7 +118,7 @@ export class Game {
     const stepped = stepCar(
       this.state.car,
       this.carParams,
-      { steer, throttle, brake },
+      { steer, throttle, brake, handbrake },
       dtSeconds,
       { frictionMu: this.lastSurface.frictionMu, rollingResistanceN: this.lastSurface.rollingResistanceN }
     );
@@ -175,6 +176,7 @@ export class Game {
         `steer: ${this.input.axis("steer").toFixed(2)}  throttle: ${this.input.axis("throttle").toFixed(2)}  brake: ${this.input
           .axis("brake")
           .toFixed(2)}`,
+        `handbrake: ${this.input.axis("handbrake").toFixed(2)}`,
         `yawRate: ${this.state.car.yawRateRadS.toFixed(2)} rad/s`,
         `checkpoint: ${this.nextCheckpointIndex + 1}/${this.checkpointSM.length}`,
         `surface: ${this.lastSurface.name}  (μ=${this.lastSurface.frictionMu.toFixed(2)})`
@@ -190,7 +192,7 @@ export class Game {
         `W / ↑  throttle`,
         `S / ↓  brake`,
         `A/D or ←/→ steer`,
-        `Space  handbrake (reserved)`,
+        `Space  handbrake`,
         `R      reset`
       ]
     });
