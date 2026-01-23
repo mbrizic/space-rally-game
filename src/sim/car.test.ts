@@ -67,4 +67,27 @@ describe("car physics sanity", () => {
     expect(Math.abs(cur.xM)).toBeLessThan(1e-3);
     expect(Math.abs(cur.yM)).toBeLessThan(1e-3);
   });
+
+  it("coasts down without growing yaw at speed", () => {
+    const params = defaultCarParams();
+    const state = createCarState();
+    state.vxMS = 20;
+    state.vyMS = 0.8;
+    state.yawRateRadS = 1.0;
+    state.steerAngleRad = 0;
+
+    let cur = state;
+    for (let i = 0; i < 240; i++) {
+      cur = stepCar(
+        cur,
+        params,
+        { steer: 0, throttle: 0, brake: 0, handbrake: 0 },
+        1 / 120,
+        { frictionMu: 1.02, rollingResistanceN: 260, aeroDragNPerMS2: 10 }
+      ).state;
+    }
+
+    expect(Math.abs(cur.yawRateRadS)).toBeLessThan(0.7);
+    expect(Math.abs(cur.vyMS)).toBeLessThan(0.7);
+  });
 });
