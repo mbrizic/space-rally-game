@@ -30,6 +30,7 @@ export class Game {
   private damage01 = 0;
   private lastSurface: Surface = { name: "tarmac", frictionMu: 1, rollingResistanceN: 260 };
   private lastTrackS = 0;
+  private showForceArrows = true;
   private running = false;
 
   private lastFrameTimeMs = 0;
@@ -80,6 +81,7 @@ export class Game {
 
     window.addEventListener("keydown", (e) => {
       if (e.code === "KeyR") this.reset();
+      if (e.code === "KeyF") this.showForceArrows = !this.showForceArrows;
     });
 
     this.reset();
@@ -211,6 +213,10 @@ export class Game {
       speed: this.speedMS()
     });
 
+    if (this.showForceArrows) {
+      this.drawForceArrows();
+    }
+
     this.renderer.endCamera();
 
     const speedMS = this.speedMS();
@@ -245,6 +251,7 @@ export class Game {
         `A/D or ←/→ steer`,
         `Space  handbrake`,
         `R      reset`,
+        `F      force arrows`,
         `pass CPs then START`
       ]
     });
@@ -300,6 +307,95 @@ export class Game {
 
   private speedMS(): number {
     return Math.hypot(this.state.car.vxMS, this.state.car.vyMS);
+  }
+
+  private drawForceArrows(): void {
+    const t = this.state.carTelemetry;
+    const car = this.state.car;
+    const p = this.carParams;
+
+    const cosH = Math.cos(car.headingRad);
+    const sinH = Math.sin(car.headingRad);
+    const forwardX = cosH;
+    const forwardY = sinH;
+    const leftX = -sinH;
+    const leftY = cosH;
+
+    const a = p.cgToFrontAxleM;
+    const b = p.cgToRearAxleM;
+
+    const frontX = car.xM + forwardX * a;
+    const frontY = car.yM + forwardY * a;
+    const rearX = car.xM - forwardX * b;
+    const rearY = car.yM - forwardY * b;
+
+    const cosSteer = Math.cos(t.steerAngleRad);
+    const sinSteer = Math.sin(t.steerAngleRad);
+
+    const fxFrontBodyN = t.longitudinalForceFrontN * cosSteer - t.lateralForceFrontN * sinSteer;
+    const fyFrontBodyN = t.lateralForceFrontN * cosSteer + t.longitudinalForceFrontN * sinSteer;
+    const fxRearBodyN = t.longitudinalForceRearN;
+    const fyRearBodyN = t.lateralForceRearN;
+
+    const fxNetBodyN = fxRearBodyN + fxFrontBodyN;
+    const fyNetBodyN = fyRearBodyN + fyFrontBodyN;
+
+    const toWorldX = (fxBody: number, fyBody: number) => fxBody * cosH - fyBody * sinH;
+    const toWorldY = (fxBody: number, fyBody: number) => fxBody * sinH + fyBody * cosH;
+
+    const forceScaleMPerN = 1 / 9000;
+    this.renderer.drawArrow({
+      x: rearX,
+      y: rearY,
+      dx: toWorldX(fxRearBodyN, fyRearBodyN) * forceScaleMPerN,
+      dy: toWorldY(fxRearBodyN, fyRearBodyN) * forceScaleMPerN,
+      color: "rgba(90, 210, 255, 0.85)",
+      label: "F_rear"
+    });
+    this.renderer.drawArrow({
+      x: frontX,
+      y: frontY,
+      dx: toWorldX(fxFrontBodyN, fyFrontBodyN) * forceScaleMPerN,
+      dy: toWorldY(fxFrontBodyN, fyFrontBodyN) * forceScaleMPerN,
+      color: "rgba(255, 205, 105, 0.88)",
+      label: "F_front"
+    });
+
+    const axBody = fxNetBodyN / p.massKg;
+    const ayBody = fyNetBodyN / p.massKg;
+    const accelScaleMPerMS2 = 0.14;
+    this.renderer.drawArrow({
+      x: car.xM,
+      y: car.yM,
+      dx: toWorldX(axBody, ayBody) * accelScaleMPerMS2,
+      dy: toWorldY(axBody, ayBody) * accelScaleMPerMS2,
+      color: "rgba(185, 255, 160, 0.85)",
+      label: "a"
+    });
+
+    const vxW = car.vxMS * cosH - car.vyMS * sinH;
+    const vyW = car.vxMS * sinH + car.vyMS * cosH;
+    const velScaleMPerMS = 0.32;
+    this.renderer.drawArrow({
+      x: car.xM,
+      y: car.yM,
+      dx: vxW * velScaleMPerMS,
+      dy: vyW * velScaleMPerMS,
+      color: "rgba(232, 236, 241, 0.72)",
+      label: "v"
+    });
+
+    // Lateral velocity component (useful for Scandinavian flick timing).
+    const vLat = car.vyMS;
+    const vLatScaleMPerMS = 0.45;
+    this.renderer.drawArrow({
+      x: car.xM,
+      y: car.yM,
+      dx: leftX * vLat * vLatScaleMPerMS,
+      dy: leftY * vLat * vLatScaleMPerMS,
+      color: "rgba(255, 120, 180, 0.75)",
+      label: "v_lat"
+    });
   }
 
   private reset(): void {

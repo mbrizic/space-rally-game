@@ -217,6 +217,50 @@ export class Renderer2D {
     ctx.restore();
   }
 
+  drawArrow(opts: { x: number; y: number; dx: number; dy: number; color: string; label?: string }): void {
+    const ctx = this.ctx;
+    const len = Math.hypot(opts.dx, opts.dy);
+    if (len < 1e-6) return;
+
+    const toX = opts.x + opts.dx;
+    const toY = opts.y + opts.dy;
+    const ux = opts.dx / len;
+    const uy = opts.dy / len;
+
+    ctx.save();
+    ctx.strokeStyle = opts.color;
+    ctx.fillStyle = opts.color;
+    ctx.lineWidth = 0.14;
+
+    ctx.beginPath();
+    ctx.moveTo(opts.x, opts.y);
+    ctx.lineTo(toX, toY);
+    ctx.stroke();
+
+    const headLen = Math.min(0.55, Math.max(0.22, len * 0.22));
+    const leftX = toX - ux * headLen - uy * headLen * 0.55;
+    const leftY = toY - uy * headLen + ux * headLen * 0.55;
+    const rightX = toX - ux * headLen + uy * headLen * 0.55;
+    const rightY = toY - uy * headLen - ux * headLen * 0.55;
+
+    ctx.beginPath();
+    ctx.moveTo(toX, toY);
+    ctx.lineTo(leftX, leftY);
+    ctx.lineTo(rightX, rightY);
+    ctx.closePath();
+    ctx.fill();
+
+    if (opts.label) {
+      ctx.fillStyle = "rgba(232,236,241,0.9)";
+      ctx.font = "0.45px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+      ctx.textBaseline = "alphabetic";
+      ctx.textAlign = "left";
+      ctx.fillText(opts.label, toX + uy * 0.25, toY - ux * 0.25);
+    }
+
+    ctx.restore();
+  }
+
   drawCar(car: { x: number; y: number; headingRad: number; speed: number }): void {
     const ctx = this.ctx;
     ctx.save();
