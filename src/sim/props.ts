@@ -14,8 +14,10 @@ export function generateTrees(track: Track, opts?: { seed?: number }): CircleObs
   const rand = mulberry32(seed);
 
   const trees: CircleObstacle[] = [];
-  const spacingM = 14;
-  const baseOffsetM = track.widthM * 0.75;
+  const spacingM = 12;
+  const roadHalfWidthM = track.widthM * 0.5;
+  const minOffsetM = roadHalfWidthM + 1.2;
+  const maxOffsetM = roadHalfWidthM + 4.2;
 
   let id = 1;
   for (let s = 0; s < track.totalLengthM; s += spacingM) {
@@ -27,12 +29,14 @@ export function generateTrees(track: Track, opts?: { seed?: number }): CircleObs
     const sideCount = 2;
     for (let side = 0; side < sideCount; side++) {
       const sign = side === 0 ? -1 : 1;
-      const jitterAlong = (rand() - 0.5) * 8;
-      const jitterOut = (rand() - 0.5) * 6;
-      const offset = baseOffsetM + 3 + rand() * 7 + jitterOut;
+      const jitterAlong = (rand() - 0.5) * 10;
+      const jitterOut = (rand() - 0.5) * 1.2;
+      const offset = clamp(minOffsetM + rand() * (maxOffsetM - minOffsetM) + jitterOut, minOffsetM, maxOffsetM);
 
-      const x = p.x + normal.x * sign * offset + normal.x * 0 + jitterAlong * (-normal.y);
-      const y = p.y + normal.y * sign * offset + normal.y * 0 + jitterAlong * (normal.x);
+      const tx = -normal.y;
+      const ty = normal.x;
+      const x = p.x + normal.x * sign * offset + tx * jitterAlong;
+      const y = p.y + normal.y * sign * offset + ty * jitterAlong;
       const r = 0.9 + rand() * 0.6;
 
       trees.push({ id: id++, kind: "tree", x, y, r });
@@ -76,3 +80,6 @@ function wrapS(sM: number, totalLengthM: number): number {
   return t < 0 ? t + totalLengthM : t;
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
