@@ -25,8 +25,6 @@ export class Game {
   private lapStartTimeSeconds = 0;
   private lapCount = 0;
   private bestLapTimeSeconds: number | null = null;
-  private countdownSecondsRemaining = 0;
-  private goFlashSecondsRemaining = 0;
   private damage01 = 0;
   private lastSurface: Surface = { name: "tarmac", frictionMu: 1, rollingResistanceN: 260 };
   private lastTrackS = 0;
@@ -125,26 +123,7 @@ export class Game {
   private step(dtSeconds: number): void {
     this.state.timeSeconds += dtSeconds;
 
-    if (this.countdownSecondsRemaining > 0) {
-      this.countdownSecondsRemaining = Math.max(0, this.countdownSecondsRemaining - dtSeconds);
-      this.state.car.vxMS = 0;
-      this.state.car.vyMS = 0;
-      this.state.car.yawRateRadS = 0;
-      this.state.car.alphaFrontRad = 0;
-      this.state.car.alphaRearRad = 0;
-      if (this.countdownSecondsRemaining === 0 && !this.lapActive) {
-        this.lapActive = true;
-        this.lapStartTimeSeconds = this.state.timeSeconds;
-        this.nextCheckpointIndex = 1;
-        this.insideActiveGate = false;
-        this.goFlashSecondsRemaining = 0.9;
-      }
-    }
-    if (this.goFlashSecondsRemaining > 0) {
-      this.goFlashSecondsRemaining = Math.max(0, this.goFlashSecondsRemaining - dtSeconds);
-    }
-
-    const inputsEnabled = this.countdownSecondsRemaining === 0 && this.damage01 < 1;
+    const inputsEnabled = this.damage01 < 1;
     const steer = inputsEnabled ? this.input.axis("steer") : 0; // [-1..1]
     const throttle = inputsEnabled ? this.input.axis("throttle") : 0; // [0..1]
     const brake = inputsEnabled ? this.input.axis("brake") : 0; // [0..1]
@@ -258,7 +237,7 @@ export class Game {
         `Space  handbrake`,
         `R      reset`,
         `F      force arrows`,
-        `pass CPs then START`
+        `cross START to begin timer`
       ]
     });
 
@@ -281,12 +260,7 @@ export class Game {
     });
 
     const lapTime = this.lapActive ? this.state.timeSeconds - this.lapStartTimeSeconds : 0;
-    const stageLine =
-      this.countdownSecondsRemaining > 0
-        ? `start in: ${Math.ceil(this.countdownSecondsRemaining)}…`
-        : this.goFlashSecondsRemaining > 0
-          ? `GO!`
-          : `running`;
+    const stageLine = this.lapActive ? `running` : `not started`;
     this.renderer.drawPanel({
       x: width - 12,
       y: height - 12,
@@ -302,11 +276,7 @@ export class Game {
       ]
     });
 
-    if (this.countdownSecondsRemaining > 0) {
-      this.renderer.drawCenterText({ text: `${Math.ceil(this.countdownSecondsRemaining)}`, subtext: "Get ready" });
-    } else if (this.goFlashSecondsRemaining > 0) {
-      this.renderer.drawCenterText({ text: "GO!", subtext: "Pedal steer" });
-    } else if (this.damage01 >= 1) {
+    if (this.damage01 >= 1) {
       this.renderer.drawCenterText({ text: "WRECKED", subtext: "Press R to reset" });
     }
   }
@@ -416,8 +386,6 @@ export class Game {
     this.insideActiveGate = false;
     this.lapActive = false;
     this.lapStartTimeSeconds = this.state.timeSeconds;
-    this.countdownSecondsRemaining = 3;
-    this.goFlashSecondsRemaining = 0;
     this.damage01 = 0;
   }
 
@@ -434,13 +402,20 @@ export class Game {
       proj.distanceToCenterlineM < this.track.widthM * 0.6;
 
     if (insideGate && !this.insideActiveGate) {
-      if (this.nextCheckpointIndex === 0 && this.lapActive) {
-        const lapTime = this.state.timeSeconds - this.lapStartTimeSeconds;
-        this.lapStartTimeSeconds = this.state.timeSeconds;
-        this.lapCount += 1;
-        this.bestLapTimeSeconds =
-          this.bestLapTimeSeconds === null ? lapTime : Math.min(this.bestLapTimeSeconds, lapTime);
-        this.nextCheckpointIndex = 1;
+      if (this.nextCheckpointIndex === 0) {
+        if (!this.lapActive) {
+          // Start the stage timer the first time we cross START.
+          this.lapActive = true;
+          this.lapStartTimeSeconds = this.state.timeSeconds;
+          this.nextCheckpointIndex = 1;
+        } else {
+          const lapTime = this.state.timeSeconds - this.lapStartTimeSeconds;
+          this.lapStartTimeSeconds = this.state.timeSeconds;
+          this.lapCount += 1;
+          this.bestLapTimeSeconds =
+            this.bestLapTimeSeconds === null ? lapTime : Math.min(this.bestLapTimeSeconds, lapTime);
+          this.nextCheckpointIndex = 1;
+        }
       } else {
         this.nextCheckpointIndex = (this.nextCheckpointIndex + 1) % this.checkpointSM.length;
       }
