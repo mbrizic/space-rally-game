@@ -31,6 +31,7 @@ export type CarParams = {
   maxReverseSpeedMS: number;
   reverseEngineScale: number;
   torqueCutOnSteer01: number; // 0..1, reduces drive when steering
+  tractionEllipseP: number; // >= 1 (lower => less understeer under power)
 };
 
 export type CarControls = {
@@ -87,7 +88,7 @@ export function defaultCarParams(): CarParams {
     corneringStiffnessFrontNPerRad: 76000,
     corneringStiffnessRearNPerRad: 72000,
     frictionMu: 1.02,
-    maxSteerRad: 0.64,
+    maxSteerRad: 0.68,
     maxSteerRateRadS: 2.2,
     engineForceN: 14000,
     engineFadeSpeedMS: 33,
@@ -102,13 +103,14 @@ export function defaultCarParams(): CarParams {
     lowSpeedForceFadeMS: 1.4,
     yawDampingPerS: 2.2,
     lateralDampingPerS: 1.4,
-    yawDampingHighSpeedPerS: 4.0,
-    lateralDampingHighSpeedPerS: 2.8,
+    yawDampingHighSpeedPerS: 4.8,
+    lateralDampingHighSpeedPerS: 3.4,
     rollingResistanceN: 260,
     aeroDragNPerMS2: 10,
     maxReverseSpeedMS: 9,
     reverseEngineScale: 1.5,
-    torqueCutOnSteer01: 0.6
+    torqueCutOnSteer01: 0.78,
+    tractionEllipseP: 1.6
   };
 }
 
@@ -143,7 +145,7 @@ export function stepCar(
   const speedMS = Math.hypot(state.vxMS, state.vyMS);
   // Steering limit should follow momentum (speed), not throttle. Keep full steering at low speed
   // (e.g. launch) and reduce only after we're moving quickly.
-  const steerLimiter = clamp(1 - Math.max(0, speedMS - 8) * 0.015, 0.38, 1);
+  const steerLimiter = clamp(1 - Math.max(0, speedMS - 8) * 0.012, 0.42, 1);
   const steerCmdRad = steerInput * params.maxSteerRad * steerLimiter;
   const maxDeltaSteer = Math.max(0.1, params.maxSteerRateRadS) * dtSeconds;
   const steerAngleRad = state.steerAngleRad + clamp(steerCmdRad - state.steerAngleRad, -maxDeltaSteer, maxDeltaSteer);
@@ -220,8 +222,9 @@ export function stepCar(
   const longitudinalForceFrontN = clamp(fxFrontRequestN, -maxFFront, maxFFront);
   const longitudinalForceRearN = clamp(fxRearRequestN, -maxFRear, maxFRear);
 
-  const lateralCapFrontN = Math.sqrt(Math.max(0, maxFFront * maxFFront - longitudinalForceFrontN * longitudinalForceFrontN));
-  const lateralCapRearBaseN = Math.sqrt(Math.max(0, maxFRear * maxFRear - longitudinalForceRearN * longitudinalForceRearN));
+  const ellipseP = Math.max(1.05, params.tractionEllipseP);
+  const lateralCapFrontN = lateralCapacity(maxFFront, longitudinalForceFrontN, ellipseP);
+  const lateralCapRearBaseN = lateralCapacity(maxFRear, longitudinalForceRearN, ellipseP);
   const rearGripScale = lerp(1, clamp(params.handbrakeRearGripScale, 0.05, 1), handbrake);
   const lateralCapRearN = lateralCapRearBaseN * rearGripScale;
 
@@ -271,7 +274,7 @@ export function stepCar(
   const muMin = 0.55;
   const lowMu01 = clamp((muRef - surfaceMu) / Math.max(0.01, muRef - muMin), 0, 1);
   // Extra high-speed damping is mostly for loose surfaces; keep it minimal on tarmac.
-  const surfaceDampingScale = 0.12 + 0.88 * lowMu01;
+  const surfaceDampingScale = 0.10 + 0.90 * lowMu01;
 
   const yawDampingPerS =
     Math.max(0, params.yawDampingPerS) * lowSpeedStability +
@@ -324,4 +327,11 @@ export function stepCar(
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
+}
+
+function lateralCapacity(maxF: number, fx: number, p: number): number {
+  if (maxF <= 0) return 0;
+  const x = clamp(Math.abs(fx) / maxF, 0, 1);
+  const inside = 1 - Math.pow(x, p);
+  return maxF * Math.pow(Math.max(0, inside), 1 / p);
 }
