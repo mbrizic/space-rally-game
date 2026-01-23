@@ -23,6 +23,7 @@ export class Game {
   private lapStartTimeSeconds = 0;
   private lapCount = 0;
   private bestLapTimeSeconds: number | null = null;
+  private countdownSecondsRemaining = 0;
   private lastSurface: Surface = { name: "tarmac", frictionMu: 1, rollingResistanceN: 260 };
   private lastTrackS = 0;
   private running = false;
@@ -114,10 +115,24 @@ export class Game {
   private step(dtSeconds: number): void {
     this.state.timeSeconds += dtSeconds;
 
-    const steer = this.input.axis("steer"); // [-1..1]
-    const throttle = this.input.axis("throttle"); // [0..1]
-    const brake = this.input.axis("brake"); // [0..1]
-    const handbrake = this.input.axis("handbrake"); // [0..1]
+    if (this.countdownSecondsRemaining > 0) {
+      this.countdownSecondsRemaining = Math.max(0, this.countdownSecondsRemaining - dtSeconds);
+      this.state.car.vxMS = 0;
+      this.state.car.vyMS = 0;
+      this.state.car.yawRateRadS = 0;
+      if (this.countdownSecondsRemaining === 0 && !this.lapActive) {
+        this.lapActive = true;
+        this.lapStartTimeSeconds = this.state.timeSeconds;
+        this.nextCheckpointIndex = 1;
+        this.insideActiveGate = false;
+      }
+    }
+
+    const inputsEnabled = this.countdownSecondsRemaining === 0;
+    const steer = inputsEnabled ? this.input.axis("steer") : 0; // [-1..1]
+    const throttle = inputsEnabled ? this.input.axis("throttle") : 0; // [0..1]
+    const brake = inputsEnabled ? this.input.axis("brake") : 0; // [0..1]
+    const handbrake = inputsEnabled ? this.input.axis("handbrake") : 0; // [0..1]
 
     const projectionBefore = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
     const roadHalfWidthM = this.track.widthM * 0.5;
@@ -240,7 +255,8 @@ export class Game {
         `lap: ${this.lapCount}`,
         `time: ${lapTime.toFixed(2)}s`,
         `best: ${this.bestLapTimeSeconds ? `${this.bestLapTimeSeconds.toFixed(2)}s` : "--"}`,
-        `s: ${this.lastTrackS.toFixed(1)}m`
+        `s: ${this.lastTrackS.toFixed(1)}m`,
+        this.countdownSecondsRemaining > 0 ? `start in: ${Math.ceil(this.countdownSecondsRemaining)}…` : `start: GO`
       ]
     });
   }
@@ -250,7 +266,7 @@ export class Game {
   }
 
   private reset(): void {
-    const spawn = pointOnTrack(this.track, 6);
+    const spawn = pointOnTrack(this.track, this.track.totalLengthM - 6);
     this.state.car = {
       ...createCarState(),
       xM: spawn.p.x,
@@ -261,6 +277,7 @@ export class Game {
     this.insideActiveGate = false;
     this.lapActive = false;
     this.lapStartTimeSeconds = this.state.timeSeconds;
+    this.countdownSecondsRemaining = 3;
   }
 
   private updateCheckpointsAndLap(proj: TrackProjection): void {
@@ -276,19 +293,16 @@ export class Game {
       proj.distanceToCenterlineM < this.track.widthM * 0.6;
 
     if (insideGate && !this.insideActiveGate) {
-      if (this.nextCheckpointIndex === 0) {
-        if (!this.lapActive) {
-          this.lapActive = true;
-          this.lapStartTimeSeconds = this.state.timeSeconds;
-        } else {
-          const lapTime = this.state.timeSeconds - this.lapStartTimeSeconds;
-          this.lapStartTimeSeconds = this.state.timeSeconds;
-          this.lapCount += 1;
-          this.bestLapTimeSeconds = this.bestLapTimeSeconds === null ? lapTime : Math.min(this.bestLapTimeSeconds, lapTime);
-        }
+      if (this.nextCheckpointIndex === 0 && this.lapActive) {
+        const lapTime = this.state.timeSeconds - this.lapStartTimeSeconds;
+        this.lapStartTimeSeconds = this.state.timeSeconds;
+        this.lapCount += 1;
+        this.bestLapTimeSeconds =
+          this.bestLapTimeSeconds === null ? lapTime : Math.min(this.bestLapTimeSeconds, lapTime);
+        this.nextCheckpointIndex = 1;
+      } else {
+        this.nextCheckpointIndex = (this.nextCheckpointIndex + 1) % this.checkpointSM.length;
       }
-
-      this.nextCheckpointIndex = (this.nextCheckpointIndex + 1) % this.checkpointSM.length;
       this.insideActiveGate = true;
     } else if (!insideGate) {
       this.insideActiveGate = false;
