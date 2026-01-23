@@ -26,6 +26,7 @@ describe("car physics sanity", () => {
     state.vxMS = 0.2;
     state.vyMS = 0;
     state.yawRateRadS = 4;
+    state.steerAngleRad = 0;
 
     let cur = state;
     for (let i = 0; i < 240; i++) {
@@ -55,6 +56,7 @@ describe("car physics sanity", () => {
     state.vxMS = 0;
     state.vyMS = 0;
     state.yawRateRadS = 0;
+    state.steerAngleRad = 0;
 
     let cur = state;
     for (let i = 0; i < 240; i++) {

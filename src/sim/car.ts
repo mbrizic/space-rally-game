@@ -11,6 +11,7 @@ export type CarParams = {
   corneringStiffnessRearNPerRad: number;
   frictionMu: number;
   maxSteerRad: number;
+  maxSteerRateRadS: number;
   engineForceN: number;
   engineFadeSpeedMS: number;
   brakeForceN: number;
@@ -23,6 +24,8 @@ export type CarParams = {
   lowSpeedForceFadeMS: number;
   yawDampingPerS: number;
   lateralDampingPerS: number;
+  yawDampingHighSpeedPerS: number;
+  lateralDampingHighSpeedPerS: number;
   rollingResistanceN: number;
   aeroDragNPerMS2: number;
 };
@@ -44,6 +47,9 @@ export type CarState = {
   vyMS: number;
 
   yawRateRadS: number;
+
+  // Actual steer angle state (rate-limited).
+  steerAngleRad: number;
 
   // Tire slip angle state (relaxation).
   alphaFrontRad: number;
@@ -79,6 +85,7 @@ export function defaultCarParams(): CarParams {
     corneringStiffnessRearNPerRad: 80000,
     frictionMu: 1.05,
     maxSteerRad: 0.62,
+    maxSteerRateRadS: 2.6,
     engineForceN: 14000,
     engineFadeSpeedMS: 33,
     brakeForceN: 19000,
@@ -86,11 +93,14 @@ export function defaultCarParams(): CarParams {
     handbrakeRearGripScale: 0.32,
     driveBiasFront: 0.48,
     brakeBiasFront: 0.65,
-    relaxationLengthFrontM: 7.5,
-    relaxationLengthRearM: 9.5,
+    // Shorter relaxation => less "springy" snap, still enough transient for flicks.
+    relaxationLengthFrontM: 3.2,
+    relaxationLengthRearM: 4.4,
     lowSpeedForceFadeMS: 1.4,
     yawDampingPerS: 2.2,
     lateralDampingPerS: 1.4,
+    yawDampingHighSpeedPerS: 0.22,
+    lateralDampingHighSpeedPerS: 0.08,
     rollingResistanceN: 260,
     aeroDragNPerMS2: 10
   };
@@ -104,6 +114,7 @@ export function createCarState(): CarState {
     vxMS: 0,
     vyMS: 0,
     yawRateRadS: 0,
+    steerAngleRad: 0,
     alphaFrontRad: 0,
     alphaRearRad: 0
   };
@@ -123,7 +134,9 @@ export function stepCar(
 
   const speedMS = Math.hypot(state.vxMS, state.vyMS);
   const steerLimiter = clamp(1 - speedMS * 0.03, 0.25, 1);
-  const steerAngleRad = steerInput * params.maxSteerRad * steerLimiter;
+  const steerCmdRad = steerInput * params.maxSteerRad * steerLimiter;
+  const maxDeltaSteer = Math.max(0.1, params.maxSteerRateRadS) * dtSeconds;
+  const steerAngleRad = state.steerAngleRad + clamp(steerCmdRad - state.steerAngleRad, -maxDeltaSteer, maxDeltaSteer);
 
   const g = 9.81;
   const weightN = params.massKg * g;
@@ -235,8 +248,15 @@ export function stepCar(
 
   // Simple damping to avoid low-speed self-spinning and endless sideways drift.
   const lowSpeedStability = clamp(1 - speedMS / 3, 0, 1);
-  const dampYaw = Math.exp(-Math.max(0, params.yawDampingPerS) * lowSpeedStability * dtSeconds);
-  const dampLat = Math.exp(-Math.max(0, params.lateralDampingPerS) * lowSpeedStability * dtSeconds);
+  const highSpeedStability = clamp(speedMS / 12, 0, 1);
+  const yawDampingPerS =
+    Math.max(0, params.yawDampingPerS) * lowSpeedStability +
+    Math.max(0, params.yawDampingHighSpeedPerS) * highSpeedStability;
+  const lateralDampingPerS =
+    Math.max(0, params.lateralDampingPerS) * lowSpeedStability +
+    Math.max(0, params.lateralDampingHighSpeedPerS) * highSpeedStability;
+  const dampYaw = Math.exp(-yawDampingPerS * dtSeconds);
+  const dampLat = Math.exp(-lateralDampingPerS * dtSeconds);
   const nextVyDamped = nextVy * dampLat;
   const nextRDamped = nextR * dampYaw;
 
@@ -255,6 +275,7 @@ export function stepCar(
     vxMS: nextVx,
     vyMS: nextVyDamped,
     yawRateRadS: nextRDamped,
+    steerAngleRad,
     alphaFrontRad,
     alphaRearRad
   };

@@ -157,6 +157,7 @@ export class Game {
       this.state.car.vxMS = 0;
       this.state.car.vyMS = 0;
       this.state.car.yawRateRadS = 0;
+      this.state.car.steerAngleRad = 0;
       this.state.car.alphaFrontRad = 0;
       this.state.car.alphaRearRad = 0;
     }
@@ -387,6 +388,7 @@ export class Game {
     this.lapActive = false;
     this.lapStartTimeSeconds = this.state.timeSeconds;
     this.damage01 = 0;
+    this.state.car.steerAngleRad = 0;
   }
 
   private updateCheckpointsAndLap(proj: TrackProjection): void {
