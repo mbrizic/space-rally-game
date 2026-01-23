@@ -90,4 +90,24 @@ describe("car physics sanity", () => {
     expect(Math.abs(cur.yawRateRadS)).toBeLessThan(0.7);
     expect(Math.abs(cur.vyMS)).toBeLessThan(0.7);
   });
+
+  it("turns under full throttle (tarmac)", () => {
+    const params = defaultCarParams();
+    const state = createCarState();
+
+    let cur = state;
+    for (let i = 0; i < 360; i++) {
+      cur = stepCar(
+        cur,
+        params,
+        { steer: 1, throttle: 1, brake: 0, handbrake: 0 },
+        1 / 120,
+        { frictionMu: 1.02, rollingResistanceN: 260, aeroDragNPerMS2: 10 }
+      ).state;
+    }
+
+    // Under full throttle + full steer, we should still arc noticeably (not go nearly straight).
+    expect(cur.headingRad).toBeGreaterThan(0.25);
+    expect(cur.yM).toBeGreaterThan(2.0);
+  });
 });

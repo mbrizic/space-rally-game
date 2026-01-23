@@ -32,6 +32,7 @@ export type CarParams = {
   reverseEngineScale: number;
   torqueCutOnSteer01: number; // 0..1, reduces drive when steering
   tractionEllipseP: number; // >= 1 (lower => less understeer under power)
+  frontFxLimitAtFullSteer01: number; // 0..1, reserve lateral grip on steer (assist)
 };
 
 export type CarControls = {
@@ -88,8 +89,8 @@ export function defaultCarParams(): CarParams {
     corneringStiffnessFrontNPerRad: 76000,
     corneringStiffnessRearNPerRad: 72000,
     frictionMu: 1.02,
-    maxSteerRad: 0.72,
-    maxSteerRateRadS: 3.0,
+    maxSteerRad: 0.78,
+    maxSteerRateRadS: 3.4,
     engineForceN: 14000,
     engineFadeSpeedMS: 33,
     brakeForceN: 19000,
@@ -110,8 +111,9 @@ export function defaultCarParams(): CarParams {
     aeroDragNPerMS2: 10,
     maxReverseSpeedMS: 12,
     reverseEngineScale: 2.0,
-    torqueCutOnSteer01: 0.45,
-    tractionEllipseP: 1.6
+    torqueCutOnSteer01: 0.55,
+    tractionEllipseP: 1.6,
+    frontFxLimitAtFullSteer01: 0.6
   };
 }
 
@@ -222,7 +224,11 @@ export function stepCar(
   const maxFFront = surfaceMu * normalLoadFrontN;
   const maxFRear = surfaceMu * normalLoadRearN;
 
-  const longitudinalForceFrontN = clamp(fxFrontRequestN, -maxFFront, maxFFront);
+  // Assist: reserve some front tire capacity for lateral force when steering.
+  const fxLimitFront =
+    maxFFront *
+    lerp(1, clamp(params.frontFxLimitAtFullSteer01, 0.2, 1), steerFrac01);
+  const longitudinalForceFrontN = clamp(fxFrontRequestN, -fxLimitFront, fxLimitFront);
   const longitudinalForceRearN = clamp(fxRearRequestN, -maxFRear, maxFRear);
 
   const ellipseP = Math.max(1.05, params.tractionEllipseP);

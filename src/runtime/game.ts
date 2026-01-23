@@ -575,7 +575,7 @@ export class Game {
   private resolveTreeCollisions(): void {
     if (this.damage01 >= 1) return;
 
-    const carRadius = 0.78;
+    const carRadius = 1.55;
     for (const tree of this.trees) {
       const dx = this.state.car.xM - tree.x;
       const dy = this.state.car.yM - tree.y;
