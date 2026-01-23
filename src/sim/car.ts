@@ -18,6 +18,8 @@ export type CarParams = {
   handbrakeRearGripScale: number; // 0..1 (lower = more slide)
   driveBiasFront: number; // 0 = RWD, 1 = FWD
   brakeBiasFront: number; // 0 = rear-only, 1 = front-only
+  relaxationLengthFrontM: number;
+  relaxationLengthRearM: number;
   rollingResistanceN: number;
   aeroDragNPerMS2: number;
 };
@@ -39,10 +41,16 @@ export type CarState = {
   vyMS: number;
 
   yawRateRadS: number;
+
+  // Tire slip angle state (relaxation).
+  alphaFrontRad: number;
+  alphaRearRad: number;
 };
 
 export type CarTelemetry = {
   steerAngleRad: number;
+  slipAngleFrontInstantRad: number;
+  slipAngleRearInstantRad: number;
   slipAngleFrontRad: number;
   slipAngleRearRad: number;
   longitudinalForceFrontN: number;
@@ -75,6 +83,8 @@ export function defaultCarParams(): CarParams {
     handbrakeRearGripScale: 0.32,
     driveBiasFront: 0.48,
     brakeBiasFront: 0.65,
+    relaxationLengthFrontM: 7.5,
+    relaxationLengthRearM: 9.5,
     rollingResistanceN: 260,
     aeroDragNPerMS2: 10
   };
@@ -87,7 +97,9 @@ export function createCarState(): CarState {
     headingRad: 0,
     vxMS: 0,
     vyMS: 0,
-    yawRateRadS: 0
+    yawRateRadS: 0,
+    alphaFrontRad: 0,
+    alphaRearRad: 0
   };
 }
 
@@ -145,9 +157,18 @@ export function stepCar(
   const normalLoadFrontN = clamp(normalLoadFrontStaticN - loadTransferN, 0.15 * weightN, 0.85 * weightN);
   const normalLoadRearN = clamp(normalLoadRearStaticN + loadTransferN, 0.15 * weightN, 0.85 * weightN);
 
-  // Slip angles.
-  const slipAngleFrontRad = Math.atan2(vy + a * r, vx) - steerAngleRad;
-  const slipAngleRearRad = Math.atan2(vy - b * r, vx);
+  // Slip angles (instantaneous).
+  const slipAngleFrontInstantRad = Math.atan2(vy + a * r, vx) - steerAngleRad;
+  const slipAngleRearInstantRad = Math.atan2(vy - b * r, vx);
+
+  // Tire relaxation (first-order lag based on distance traveled).
+  const relaxKFront = vx / Math.max(0.5, params.relaxationLengthFrontM);
+  const relaxKRear = vx / Math.max(0.5, params.relaxationLengthRearM);
+  const blendFront = 1 - Math.exp(-relaxKFront * dtSeconds);
+  const blendRear = 1 - Math.exp(-relaxKRear * dtSeconds);
+
+  const alphaFrontRad = state.alphaFrontRad + (slipAngleFrontInstantRad - state.alphaFrontRad) * clamp(blendFront, 0, 1);
+  const alphaRearRad = state.alphaRearRad + (slipAngleRearInstantRad - state.alphaRearRad) * clamp(blendRear, 0, 1);
 
   // Traction circle per axle: Fx steals available Fy.
   const frictionMu = environment?.frictionMu ?? params.frictionMu;
@@ -163,12 +184,12 @@ export function stepCar(
   const lateralCapRearN = lateralCapRearBaseN * rearGripScale;
 
   const lateralForceFrontN = clamp(
-    -params.corneringStiffnessFrontNPerRad * slipAngleFrontRad,
+    -params.corneringStiffnessFrontNPerRad * alphaFrontRad,
     -lateralCapFrontN,
     lateralCapFrontN
   );
   const lateralForceRearN = clamp(
-    -params.corneringStiffnessRearNPerRad * rearGripScale * slipAngleRearRad,
+    -params.corneringStiffnessRearNPerRad * rearGripScale * alphaRearRad,
     -lateralCapRearN,
     lateralCapRearN
   );
@@ -193,8 +214,9 @@ export function stepCar(
 
   const nextHeading = state.headingRad + nextR * dtSeconds;
 
-  const cosH = Math.cos(state.headingRad);
-  const sinH = Math.sin(state.headingRad);
+  const midHeading = state.headingRad + nextR * dtSeconds * 0.5;
+  const cosH = Math.cos(midHeading);
+  const sinH = Math.sin(midHeading);
   const xDot = nextVx * cosH - nextVy * sinH;
   const yDot = nextVx * sinH + nextVy * cosH;
 
@@ -204,15 +226,19 @@ export function stepCar(
     headingRad: nextHeading,
     vxMS: nextVx,
     vyMS: nextVy,
-    yawRateRadS: nextR
+    yawRateRadS: nextR,
+    alphaFrontRad,
+    alphaRearRad
   };
 
   return {
     state: nextState,
     telemetry: {
       steerAngleRad,
-      slipAngleFrontRad,
-      slipAngleRearRad,
+      slipAngleFrontInstantRad,
+      slipAngleRearInstantRad,
+      slipAngleFrontRad: alphaFrontRad,
+      slipAngleRearRad: alphaRearRad,
       longitudinalForceFrontN,
       longitudinalForceRearN,
       lateralForceFrontN,
