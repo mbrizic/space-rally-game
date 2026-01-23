@@ -29,6 +29,8 @@ export type CarParams = {
   rollingResistanceN: number;
   aeroDragNPerMS2: number;
   maxReverseSpeedMS: number;
+  reverseEngineScale: number;
+  torqueCutOnSteer01: number; // 0..1, reduces drive when steering
 };
 
 export type CarControls = {
@@ -100,11 +102,13 @@ export function defaultCarParams(): CarParams {
     lowSpeedForceFadeMS: 1.4,
     yawDampingPerS: 2.2,
     lateralDampingPerS: 1.4,
-    yawDampingHighSpeedPerS: 3.2,
-    lateralDampingHighSpeedPerS: 2.2,
+    yawDampingHighSpeedPerS: 4.0,
+    lateralDampingHighSpeedPerS: 2.8,
     rollingResistanceN: 260,
     aeroDragNPerMS2: 10,
-    maxReverseSpeedMS: 6.5
+    maxReverseSpeedMS: 9,
+    reverseEngineScale: 1.5,
+    torqueCutOnSteer01: 0.6
   };
 }
 
@@ -158,7 +162,10 @@ export function stepCar(
   // Wheel longitudinal forces (requested). Important: aero drag is NOT a tire force, so it should
   // not steal lateral capacity via the traction circle.
   const engineFade = clamp(1 - speedMS / Math.max(1, params.engineFadeSpeedMS), 0.35, 1);
-  const driveTotalN = throttle * params.engineForceN * engineFade;
+  const steerFrac01 = clamp(Math.abs(steerAngleRad) / Math.max(1e-6, params.maxSteerRad), 0, 1);
+  const torqueCut = 1 - clamp(params.torqueCutOnSteer01, 0, 1) * steerFrac01;
+  const engineScale = throttle < 0 ? Math.max(1, params.reverseEngineScale) : 1;
+  const driveTotalN = throttle * params.engineForceN * engineFade * engineScale * torqueCut;
   const brakeTotalN = brake * params.brakeForceN;
 
   const driveFrontN = driveTotalN * clamp(params.driveBiasFront, 0, 1);
@@ -263,7 +270,8 @@ export function stepCar(
   const muRef = 1.02;
   const muMin = 0.55;
   const lowMu01 = clamp((muRef - surfaceMu) / Math.max(0.01, muRef - muMin), 0, 1);
-  const surfaceDampingScale = 0.35 + 0.65 * lowMu01;
+  // Extra high-speed damping is mostly for loose surfaces; keep it minimal on tarmac.
+  const surfaceDampingScale = 0.12 + 0.88 * lowMu01;
 
   const yawDampingPerS =
     Math.max(0, params.yawDampingPerS) * lowSpeedStability +

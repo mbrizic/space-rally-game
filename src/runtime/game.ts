@@ -29,6 +29,7 @@ export class Game {
   private lastSurface: Surface = { name: "tarmac", frictionMu: 1, rollingResistanceN: 260 };
   private lastTrackS = 0;
   private showForceArrows = true;
+  private gear: "F" | "R" = "F";
   private running = false;
 
   private lastFrameTimeMs = 0;
@@ -129,11 +130,19 @@ export class Game {
     const brakeOrReverse = inputsEnabled ? this.input.axis("brake") : 0; // [0..1]
     const handbrake = inputsEnabled ? this.input.axis("handbrake") : 0; // [0..1]
 
-    // Reverse-on-brake: if we're basically stopped and not pressing throttle, treat brake as reverse.
-    // When we're already moving backwards, brake remains brake (to stop).
-    let throttle = throttleForward;
-    let brake = brakeOrReverse;
-    if (throttleForward === 0 && brakeOrReverse > 0 && this.speedMS() < 0.9 && this.state.car.vxMS > -0.6) {
+    // Gear logic: holding brake from (near) standstill engages reverse.
+    // In reverse gear, the brake key becomes reverse throttle; press W to go back to forward.
+    if (throttleForward > 0.05) this.gear = "F";
+    const speedMSNow = this.speedMS();
+    if (this.gear === "F" && throttleForward <= 0.05 && brakeOrReverse > 0.05 && speedMSNow < 1.0) this.gear = "R";
+    if (this.gear === "R" && speedMSNow > 1.5 && this.state.car.vxMS > 0.8) this.gear = "F";
+
+    let throttle = 0;
+    let brake = 0;
+    if (this.gear === "F") {
+      throttle = throttleForward;
+      brake = brakeOrReverse;
+    } else {
       throttle = -brakeOrReverse;
       brake = 0;
     }
@@ -227,7 +236,7 @@ export class Game {
         `steer: ${this.input.axis("steer").toFixed(2)}  throttle: ${this.input.axis("throttle").toFixed(2)}  brake/rev: ${this.input
           .axis("brake")
           .toFixed(2)}`,
-        `handbrake: ${this.input.axis("handbrake").toFixed(2)}`,
+        `handbrake: ${this.input.axis("handbrake").toFixed(2)}  gear: ${this.gear}`,
         `yawRate: ${this.state.car.yawRateRadS.toFixed(2)} rad/s`,
         `next gate: ${gateLabel(this.nextCheckpointIndex)}`,
         `surface: ${this.lastSurface.name}  (μ=${this.lastSurface.frictionMu.toFixed(2)})`,
