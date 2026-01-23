@@ -48,5 +48,21 @@ describe("car physics sanity", () => {
     expect(Math.abs(cur.yawRateRadS)).toBeLessThan(0.05);
     expect(Math.hypot(cur.vxMS, cur.vyMS)).toBeLessThan(0.05);
   });
-});
 
+  it("does not slide sideways at rest when steering", () => {
+    const params = defaultCarParams();
+    const state = createCarState();
+    state.vxMS = 0;
+    state.vyMS = 0;
+    state.yawRateRadS = 0;
+
+    let cur = state;
+    for (let i = 0; i < 240; i++) {
+      cur = stepCar(cur, params, { steer: -1, throttle: 0, brake: 0, handbrake: 0 }, 1 / 120).state;
+    }
+
+    expect(Math.hypot(cur.vxMS, cur.vyMS)).toBeLessThan(1e-3);
+    expect(Math.abs(cur.xM)).toBeLessThan(1e-3);
+    expect(Math.abs(cur.yM)).toBeLessThan(1e-3);
+  });
+});
