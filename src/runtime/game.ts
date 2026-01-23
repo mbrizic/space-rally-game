@@ -513,7 +513,7 @@ export class Game {
 
       const impact = Math.max(0, vN);
       if (impact > 1) {
-        this.damage01 = clamp(this.damage01 + impact * 0.045, 0, 1);
+        this.damage01 = clamp(this.damage01 + impact * 0.09, 0, 1);
       }
     }
   }
