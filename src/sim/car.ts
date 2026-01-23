@@ -136,14 +136,11 @@ export function stepCar(
   const a = params.cgToFrontAxleM;
   const b = params.cgToRearAxleM;
 
-  // Longitudinal forces (requested).
+  // Wheel longitudinal forces (requested). Important: aero drag is NOT a tire force, so it should
+  // not steal lateral capacity via the traction circle.
   const engineFade = clamp(1 - speedMS / Math.max(1, params.engineFadeSpeedMS), 0.35, 1);
   const driveTotalN = throttle * params.engineForceN * engineFade;
   const brakeTotalN = brake * params.brakeForceN;
-
-  const rollingResistanceN = environment?.rollingResistanceN ?? params.rollingResistanceN;
-  const aeroDragNPerMS2 = environment?.aeroDragNPerMS2 ?? params.aeroDragNPerMS2;
-  const resistN = rollingResistanceN + aeroDragNPerMS2 * speedMS * speedMS;
 
   const driveFrontN = driveTotalN * clamp(params.driveBiasFront, 0, 1);
   const driveRearN = driveTotalN - driveFrontN;
@@ -151,14 +148,18 @@ export function stepCar(
   const brakeFrontN = brakeTotalN * clamp(params.brakeBiasFront, 0, 1);
   const brakeRearN = brakeTotalN - brakeFrontN + handbrake * params.handbrakeForceN;
 
-  const resistFrontN = resistN * (normalLoadFrontStaticN / weightN);
-  const resistRearN = resistN - resistFrontN;
+  const fxFrontRequestN = driveFrontN - brakeFrontN;
+  const fxRearRequestN = driveRearN - brakeRearN;
 
-  const fxFrontRequestN = driveFrontN - brakeFrontN - resistFrontN;
-  const fxRearRequestN = driveRearN - brakeRearN - resistRearN;
+  // External drag (applied opposite body velocity; does not affect traction circle).
+  const rollingResistanceN = environment?.rollingResistanceN ?? params.rollingResistanceN;
+  const aeroDragNPerMS2 = environment?.aeroDragNPerMS2 ?? params.aeroDragNPerMS2;
+  const dragMagN = (rollingResistanceN + aeroDragNPerMS2 * speedMS * speedMS) * clamp(speedMS / 0.5, 0, 1);
+  const dragX = speedMS > 1e-6 ? -dragMagN * (state.vxMS / speedMS) : 0;
+  const dragY = speedMS > 1e-6 ? -dragMagN * (state.vyMS / speedMS) : 0;
 
   // Weight transfer approximation from longitudinal accel (positive = accelerating).
-  const axApproxMS2 = (fxFrontRequestN + fxRearRequestN) / params.massKg;
+  const axApproxMS2 = (fxFrontRequestN + fxRearRequestN + dragX) / params.massKg;
   const loadTransferN = (params.massKg * axApproxMS2 * params.cgHeightM) / params.wheelbaseM;
   const normalLoadFrontN = clamp(normalLoadFrontStaticN - loadTransferN, 0.15 * weightN, 0.85 * weightN);
   const normalLoadRearN = clamp(normalLoadRearStaticN + loadTransferN, 0.15 * weightN, 0.85 * weightN);
@@ -219,12 +220,14 @@ export function stepCar(
   const cosSteer = Math.cos(steerAngleRad);
   const sinSteer = Math.sin(steerAngleRad);
 
-  const fxBodyN = longitudinalForceRearN + longitudinalForceFrontN * cosSteer - lateralForceFrontN * sinSteer;
-  const fyBodyN = lateralForceRearN + lateralForceFrontN * cosSteer + longitudinalForceFrontN * sinSteer;
+  // Treat longitudinal wheel forces as body-longitudinal (no sideways component from steer),
+  // but rotate lateral force from the steered front wheel back into the body frame.
+  const fxBodyN = longitudinalForceRearN + longitudinalForceFrontN - lateralForceFrontN * sinSteer;
+  const fyBodyN = lateralForceRearN + lateralForceFrontN * cosSteer;
 
-  const dvx = fxBodyN / m + vy * r;
-  const dvy = fyBodyN / m - vx * r;
-  const dr = (a * (lateralForceFrontN * cosSteer + longitudinalForceFrontN * sinSteer) - b * lateralForceRearN) / iz;
+  const dvx = (fxBodyN + dragX) / m + vy * r;
+  const dvy = (fyBodyN + dragY) / m - vx * r;
+  const dr = (a * (lateralForceFrontN * cosSteer) - b * lateralForceRearN) / iz;
 
   const nextVx = Math.max(0, state.vxMS + dvx * dtSeconds);
   const nextVy = state.vyMS + dvy * dtSeconds;
