@@ -2,6 +2,7 @@ import { KeyboardInput } from "./input";
 import { Renderer2D } from "./renderer2d";
 import { clamp } from "./math";
 import { createCarState, defaultCarParams, stepCar, type CarTelemetry } from "../sim/car";
+import { createDefaultTrack, pointOnTrack, projectToTrack } from "../sim/track";
 
 type GameState = {
   timeSeconds: number;
@@ -12,6 +13,14 @@ type GameState = {
 export class Game {
   private readonly renderer: Renderer2D;
   private readonly input: KeyboardInput;
+  private readonly track = createDefaultTrack();
+  private readonly checkpointSM: number[];
+  private nextCheckpointIndex = 0;
+  private insideActiveGate = false;
+  private lapActive = false;
+  private lapStartTimeSeconds = 0;
+  private lapCount = 0;
+  private bestLapTimeSeconds: number | null = null;
   private running = false;
 
   private lastFrameTimeMs = 0;
@@ -43,6 +52,18 @@ export class Game {
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer2D(canvas);
     this.input = new KeyboardInput(window);
+    this.checkpointSM = [
+      0,
+      this.track.totalLengthM * 0.25,
+      this.track.totalLengthM * 0.5,
+      this.track.totalLengthM * 0.75
+    ];
+
+    window.addEventListener("keydown", (e) => {
+      if (e.code === "KeyR") this.reset();
+    });
+
+    this.reset();
   }
 
   start(): void {
@@ -93,6 +114,8 @@ export class Game {
     );
     this.state.car = stepped.state;
     this.state.carTelemetry = stepped.telemetry;
+
+    this.updateCheckpointsAndLap();
   }
 
   private render(): void {
@@ -108,6 +131,21 @@ export class Game {
     });
 
     this.renderer.drawGrid({ spacingMeters: 1, majorEvery: 5 });
+    this.renderer.drawTrack(this.track);
+    const start = pointOnTrack(this.track, 0);
+    this.renderer.drawStartLine({
+      x: start.p.x,
+      y: start.p.y,
+      headingRad: start.headingRad + Math.PI / 2,
+      widthM: this.track.widthM
+    });
+    const activeGate = pointOnTrack(this.track, this.checkpointSM[this.nextCheckpointIndex]);
+    this.renderer.drawCheckpointLine({
+      x: activeGate.p.x,
+      y: activeGate.p.y,
+      headingRad: activeGate.headingRad + Math.PI / 2,
+      widthM: this.track.widthM
+    });
     this.renderer.drawCar({
       x: this.state.car.xM,
       y: this.state.car.yM,
@@ -128,7 +166,8 @@ export class Game {
         `steer: ${this.input.axis("steer").toFixed(2)}  throttle: ${this.input.axis("throttle").toFixed(2)}  brake: ${this.input
           .axis("brake")
           .toFixed(2)}`,
-        `yawRate: ${this.state.car.yawRateRadS.toFixed(2)} rad/s`
+        `yawRate: ${this.state.car.yawRateRadS.toFixed(2)} rad/s`,
+        `checkpoint: ${this.nextCheckpointIndex + 1}/${this.checkpointSM.length}`
       ]
     });
 
@@ -141,7 +180,8 @@ export class Game {
         `W / ↑  throttle`,
         `S / ↓  brake`,
         `A/D or ←/→ steer`,
-        `Space  handbrake (reserved)`
+        `Space  handbrake (reserved)`,
+        `R      reset`
       ]
     });
 
@@ -162,10 +202,71 @@ export class Game {
       anchorX: "left",
       anchorY: "bottom"
     });
+
+    const lapTime = this.lapActive ? this.state.timeSeconds - this.lapStartTimeSeconds : 0;
+    this.renderer.drawPanel({
+      x: width - 12,
+      y: height - 12,
+      anchorX: "right",
+      anchorY: "bottom",
+      title: "Rally",
+      lines: [
+        `lap: ${this.lapCount}`,
+        `time: ${lapTime.toFixed(2)}s`,
+        `best: ${this.bestLapTimeSeconds ? `${this.bestLapTimeSeconds.toFixed(2)}s` : "--"}`
+      ]
+    });
   }
 
   private speedMS(): number {
     return Math.hypot(this.state.car.vxMS, this.state.car.vyMS);
+  }
+
+  private reset(): void {
+    const spawn = pointOnTrack(this.track, 6);
+    this.state.car = {
+      ...createCarState(),
+      xM: spawn.p.x,
+      yM: spawn.p.y,
+      headingRad: spawn.headingRad
+    };
+    this.nextCheckpointIndex = 0;
+    this.insideActiveGate = false;
+    this.lapActive = false;
+    this.lapStartTimeSeconds = this.state.timeSeconds;
+  }
+
+  private updateCheckpointsAndLap(): void {
+    const speed = this.speedMS();
+    if (speed < 1.5) {
+      this.insideActiveGate = false;
+      return;
+    }
+
+    const proj = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
+    const gateSM = this.checkpointSM[this.nextCheckpointIndex];
+    const insideGate =
+      circularDistance(proj.sM, gateSM, this.track.totalLengthM) < 3.5 &&
+      proj.distanceToCenterlineM < this.track.widthM * 0.6;
+
+    if (insideGate && !this.insideActiveGate) {
+      if (this.nextCheckpointIndex === 0) {
+        if (!this.lapActive) {
+          this.lapActive = true;
+          this.lapStartTimeSeconds = this.state.timeSeconds;
+        } else {
+          const lapTime = this.state.timeSeconds - this.lapStartTimeSeconds;
+          this.lapStartTimeSeconds = this.state.timeSeconds;
+          this.lapCount += 1;
+          this.bestLapTimeSeconds = this.bestLapTimeSeconds === null ? lapTime : Math.min(this.bestLapTimeSeconds, lapTime);
+        }
+      }
+
+      this.nextCheckpointIndex = (this.nextCheckpointIndex + 1) % this.checkpointSM.length;
+      this.insideActiveGate = true;
+    } else if (!insideGate) {
+      this.insideActiveGate = false;
+    }
   }
 
   private updateFps(deltaMs: number): void {
@@ -177,4 +278,9 @@ export class Game {
       this.fpsWindowMs = 0;
     }
   }
+}
+
+function circularDistance(a: number, b: number, period: number): number {
+  const d = Math.abs(a - b) % period;
+  return Math.min(d, period - d);
 }

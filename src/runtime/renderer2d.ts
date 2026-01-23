@@ -111,6 +111,90 @@ export class Renderer2D {
     ctx.stroke();
   }
 
+  drawTrack(track: { points: { x: number; y: number }[]; widthM: number }): void {
+    const ctx = this.ctx;
+    if (track.points.length < 2) return;
+
+    ctx.save();
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+
+    // Road fill.
+    ctx.strokeStyle = "rgba(210, 220, 235, 0.10)";
+    ctx.lineWidth = track.widthM;
+    ctx.beginPath();
+    ctx.moveTo(track.points[0].x, track.points[0].y);
+    for (let i = 1; i < track.points.length; i++) ctx.lineTo(track.points[i].x, track.points[i].y);
+    ctx.closePath();
+    ctx.stroke();
+
+    // Road border.
+    ctx.strokeStyle = "rgba(210, 220, 235, 0.26)";
+    ctx.lineWidth = Math.max(0.15, track.widthM * 0.06);
+    ctx.beginPath();
+    ctx.moveTo(track.points[0].x, track.points[0].y);
+    for (let i = 1; i < track.points.length; i++) ctx.lineTo(track.points[i].x, track.points[i].y);
+    ctx.closePath();
+    ctx.stroke();
+
+    // Centerline.
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.10)";
+    ctx.lineWidth = 0.18;
+    ctx.setLineDash([0.8, 1.2]);
+    ctx.beginPath();
+    ctx.moveTo(track.points[0].x, track.points[0].y);
+    for (let i = 1; i < track.points.length; i++) ctx.lineTo(track.points[i].x, track.points[i].y);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.restore();
+  }
+
+  drawStartLine(opts: { x: number; y: number; headingRad: number; widthM: number }): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.translate(opts.x, opts.y);
+    ctx.rotate(opts.headingRad);
+    ctx.lineWidth = 0.25;
+
+    const half = opts.widthM * 0.5;
+    ctx.strokeStyle = "rgba(0,0,0,0.65)";
+    ctx.beginPath();
+    ctx.moveTo(0, -half);
+    ctx.lineTo(0, half);
+    ctx.stroke();
+
+    ctx.strokeStyle = "rgba(255,255,255,0.85)";
+    ctx.setLineDash([0.4, 0.4]);
+    ctx.beginPath();
+    ctx.moveTo(0, -half);
+    ctx.lineTo(0, half);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.restore();
+  }
+
+  drawCheckpointLine(opts: { x: number; y: number; headingRad: number; widthM: number }): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.translate(opts.x, opts.y);
+    ctx.rotate(opts.headingRad);
+    ctx.lineWidth = 0.22;
+
+    const half = opts.widthM * 0.5;
+    ctx.strokeStyle = "rgba(90, 210, 255, 0.55)";
+    ctx.setLineDash([0.6, 0.5]);
+    ctx.beginPath();
+    ctx.moveTo(0, -half);
+    ctx.lineTo(0, half);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.restore();
+  }
+
   drawCar(car: { x: number; y: number; headingRad: number; speed: number }): void {
     const ctx = this.ctx;
     ctx.save();

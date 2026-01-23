@@ -6,5 +6,5 @@
 - [x] Placeholder car movement + draw
 - [x] Vehicle dynamics v1 (bicycle model + slip angles)
 - [x] Pedal steering core (traction circle + weight transfer)
-- [ ] Track (polyline ribbon) + checkpoints + timer
+- [x] Track (polyline ribbon) + checkpoints + timer
 - [ ] Surfaces (tarmac/gravel/ice) + off-track penalties
