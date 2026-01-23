@@ -244,6 +244,31 @@ export class Renderer2D {
     ctx.restore();
   }
 
+  drawTrees(trees: { x: number; y: number; r: number }[]): void {
+    const ctx = this.ctx;
+    ctx.save();
+    for (const t of trees) {
+      // Trunk.
+      ctx.fillStyle = "rgba(110, 80, 55, 0.95)";
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, t.r * 0.45, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Canopy.
+      ctx.fillStyle = "rgba(80, 155, 95, 0.85)";
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = "rgba(20, 30, 25, 0.25)";
+      ctx.lineWidth = 0.12;
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   drawPanel(opts: {
     x: number;
     y: number;

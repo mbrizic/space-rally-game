@@ -4,6 +4,7 @@ import { clamp } from "./math";
 import { createCarState, defaultCarParams, stepCar, type CarTelemetry } from "../sim/car";
 import { createDefaultTrack, pointOnTrack, projectToTrack, type TrackProjection } from "../sim/track";
 import { surfaceForTrackSM, type Surface } from "../sim/surface";
+import { generateTrees, type CircleObstacle } from "../sim/props";
 
 type GameState = {
   timeSeconds: number;
@@ -16,6 +17,7 @@ export class Game {
   private readonly input: KeyboardInput;
   private readonly track = createDefaultTrack();
   private readonly trackSegmentFillStyles: string[];
+  private readonly trees: CircleObstacle[];
   private readonly checkpointSM: number[];
   private nextCheckpointIndex = 0;
   private insideActiveGate = false;
@@ -25,6 +27,7 @@ export class Game {
   private bestLapTimeSeconds: number | null = null;
   private countdownSecondsRemaining = 0;
   private goFlashSecondsRemaining = 0;
+  private damage01 = 0;
   private lastSurface: Surface = { name: "tarmac", frictionMu: 1, rollingResistanceN: 260 };
   private lastTrackS = 0;
   private running = false;
@@ -72,6 +75,8 @@ export class Game {
       this.track.totalLengthM * 0.5,
       this.track.totalLengthM * 0.75
     ];
+
+    this.trees = generateTrees(this.track, { seed: 20260123 });
 
     window.addEventListener("keydown", (e) => {
       if (e.code === "KeyR") this.reset();
@@ -133,7 +138,7 @@ export class Game {
       this.goFlashSecondsRemaining = Math.max(0, this.goFlashSecondsRemaining - dtSeconds);
     }
 
-    const inputsEnabled = this.countdownSecondsRemaining === 0;
+    const inputsEnabled = this.countdownSecondsRemaining === 0 && this.damage01 < 1;
     const steer = inputsEnabled ? this.input.axis("steer") : 0; // [-1..1]
     const throttle = inputsEnabled ? this.input.axis("throttle") : 0; // [0..1]
     const brake = inputsEnabled ? this.input.axis("brake") : 0; // [0..1]
@@ -160,6 +165,14 @@ export class Game {
     const projectionFinal = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
     this.lastTrackS = projectionFinal.sM;
     this.updateCheckpointsAndLap(projectionFinal);
+
+    this.resolveTreeCollisions();
+    if (this.damage01 >= 1) {
+      this.damage01 = 1;
+      this.state.car.vxMS = 0;
+      this.state.car.vyMS = 0;
+      this.state.car.yawRateRadS = 0;
+    }
   }
 
   private render(): void {
@@ -176,6 +189,7 @@ export class Game {
 
     this.renderer.drawGrid({ spacingMeters: 1, majorEvery: 5 });
     this.renderer.drawTrack({ ...this.track, segmentFillStyles: this.trackSegmentFillStyles });
+    this.renderer.drawTrees(this.trees);
     const start = pointOnTrack(this.track, 0);
     this.renderer.drawStartLine({
       x: start.p.x,
@@ -199,6 +213,8 @@ export class Game {
 
     this.renderer.endCamera();
 
+    const speedMS = this.speedMS();
+    const speedKmH = speedMS * 3.6;
     this.renderer.drawPanel({
       x: 12,
       y: 12,
@@ -206,14 +222,15 @@ export class Game {
       lines: [
         `FPS: ${this.fps.toFixed(0)}`,
         `t: ${this.state.timeSeconds.toFixed(2)}s`,
-        `speed: ${this.speedMS().toFixed(2)} m/s (${(this.speedMS() * 3.6).toFixed(0)} km/h)`,
+        `speed: ${speedMS.toFixed(2)} m/s (${speedKmH.toFixed(0)} km/h)`,
         `steer: ${this.input.axis("steer").toFixed(2)}  throttle: ${this.input.axis("throttle").toFixed(2)}  brake: ${this.input
           .axis("brake")
           .toFixed(2)}`,
         `handbrake: ${this.input.axis("handbrake").toFixed(2)}`,
         `yawRate: ${this.state.car.yawRateRadS.toFixed(2)} rad/s`,
         `next gate: ${gateLabel(this.nextCheckpointIndex)}`,
-        `surface: ${this.lastSurface.name}  (μ=${this.lastSurface.frictionMu.toFixed(2)})`
+        `surface: ${this.lastSurface.name}  (μ=${this.lastSurface.frictionMu.toFixed(2)})`,
+        `damage: ${(this.damage01 * 100).toFixed(0)}%`
       ]
     });
 
@@ -276,6 +293,8 @@ export class Game {
       this.renderer.drawCenterText({ text: `${Math.ceil(this.countdownSecondsRemaining)}`, subtext: "Get ready" });
     } else if (this.goFlashSecondsRemaining > 0) {
       this.renderer.drawCenterText({ text: "GO!", subtext: "Pedal steer" });
+    } else if (this.damage01 >= 1) {
+      this.renderer.drawCenterText({ text: "WRECKED", subtext: "Press R to reset" });
     }
   }
 
@@ -297,6 +316,7 @@ export class Game {
     this.lapStartTimeSeconds = this.state.timeSeconds;
     this.countdownSecondsRemaining = 3;
     this.goFlashSecondsRemaining = 0;
+    this.damage01 = 0;
   }
 
   private updateCheckpointsAndLap(proj: TrackProjection): void {
@@ -363,6 +383,60 @@ export class Game {
     this.state.car.vxMS = newVxW * cosH + newVyW * sinH;
     this.state.car.vyMS = -newVxW * sinH + newVyW * cosH;
     this.state.car.yawRateRadS *= 0.6;
+
+    const impact = Math.max(0, vN);
+    if (impact > 2) {
+      this.damage01 = clamp(this.damage01 + impact * 0.02, 0, 1);
+    }
+  }
+
+  private resolveTreeCollisions(): void {
+    if (this.damage01 >= 1) return;
+
+    const carRadius = 0.65;
+    for (const tree of this.trees) {
+      const dx = this.state.car.xM - tree.x;
+      const dy = this.state.car.yM - tree.y;
+      const dist = Math.hypot(dx, dy);
+      const minDist = carRadius + tree.r;
+      if (dist >= minDist || dist < 1e-6) continue;
+
+      const nx = dx / dist;
+      const ny = dy / dist;
+
+      // Push out.
+      const penetration = minDist - dist;
+      this.state.car.xM += nx * penetration;
+      this.state.car.yM += ny * penetration;
+
+      // Reflect world velocity with damping.
+      const cosH = Math.cos(this.state.car.headingRad);
+      const sinH = Math.sin(this.state.car.headingRad);
+      const vxW = this.state.car.vxMS * cosH - this.state.car.vyMS * sinH;
+      const vyW = this.state.car.vxMS * sinH + this.state.car.vyMS * cosH;
+
+      const vN = vxW * nx + vyW * ny;
+      const tx = -ny;
+      const ty = nx;
+      const vT = vxW * tx + vyW * ty;
+
+      const restitution = 0.08;
+      const tangentialDamping = 0.35;
+      const newVN = vN > 0 ? -vN * restitution : vN;
+      const newVT = vT * tangentialDamping;
+
+      const newVxW = newVN * nx + newVT * tx;
+      const newVyW = newVN * ny + newVT * ty;
+
+      this.state.car.vxMS = newVxW * cosH + newVyW * sinH;
+      this.state.car.vyMS = -newVxW * sinH + newVyW * cosH;
+      this.state.car.yawRateRadS *= 0.5;
+
+      const impact = Math.max(0, vN);
+      if (impact > 1) {
+        this.damage01 = clamp(this.damage01 + impact * 0.045, 0, 1);
+      }
+    }
   }
 
   private updateFps(deltaMs: number): void {
