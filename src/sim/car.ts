@@ -6,12 +6,15 @@ export type CarParams = {
   wheelbaseM: number;
   cgToFrontAxleM: number;
   cgToRearAxleM: number;
+  cgHeightM: number;
   corneringStiffnessFrontNPerRad: number;
   corneringStiffnessRearNPerRad: number;
   frictionMu: number;
   maxSteerRad: number;
   engineForceN: number;
   brakeForceN: number;
+  driveBiasFront: number; // 0 = RWD, 1 = FWD
+  brakeBiasFront: number; // 0 = rear-only, 1 = front-only
   rollingResistanceN: number;
   aeroDragNPerMS2: number;
 };
@@ -38,6 +41,8 @@ export type CarTelemetry = {
   steerAngleRad: number;
   slipAngleFrontRad: number;
   slipAngleRearRad: number;
+  longitudinalForceFrontN: number;
+  longitudinalForceRearN: number;
   lateralForceFrontN: number;
   lateralForceRearN: number;
   normalLoadFrontN: number;
@@ -54,12 +59,15 @@ export function defaultCarParams(): CarParams {
     wheelbaseM,
     cgToFrontAxleM,
     cgToRearAxleM,
+    cgHeightM: 0.62,
     corneringStiffnessFrontNPerRad: 70000,
     corneringStiffnessRearNPerRad: 80000,
     frictionMu: 1.05,
     maxSteerRad: 0.62,
     engineForceN: 8200,
     brakeForceN: 14000,
+    driveBiasFront: 0.48,
+    brakeBiasFront: 0.65,
     rollingResistanceN: 260,
     aeroDragNPerMS2: 24
   };
@@ -92,8 +100,8 @@ export function stepCar(
 
   const g = 9.81;
   const weightN = params.massKg * g;
-  const normalLoadFrontN = (weightN * params.cgToRearAxleM) / params.wheelbaseM;
-  const normalLoadRearN = (weightN * params.cgToFrontAxleM) / params.wheelbaseM;
+  const normalLoadFrontStaticN = (weightN * params.cgToRearAxleM) / params.wheelbaseM;
+  const normalLoadRearStaticN = (weightN * params.cgToFrontAxleM) / params.wheelbaseM;
 
   const vx = Math.max(0.25, state.vxMS);
   const vy = state.vyMS;
@@ -101,39 +109,68 @@ export function stepCar(
   const a = params.cgToFrontAxleM;
   const b = params.cgToRearAxleM;
 
+  // Longitudinal forces (requested).
+  const driveTotalN = throttle * params.engineForceN;
+  const brakeTotalN = brake * params.brakeForceN;
+
+  const resistN = params.rollingResistanceN + params.aeroDragNPerMS2 * speedMS * speedMS;
+
+  const driveFrontN = driveTotalN * clamp(params.driveBiasFront, 0, 1);
+  const driveRearN = driveTotalN - driveFrontN;
+
+  const brakeFrontN = brakeTotalN * clamp(params.brakeBiasFront, 0, 1);
+  const brakeRearN = brakeTotalN - brakeFrontN;
+
+  const resistFrontN = resistN * (normalLoadFrontStaticN / weightN);
+  const resistRearN = resistN - resistFrontN;
+
+  const fxFrontRequestN = driveFrontN - brakeFrontN - resistFrontN;
+  const fxRearRequestN = driveRearN - brakeRearN - resistRearN;
+
+  // Weight transfer approximation from longitudinal accel (positive = accelerating).
+  const axApproxMS2 = (fxFrontRequestN + fxRearRequestN) / params.massKg;
+  const loadTransferN = (params.massKg * axApproxMS2 * params.cgHeightM) / params.wheelbaseM;
+  const normalLoadFrontN = clamp(normalLoadFrontStaticN - loadTransferN, 0.15 * weightN, 0.85 * weightN);
+  const normalLoadRearN = clamp(normalLoadRearStaticN + loadTransferN, 0.15 * weightN, 0.85 * weightN);
+
   // Slip angles.
   const slipAngleFrontRad = Math.atan2(vy + a * r, vx) - steerAngleRad;
   const slipAngleRearRad = Math.atan2(vy - b * r, vx);
 
-  // Lateral tire forces (linear w/ saturation).
-  const maxFyFront = params.frictionMu * normalLoadFrontN;
-  const maxFyRear = params.frictionMu * normalLoadRearN;
+  // Traction circle per axle: Fx steals available Fy.
+  const maxFFront = params.frictionMu * normalLoadFrontN;
+  const maxFRear = params.frictionMu * normalLoadRearN;
+
+  const longitudinalForceFrontN = clamp(fxFrontRequestN, -maxFFront, maxFFront);
+  const longitudinalForceRearN = clamp(fxRearRequestN, -maxFRear, maxFRear);
+
+  const lateralCapFrontN = Math.sqrt(Math.max(0, maxFFront * maxFFront - longitudinalForceFrontN * longitudinalForceFrontN));
+  const lateralCapRearN = Math.sqrt(Math.max(0, maxFRear * maxFRear - longitudinalForceRearN * longitudinalForceRearN));
 
   const lateralForceFrontN = clamp(
     -params.corneringStiffnessFrontNPerRad * slipAngleFrontRad,
-    -maxFyFront,
-    maxFyFront
+    -lateralCapFrontN,
+    lateralCapFrontN
   );
   const lateralForceRearN = clamp(
     -params.corneringStiffnessRearNPerRad * slipAngleRearRad,
-    -maxFyRear,
-    maxFyRear
+    -lateralCapRearN,
+    lateralCapRearN
   );
-
-  // Longitudinal force: engine at rear, brakes oppose motion.
-  const driveN = throttle * params.engineForceN;
-  const brakingN = brake * params.brakeForceN;
-  const resistN = params.rollingResistanceN + params.aeroDragNPerMS2 * speedMS * speedMS;
-  const longForceN = driveN - brakingN - resistN;
 
   // Bicycle model equations in body frame.
   const m = params.massKg;
   const iz = params.inertiaYawKgM2;
 
-  const dvx = (longForceN - lateralForceFrontN * Math.sin(steerAngleRad)) / m + vy * r;
-  const dvy = (lateralForceRearN + lateralForceFrontN * Math.cos(steerAngleRad)) / m - vx * r;
-  const dr =
-    (a * lateralForceFrontN * Math.cos(steerAngleRad) - b * lateralForceRearN) / iz;
+  const cosSteer = Math.cos(steerAngleRad);
+  const sinSteer = Math.sin(steerAngleRad);
+
+  const fxBodyN = longitudinalForceRearN + longitudinalForceFrontN * cosSteer - lateralForceFrontN * sinSteer;
+  const fyBodyN = lateralForceRearN + lateralForceFrontN * cosSteer + longitudinalForceFrontN * sinSteer;
+
+  const dvx = fxBodyN / m + vy * r;
+  const dvy = fyBodyN / m - vx * r;
+  const dr = (a * (lateralForceFrontN * cosSteer + longitudinalForceFrontN * sinSteer) - b * lateralForceRearN) / iz;
 
   const nextVx = Math.max(0, state.vxMS + dvx * dtSeconds);
   const nextVy = state.vyMS + dvy * dtSeconds;
@@ -161,6 +198,8 @@ export function stepCar(
       steerAngleRad,
       slipAngleFrontRad,
       slipAngleRearRad,
+      longitudinalForceFrontN,
+      longitudinalForceRearN,
       lateralForceFrontN,
       lateralForceRearN,
       normalLoadFrontN,
@@ -168,4 +207,3 @@ export function stepCar(
     }
   };
 }
-

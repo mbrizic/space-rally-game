@@ -30,6 +30,8 @@ export class Game {
       steerAngleRad: 0,
       slipAngleFrontRad: 0,
       slipAngleRearRad: 0,
+      longitudinalForceFrontN: 0,
+      longitudinalForceRearN: 0,
       lateralForceFrontN: 0,
       lateralForceRearN: 0,
       normalLoadFrontN: 0,
@@ -152,6 +154,8 @@ export class Game {
         `steerAngle: ${deg(this.state.carTelemetry.steerAngleRad).toFixed(1)}°`,
         `alphaF: ${deg(this.state.carTelemetry.slipAngleFrontRad).toFixed(1)}°`,
         `alphaR: ${deg(this.state.carTelemetry.slipAngleRearRad).toFixed(1)}°`,
+        `FzF: ${this.state.carTelemetry.normalLoadFrontN.toFixed(0)} N  FxF: ${this.state.carTelemetry.longitudinalForceFrontN.toFixed(0)} N`,
+        `FzR: ${this.state.carTelemetry.normalLoadRearN.toFixed(0)} N  FxR: ${this.state.carTelemetry.longitudinalForceRearN.toFixed(0)} N`,
         `FyF: ${this.state.carTelemetry.lateralForceFrontN.toFixed(0)} N`,
         `FyR: ${this.state.carTelemetry.lateralForceRearN.toFixed(0)} N`
       ],

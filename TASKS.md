@@ -5,6 +5,6 @@
 - [x] Grid + HUD debug overlay
 - [x] Placeholder car movement + draw
 - [x] Vehicle dynamics v1 (bicycle model + slip angles)
-- [ ] Pedal steering core (traction circle + weight transfer)
+- [x] Pedal steering core (traction circle + weight transfer)
 - [ ] Track (polyline ribbon) + checkpoints + timer
 - [ ] Surfaces (tarmac/gravel/ice) + off-track penalties
