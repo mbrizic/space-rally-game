@@ -11,6 +11,9 @@ export class Renderer2D {
   private readonly canvas: HTMLCanvasElement;
 
   private camera: Camera2D = { centerX: 0, centerY: 0, pixelsPerMeter: 36 };
+  private dpr = 1;
+  private viewportWidthCssPx = 0;
+  private viewportHeightCssPx = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
@@ -21,20 +24,29 @@ export class Renderer2D {
 
   resizeToDisplay(): { width: number; height: number } {
     const dpr = clamp(window.devicePixelRatio ?? 1, 1, 3);
-    const displayWidth = Math.floor(this.canvas.clientWidth * dpr);
-    const displayHeight = Math.floor(this.canvas.clientHeight * dpr);
+    const displayWidthCssPx = Math.max(1, Math.floor(this.canvas.clientWidth));
+    const displayHeightCssPx = Math.max(1, Math.floor(this.canvas.clientHeight));
 
-    if (this.canvas.width !== displayWidth || this.canvas.height !== displayHeight) {
-      this.canvas.width = displayWidth;
-      this.canvas.height = displayHeight;
+    const displayWidthDevicePx = Math.floor(displayWidthCssPx * dpr);
+    const displayHeightDevicePx = Math.floor(displayHeightCssPx * dpr);
+
+    if (this.canvas.width !== displayWidthDevicePx || this.canvas.height !== displayHeightDevicePx) {
+      this.canvas.width = displayWidthDevicePx;
+      this.canvas.height = displayHeightDevicePx;
     }
 
-    return { width: this.canvas.width, height: this.canvas.height };
+    this.dpr = dpr;
+    this.viewportWidthCssPx = displayWidthCssPx;
+    this.viewportHeightCssPx = displayHeightCssPx;
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    return { width: displayWidthCssPx, height: displayHeightCssPx };
   }
 
   beginCamera(camera: Camera2D): void {
     this.camera = camera;
-    const { width, height } = this.canvas;
+    const width = this.viewportWidthCssPx || this.canvas.clientWidth;
+    const height = this.viewportHeightCssPx || this.canvas.clientHeight;
     const ctx = this.ctx;
     ctx.save();
     ctx.translate(width / 2, height / 2);
@@ -51,7 +63,8 @@ export class Renderer2D {
     const spacing = opts.spacingMeters;
     const majorEvery = Math.max(1, Math.floor(opts.majorEvery));
 
-    const { width, height } = this.canvas;
+    const width = this.viewportWidthCssPx || this.canvas.clientWidth;
+    const height = this.viewportHeightCssPx || this.canvas.clientHeight;
     const viewHalfW = (width / 2) / this.camera.pixelsPerMeter;
     const viewHalfH = (height / 2) / this.camera.pixelsPerMeter;
 
@@ -125,17 +138,42 @@ export class Renderer2D {
     ctx.restore();
   }
 
-  drawHud(opts: { lines: string[] }): void {
+  drawPanel(opts: { x: number; y: number; anchor?: "left" | "right"; title?: string; lines: string[] }): void {
     const ctx = this.ctx;
     ctx.save();
-    ctx.resetTransform();
-    ctx.fillStyle = "rgba(0,0,0,0.45)";
-    ctx.fillRect(12, 12, 520, 118);
-    ctx.fillStyle = "rgba(232,236,241,0.92)";
-    ctx.font = "12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+
+    const paddingX = 10;
+    const paddingY = 8;
+    const lineHeight = 20;
+    const font = "14px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.font = font;
     ctx.textBaseline = "top";
+
+    const title = opts.title;
+    const textLines = title ? [title, ...opts.lines] : opts.lines;
+    const width = textLines.reduce((maxWidth, line) => Math.max(maxWidth, ctx.measureText(line).width), 0);
+    const panelWidth = Math.ceil(width + paddingX * 2);
+    const panelHeight = Math.ceil(textLines.length * lineHeight + paddingY * 2);
+
+    const x = (opts.anchor ?? "left") === "right" ? Math.max(0, opts.x - panelWidth) : opts.x;
+    const y = opts.y;
+
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(x, y, panelWidth, panelHeight);
+
+    ctx.fillStyle = "rgba(232,236,241,0.95)";
+    let textY = y + paddingY;
+    if (title) {
+      ctx.fillStyle = "rgba(170, 210, 255, 0.95)";
+      ctx.fillText(title, x + paddingX, textY);
+      textY += lineHeight;
+      ctx.fillStyle = "rgba(232,236,241,0.95)";
+    }
+
     for (let i = 0; i < opts.lines.length; i++) {
-      ctx.fillText(opts.lines[i], 20, 20 + i * 18);
+      ctx.fillText(opts.lines[i], x + paddingX, textY + i * lineHeight);
     }
     ctx.restore();
   }

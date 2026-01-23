@@ -104,7 +104,10 @@ export class Game {
 
     this.renderer.endCamera();
 
-    this.renderer.drawHud({
+    this.renderer.drawPanel({
+      x: 12,
+      y: 12,
+      title: "Debug",
       lines: [
         `FPS: ${this.fps.toFixed(0)}`,
         `t: ${this.state.timeSeconds.toFixed(2)}s`,
@@ -112,7 +115,19 @@ export class Game {
         `steer: ${this.input.axis("steer").toFixed(2)}  throttle: ${this.input.axis("throttle").toFixed(2)}  brake: ${this.input
           .axis("brake")
           .toFixed(2)}`,
-        `controls: W/S throttle/brake, A/D steer`
+      ]
+    });
+
+    this.renderer.drawPanel({
+      x: width - 12,
+      y: 12,
+      anchor: "right",
+      title: "Controls",
+      lines: [
+        `W / ↑  throttle`,
+        `S / ↓  brake`,
+        `A/D or ←/→ steer`,
+        `Space  handbrake (reserved)`
       ]
     });
   }
