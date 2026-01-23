@@ -15,6 +15,7 @@ export class Game {
   private readonly renderer: Renderer2D;
   private readonly input: KeyboardInput;
   private readonly track = createDefaultTrack();
+  private readonly trackSegmentFillStyles: string[];
   private readonly checkpointSM: number[];
   private nextCheckpointIndex = 0;
   private insideActiveGate = false;
@@ -55,6 +56,14 @@ export class Game {
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer2D(canvas);
     this.input = new KeyboardInput(window);
+
+    this.trackSegmentFillStyles = [];
+    for (let i = 0; i < this.track.points.length; i++) {
+      const midSM = this.track.cumulativeLengthsM[i] + this.track.segmentLengthsM[i] * 0.5;
+      const surface = surfaceForTrackSM(this.track.totalLengthM, midSM, false);
+      this.trackSegmentFillStyles.push(surfaceFillStyle(surface));
+    }
+
     this.checkpointSM = [
       0,
       this.track.totalLengthM * 0.25,
@@ -141,13 +150,7 @@ export class Game {
     });
 
     this.renderer.drawGrid({ spacingMeters: 1, majorEvery: 5 });
-    const segmentFillStyles: string[] = [];
-    for (let i = 0; i < this.track.points.length; i++) {
-      const midSM = this.track.cumulativeLengthsM[i] + this.track.segmentLengthsM[i] * 0.5;
-      const surface = surfaceForTrackSM(this.track.totalLengthM, midSM, false);
-      segmentFillStyles.push(surfaceFillStyle(surface));
-    }
-    this.renderer.drawTrack({ ...this.track, segmentFillStyles });
+    this.renderer.drawTrack({ ...this.track, segmentFillStyles: this.trackSegmentFillStyles });
     const start = pointOnTrack(this.track, 0);
     this.renderer.drawStartLine({
       x: start.p.x,
@@ -306,11 +309,11 @@ function circularDistance(a: number, b: number, period: number): number {
 function surfaceFillStyle(surface: Surface): string {
   switch (surface.name) {
     case "tarmac":
-      return "rgba(210, 220, 235, 0.11)";
+      return "rgba(210, 220, 235, 0.14)";
     case "gravel":
-      return "rgba(210, 190, 140, 0.11)";
+      return "rgba(210, 190, 140, 0.14)";
     case "dirt":
-      return "rgba(165, 125, 90, 0.11)";
+      return "rgba(165, 125, 90, 0.14)";
     case "offtrack":
       return "rgba(120, 170, 120, 0.10)";
   }

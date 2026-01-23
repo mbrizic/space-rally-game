@@ -119,6 +119,15 @@ export class Renderer2D {
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
 
+    // Shoulder / terrain edge hint.
+    ctx.strokeStyle = "rgba(90, 120, 95, 0.16)";
+    ctx.lineWidth = track.widthM * 1.32;
+    ctx.beginPath();
+    ctx.moveTo(track.points[0].x, track.points[0].y);
+    for (let i = 1; i < track.points.length; i++) ctx.lineTo(track.points[i].x, track.points[i].y);
+    ctx.closePath();
+    ctx.stroke();
+
     // Road fill.
     ctx.lineWidth = track.widthM;
     const fillStyles = track.segmentFillStyles;
