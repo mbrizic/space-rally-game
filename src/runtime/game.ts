@@ -3,6 +3,7 @@ import { Renderer2D } from "./renderer2d";
 import { clamp } from "./math";
 import { createCarState, defaultCarParams, stepCar, type CarTelemetry } from "../sim/car";
 import { createDefaultTrack, pointOnTrack, projectToTrack } from "../sim/track";
+import { surfaceForTrackSM, type Surface } from "../sim/surface";
 
 type GameState = {
   timeSeconds: number;
@@ -21,6 +22,8 @@ export class Game {
   private lapStartTimeSeconds = 0;
   private lapCount = 0;
   private bestLapTimeSeconds: number | null = null;
+  private lastSurface: Surface = { name: "tarmac", frictionMu: 1, rollingResistanceN: 260 };
+  private lastTrackS = 0;
   private running = false;
 
   private lastFrameTimeMs = 0;
@@ -106,16 +109,22 @@ export class Game {
     const throttle = this.input.axis("throttle"); // [0..1]
     const brake = this.input.axis("brake"); // [0..1]
 
+    const projection = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
+    const offTrack = projection.distanceToCenterlineM > this.track.widthM * 0.5;
+    this.lastSurface = surfaceForTrackSM(this.track.totalLengthM, projection.sM, offTrack);
+    this.lastTrackS = projection.sM;
+
     const stepped = stepCar(
       this.state.car,
       this.carParams,
       { steer, throttle, brake },
-      dtSeconds
+      dtSeconds,
+      { frictionMu: this.lastSurface.frictionMu, rollingResistanceN: this.lastSurface.rollingResistanceN }
     );
     this.state.car = stepped.state;
     this.state.carTelemetry = stepped.telemetry;
 
-    this.updateCheckpointsAndLap();
+    this.updateCheckpointsAndLap(projection);
   }
 
   private render(): void {
@@ -167,7 +176,8 @@ export class Game {
           .axis("brake")
           .toFixed(2)}`,
         `yawRate: ${this.state.car.yawRateRadS.toFixed(2)} rad/s`,
-        `checkpoint: ${this.nextCheckpointIndex + 1}/${this.checkpointSM.length}`
+        `checkpoint: ${this.nextCheckpointIndex + 1}/${this.checkpointSM.length}`,
+        `surface: ${this.lastSurface.name}  (μ=${this.lastSurface.frictionMu.toFixed(2)})`
       ]
     });
 
@@ -213,7 +223,8 @@ export class Game {
       lines: [
         `lap: ${this.lapCount}`,
         `time: ${lapTime.toFixed(2)}s`,
-        `best: ${this.bestLapTimeSeconds ? `${this.bestLapTimeSeconds.toFixed(2)}s` : "--"}`
+        `best: ${this.bestLapTimeSeconds ? `${this.bestLapTimeSeconds.toFixed(2)}s` : "--"}`,
+        `s: ${this.lastTrackS.toFixed(1)}m`
       ]
     });
   }
@@ -236,14 +247,13 @@ export class Game {
     this.lapStartTimeSeconds = this.state.timeSeconds;
   }
 
-  private updateCheckpointsAndLap(): void {
+  private updateCheckpointsAndLap(proj: { sM: number; distanceToCenterlineM: number }): void {
     const speed = this.speedMS();
     if (speed < 1.5) {
       this.insideActiveGate = false;
       return;
     }
 
-    const proj = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
     const gateSM = this.checkpointSM[this.nextCheckpointIndex];
     const insideGate =
       circularDistance(proj.sM, gateSM, this.track.totalLengthM) < 3.5 &&

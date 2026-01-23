@@ -7,4 +7,4 @@
 - [x] Vehicle dynamics v1 (bicycle model + slip angles)
 - [x] Pedal steering core (traction circle + weight transfer)
 - [x] Track (polyline ribbon) + checkpoints + timer
-- [ ] Surfaces (tarmac/gravel/ice) + off-track penalties
+- [x] Surfaces (tarmac/gravel/ice) + off-track penalties

@@ -88,7 +88,8 @@ export function stepCar(
   state: CarState,
   params: CarParams,
   controls: CarControls,
-  dtSeconds: number
+  dtSeconds: number,
+  environment?: { frictionMu?: number; rollingResistanceN?: number; aeroDragNPerMS2?: number }
 ): { state: CarState; telemetry: CarTelemetry } {
   const steerInput = clamp(controls.steer, -1, 1);
   const throttle = clamp(controls.throttle, 0, 1);
@@ -113,7 +114,9 @@ export function stepCar(
   const driveTotalN = throttle * params.engineForceN;
   const brakeTotalN = brake * params.brakeForceN;
 
-  const resistN = params.rollingResistanceN + params.aeroDragNPerMS2 * speedMS * speedMS;
+  const rollingResistanceN = environment?.rollingResistanceN ?? params.rollingResistanceN;
+  const aeroDragNPerMS2 = environment?.aeroDragNPerMS2 ?? params.aeroDragNPerMS2;
+  const resistN = rollingResistanceN + aeroDragNPerMS2 * speedMS * speedMS;
 
   const driveFrontN = driveTotalN * clamp(params.driveBiasFront, 0, 1);
   const driveRearN = driveTotalN - driveFrontN;
@@ -138,8 +141,9 @@ export function stepCar(
   const slipAngleRearRad = Math.atan2(vy - b * r, vx);
 
   // Traction circle per axle: Fx steals available Fy.
-  const maxFFront = params.frictionMu * normalLoadFrontN;
-  const maxFRear = params.frictionMu * normalLoadRearN;
+  const frictionMu = environment?.frictionMu ?? params.frictionMu;
+  const maxFFront = frictionMu * normalLoadFrontN;
+  const maxFRear = frictionMu * normalLoadRearN;
 
   const longitudinalForceFrontN = clamp(fxFrontRequestN, -maxFFront, maxFFront);
   const longitudinalForceRearN = clamp(fxRearRequestN, -maxFRear, maxFRear);
