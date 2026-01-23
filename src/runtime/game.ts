@@ -237,7 +237,8 @@ export class Game {
         `A/D or ←/→ steer`,
         `Space  handbrake`,
         `R      reset`,
-        `F      force arrows`,
+        `F      force arrows: ${this.showForceArrows ? "ON" : "OFF"}`,
+        `arrows: forces + velocity`,
         `cross START to begin timer`
       ]
     });

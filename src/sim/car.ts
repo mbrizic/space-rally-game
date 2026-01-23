@@ -99,8 +99,8 @@ export function defaultCarParams(): CarParams {
     lowSpeedForceFadeMS: 1.4,
     yawDampingPerS: 2.2,
     lateralDampingPerS: 1.4,
-    yawDampingHighSpeedPerS: 2.25,
-    lateralDampingHighSpeedPerS: 1.55,
+    yawDampingHighSpeedPerS: 2.6,
+    lateralDampingHighSpeedPerS: 1.8,
     rollingResistanceN: 260,
     aeroDragNPerMS2: 10
   };
