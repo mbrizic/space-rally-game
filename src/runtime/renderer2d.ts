@@ -261,7 +261,7 @@ export class Renderer2D {
     ctx.restore();
   }
 
-  drawCar(car: { x: number; y: number; headingRad: number; speed: number }): void {
+  drawCar(car: { x: number; y: number; headingRad: number; speed: number; rollOffsetM?: number }): void {
     const ctx = this.ctx;
     ctx.save();
     ctx.translate(car.x, car.y);
@@ -269,6 +269,14 @@ export class Renderer2D {
 
     const length = 1.1;
     const width = 0.55;
+
+    const rollOffset = clamp(car.rollOffsetM ?? 0, -0.22, 0.22);
+
+    // Shadow/body-roll hint (purely visual).
+    ctx.fillStyle = "rgba(0, 0, 0, 0.22)";
+    ctx.beginPath();
+    ctx.rect(-length * 0.5 + rollOffset * 0.35, -width * 0.5 - rollOffset * 0.9, length, width);
+    ctx.fill();
 
     ctx.fillStyle = "rgba(240, 246, 255, 0.9)";
     ctx.strokeStyle = "rgba(30, 40, 60, 0.9)";
@@ -278,6 +286,12 @@ export class Renderer2D {
     ctx.rect(-length * 0.5, -width * 0.5, length, width);
     ctx.fill();
     ctx.stroke();
+
+    // Roof highlight shifted by roll direction.
+    ctx.fillStyle = "rgba(170, 210, 255, 0.14)";
+    ctx.beginPath();
+    ctx.rect(-length * 0.35 + rollOffset * 0.25, -width * 0.22 - rollOffset * 0.45, length * 0.7, width * 0.44);
+    ctx.fill();
 
     ctx.strokeStyle = "rgba(255, 205, 105, 0.95)";
     ctx.beginPath();

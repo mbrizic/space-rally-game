@@ -103,12 +103,13 @@ export function defaultCarParams(): CarParams {
     lowSpeedForceFadeMS: 1.4,
     yawDampingPerS: 2.2,
     lateralDampingPerS: 1.4,
-    yawDampingHighSpeedPerS: 4.8,
-    lateralDampingHighSpeedPerS: 3.4,
+    // Keep any additional damping as "assist" (handled via UI later); defaults off.
+    yawDampingHighSpeedPerS: 0,
+    lateralDampingHighSpeedPerS: 0,
     rollingResistanceN: 260,
     aeroDragNPerMS2: 10,
-    maxReverseSpeedMS: 9,
-    reverseEngineScale: 1.5,
+    maxReverseSpeedMS: 12,
+    reverseEngineScale: 2.0,
     torqueCutOnSteer01: 0.78,
     tractionEllipseP: 1.6
   };
@@ -203,9 +204,11 @@ export function stepCar(
     speedMS < 0.4 ? 0 : Math.atan2(vy + a * r, slipDenom) - steerAngleRad;
   const slipAngleRearInstantRad = speedMS < 0.4 ? 0 : Math.atan2(vy - b * r, slipDenom);
 
-  // Tire relaxation (first-order lag based on distance traveled).
-  const relaxKFront = Math.max(0, speedMS) / Math.max(0.5, params.relaxationLengthFrontM);
-  const relaxKRear = Math.max(0, speedMS) / Math.max(0.5, params.relaxationLengthRearM);
+  // Tire relaxation (first-order lag based on distance traveled). If speed is very low, we still want
+  // slip to settle quickly (no "stuck" slip angle after a handbrake turn).
+  const relaxSpeedMS = Math.max(speedMS, 7);
+  const relaxKFront = relaxSpeedMS / Math.max(0.5, params.relaxationLengthFrontM);
+  const relaxKRear = relaxSpeedMS / Math.max(0.5, params.relaxationLengthRearM);
   const blendFront = 1 - Math.exp(-relaxKFront * dtSeconds);
   const blendRear = 1 - Math.exp(-relaxKRear * dtSeconds);
 
@@ -267,21 +270,10 @@ export function stepCar(
   const nextVy = state.vyMS + dvy * dtSeconds;
   const nextR = state.yawRateRadS + dr * dtSeconds;
 
-  // Simple damping to avoid low-speed self-spinning and endless sideways drift.
+  // Low-speed stability only. (Any high-speed "assist" should be optional and explicit.)
   const lowSpeedStability = clamp(1 - speedMS / 3, 0, 1);
-  const highSpeedStability = clamp(speedMS / 12, 0, 1);
-  const muRef = 1.02;
-  const muMin = 0.55;
-  const lowMu01 = clamp((muRef - surfaceMu) / Math.max(0.01, muRef - muMin), 0, 1);
-  // Extra high-speed damping is mostly for loose surfaces; keep it minimal on tarmac.
-  const surfaceDampingScale = 0.10 + 0.90 * lowMu01;
-
-  const yawDampingPerS =
-    Math.max(0, params.yawDampingPerS) * lowSpeedStability +
-    Math.max(0, params.yawDampingHighSpeedPerS) * highSpeedStability * surfaceDampingScale;
-  const lateralDampingPerS =
-    Math.max(0, params.lateralDampingPerS) * lowSpeedStability +
-    Math.max(0, params.lateralDampingHighSpeedPerS) * highSpeedStability * surfaceDampingScale;
+  const yawDampingPerS = Math.max(0, params.yawDampingPerS) * lowSpeedStability;
+  const lateralDampingPerS = Math.max(0, params.lateralDampingPerS) * lowSpeedStability;
   const dampYaw = Math.exp(-yawDampingPerS * dtSeconds);
   const dampLat = Math.exp(-lateralDampingPerS * dtSeconds);
   const nextVyDamped = nextVy * dampLat;

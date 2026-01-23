@@ -5,6 +5,7 @@ import { createCarState, defaultCarParams, stepCar, type CarTelemetry } from "..
 import { createDefaultTrack, pointOnTrack, projectToTrack, type TrackProjection } from "../sim/track";
 import { surfaceForTrackSM, type Surface } from "../sim/surface";
 import { generateTrees, type CircleObstacle } from "../sim/props";
+import type { TuningPanel } from "./tuning";
 
 type GameState = {
   timeSeconds: number;
@@ -15,6 +16,7 @@ type GameState = {
 export class Game {
   private readonly renderer: Renderer2D;
   private readonly input: KeyboardInput;
+  private readonly tuning?: TuningPanel;
   private readonly track = createDefaultTrack();
   private readonly trackSegmentFillStyles: string[];
   private readonly trees: CircleObstacle[];
@@ -30,6 +32,8 @@ export class Game {
   private lastTrackS = 0;
   private showForceArrows = true;
   private gear: "F" | "R" = "F";
+  private visualRollOffsetM = 0;
+  private visualRollVel = 0;
   private running = false;
 
   private lastFrameTimeMs = 0;
@@ -58,11 +62,12 @@ export class Game {
       normalLoadRearN: 0
     }
   };
-  private readonly carParams = defaultCarParams();
+  private carParams = defaultCarParams();
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, tuning?: TuningPanel) {
     this.renderer = new Renderer2D(canvas);
     this.input = new KeyboardInput(window);
+    this.tuning = tuning;
 
     this.trackSegmentFillStyles = [];
     for (let i = 0; i < this.track.points.length; i++) {
@@ -82,7 +87,10 @@ export class Game {
 
     window.addEventListener("keydown", (e) => {
       if (e.code === "KeyR") this.reset();
-      if (e.code === "KeyF") this.showForceArrows = !this.showForceArrows;
+      if (e.code === "KeyF") {
+        this.showForceArrows = !this.showForceArrows;
+        this.tuning?.setShowArrows(this.showForceArrows);
+      }
     });
 
     this.reset();
@@ -124,6 +132,8 @@ export class Game {
   private step(dtSeconds: number): void {
     this.state.timeSeconds += dtSeconds;
 
+    this.applyTuning();
+
     const inputsEnabled = this.damage01 < 1;
     const steer = inputsEnabled ? this.input.axis("steer") : 0; // [-1..1]
     const throttleForward = inputsEnabled ? this.input.axis("throttle") : 0; // [0..1]
@@ -161,6 +171,7 @@ export class Game {
     );
     this.state.car = stepped.state;
     this.state.carTelemetry = stepped.telemetry;
+    this.updateVisualRoll(dtSeconds);
 
     const projectionAfter = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
     this.resolveHardBoundary(projectionAfter);
@@ -214,7 +225,8 @@ export class Game {
       x: this.state.car.xM,
       y: this.state.car.yM,
       headingRad: this.state.car.headingRad,
-      speed: this.speedMS()
+      speed: this.speedMS(),
+      rollOffsetM: this.visualRollOffsetM
     });
 
     if (this.showForceArrows) {
@@ -303,6 +315,44 @@ export class Game {
 
   private speedMS(): number {
     return Math.hypot(this.state.car.vxMS, this.state.car.vyMS);
+  }
+
+  private applyTuning(): void {
+    if (!this.tuning) return;
+    const t = this.tuning.values;
+    this.carParams.engineForceN = clamp(t.engineForceN, 4000, 30000);
+    this.carParams.maxSteerRad = clamp((t.maxSteerDeg * Math.PI) / 180, 0.15, 1.2);
+    this.carParams.driveBiasFront = clamp(t.driveBiasFront01, 0, 1);
+
+    // UI can override arrows, but keep KeyF working by syncing.
+    this.showForceArrows = t.showArrows;
+  }
+
+  private updateVisualRoll(dtSeconds: number): void {
+    const t = this.state.carTelemetry;
+    const p = this.carParams;
+
+    const cosSteer = Math.cos(t.steerAngleRad);
+    const sinSteer = Math.sin(t.steerAngleRad);
+
+    // Approx body lateral accel from net lateral force / mass.
+    const fyFrontBodyN = t.lateralForceFrontN * cosSteer + t.longitudinalForceFrontN * sinSteer;
+    const fyBodyN = t.lateralForceRearN + fyFrontBodyN;
+    const ayBodyMS2 = fyBodyN / Math.max(1, p.massKg);
+
+    // Map to a visual roll offset (meters in local Y), spring-damper.
+    const target = clamp(-ayBodyMS2 * 0.018, -0.22, 0.22);
+    const stiffness = 26;
+    const damping = 9;
+    const accel = (target - this.visualRollOffsetM) * stiffness - this.visualRollVel * damping;
+    this.visualRollVel += accel * dtSeconds;
+    this.visualRollOffsetM += this.visualRollVel * dtSeconds;
+
+    // Additional settle when nearly stopped.
+    if (this.speedMS() < 1) {
+      this.visualRollOffsetM *= 0.95;
+      this.visualRollVel *= 0.8;
+    }
   }
 
   private drawForceArrows(): void {
@@ -408,6 +458,8 @@ export class Game {
     this.lapStartTimeSeconds = this.state.timeSeconds;
     this.damage01 = 0;
     this.state.car.steerAngleRad = 0;
+    this.visualRollOffsetM = 0;
+    this.visualRollVel = 0;
   }
 
   private updateCheckpointsAndLap(proj: TrackProjection): void {
