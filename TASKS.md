@@ -95,20 +95,25 @@
   - 70-85% opacity (much brighter colors)
   - Longer lifetimes (particles linger more)
   - Added subtle glow effect with shadow blur
-- [x] Fixed track generation bug: cities too close (comprehensive fix with extensive testing)
-  - STRICT angle limits: max 108° total turning (prevents any looping)
-  - Individual turns max ~72° (conservative hairpins only)
-  - Tracks never face >99° away from initial direction
-  - Increased route distance to 400-600m (from 300-500m)
-  - Minimum 350m city separation enforced (from 200m)
-  - Filter control points closer than 5m
+- [x] Fixed track generation bug and restored exciting features
+  - **Track Length**: MUCH LONGER! 800-1400m routes (was 400-600m)
+    - Total track length: 900-1600m (was 500-700m)  
+    - Races now take 40-60 seconds (was too short at 25 seconds)
+  - **REAL HAIRPINS RESTORED**: 85-90° × 2 = proper ~180° hairpins!
+  - **Sharp 90-degree corners**: 77-99° turns for exciting gameplay
+  - **Balanced angle limits**: 200° total turning (was overly strict 108°)
+  - **Randomized surfaces**: No longer fixed order!
+    - 6-10 random segments per track based on seed
+    - Weighted probabilities: 35% tarmac, 30% gravel, 20% dirt, 15% ice
+    - Slight friction/resistance variance for variety
+  - Minimum 350m city separation still enforced
   - **STRESS TESTED**: 5 comprehensive unit tests over **1000+ track generations**
-    - 500 tracks tested for city separation: ✅ 100% passed (350.0m - 639.8m)
-    - 200 tracks for angle constraints: ✅ Max individual angle only 37.6° (limit: 90°)
-    - 200 tracks for loop prevention: ✅ Min straight-line ratio 46.5% (limit: 44%)
-    - 200 tracks for direction check: ✅ Max reverse 139.1° (limit: 162°)
-    - 200 tracks for length: ✅ All within 502.3m - 752.2m bounds
-  - Zero failures across all seeds tested - rock solid generation!
+    - 500 tracks: ✅ 100% cities 350m-1355m apart
+    - 200 tracks: ✅ Max individual angle 116° (proper hairpins!)
+    - 200 tracks: ✅ Min straight-line ratio 24.6% (allows technical sections)
+    - 200 tracks: ✅ Max reverse 179.9° (real hairpins!)
+    - 200 tracks: ✅ Lengths 895-1597m
+  - Zero failures - hairpins work perfectly without cities overlapping!
 
 ## Future Ideas
 - [ ] Better looking tracks - maybe with few different renderers, so each stage can be rendered in different style
