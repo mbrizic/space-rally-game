@@ -5,6 +5,7 @@ import { createCarState, defaultCarParams, stepCar, type CarTelemetry } from "..
 import {
   createDefaultTrackDefinition,
   createProceduralTrackDefinition,
+  createPointToPointTrackDefinition,
   createTrackFromDefinition,
   parseTrackDefinition,
   pointOnTrack,
@@ -114,7 +115,8 @@ export class Game {
 
     window.addEventListener("keydown", (e) => {
       if (e.code === "KeyR") this.reset();
-      if (e.code === "KeyN") this.randomizeTrack();
+      if (e.code === "KeyN") this.randomizeTrack(false); // Loop track
+      if (e.code === "KeyM") this.randomizeTrack(true); // Point-to-point track
       if (e.code === "KeyC") this.toggleCameraMode();
       if (e.code === "KeyE") this.toggleEditorMode();
       if (e.code === "KeyS" && this.editorMode) this.saveEditorTrack();
@@ -282,10 +284,12 @@ export class Game {
     this.cameraMode = this.cameraMode === "follow" ? "runner" : "follow";
   }
 
-  private randomizeTrack(): void {
+  private randomizeTrack(pointToPoint = false): void {
     // Deterministic-ish but changing seeds; makes it easy to share a specific stage later.
     this.proceduralSeed = (this.proceduralSeed + 1) % 1_000_000_000;
-    const def = createProceduralTrackDefinition(this.proceduralSeed);
+    const def = pointToPoint 
+      ? createPointToPointTrackDefinition(this.proceduralSeed)
+      : createProceduralTrackDefinition(this.proceduralSeed);
     this.setTrack(def);
     this.reset();
   }
@@ -533,6 +537,15 @@ export class Game {
     });
 
     this.renderer.drawGrid({ spacingMeters: 1, majorEvery: 5 });
+    
+    // Draw cities if present
+    if (this.track.startCity) {
+      this.renderer.drawCity(this.track.startCity);
+    }
+    if (this.track.endCity) {
+      this.renderer.drawCity(this.track.endCity);
+    }
+    
     this.renderer.drawTrack({ ...this.track, segmentFillStyles: this.trackSegmentFillStyles });
     if (this.editorMode) {
       this.renderer.drawTrackEditorPoints({
@@ -615,12 +628,11 @@ export class Game {
         `A/D or ←/→ steer`,
         `Space  handbrake`,
         `R      reset`,
-        `N      new procedural track`,
+        `N      new loop track`,
+        `M      new point-to-point`,
         `C      camera: ${this.cameraMode}`,
         `E      editor`,
-        `F      force arrows: ${this.showForceArrows ? "ON" : "OFF"}`,
-        `arrows: forces + velocity`,
-        `cross START to begin timer`
+        `F      force arrows: ${this.showForceArrows ? "ON" : "OFF"}`
       ]
     });
 

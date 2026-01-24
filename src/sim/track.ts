@@ -1,21 +1,28 @@
 import { mulberry32 } from "./rng";
+import { generateCity, type City } from "./city";
 
 export type Vec2 = { x: number; y: number };
 
 export type TrackDefinition = {
-  points: Vec2[]; // loop; last point implicitly connects to first
+  points: Vec2[]; // For loops: last point implicitly connects to first. For point-to-point: last point is the end
   baseWidthM: number;
   segmentWidthsM?: number[]; // optional per-segment widths (same length as points)
-  meta?: { name?: string; seed?: number; source?: "default" | "procedural" | "editor" };
+  isLoop?: boolean; // default true for backwards compatibility
+  startCity?: City;
+  endCity?: City;
+  meta?: { name?: string; seed?: number; source?: "default" | "procedural" | "editor" | "point-to-point" };
 };
 
 export type Track = {
-  points: Vec2[]; // loop; last point implicitly connects to first
+  points: Vec2[];
   widthM: number; // default/base width
   segmentWidthsM?: number[]; // optional per-segment widths (same length as points)
   segmentLengthsM: number[];
   cumulativeLengthsM: number[]; // same length as points; cumulative at each point
   totalLengthM: number;
+  isLoop: boolean;
+  startCity?: City;
+  endCity?: City;
 };
 
 export type TrackProjection = {
@@ -30,7 +37,10 @@ export type TrackProjection = {
 };
 
 export function createTrackFromDefinition(def: TrackDefinition): Track {
-  return buildTrackFromPoints(def.points, def.baseWidthM, def.segmentWidthsM);
+  const track = buildTrackFromPoints(def.points, def.baseWidthM, def.segmentWidthsM, def.isLoop ?? true);
+  track.startCity = def.startCity;
+  track.endCity = def.endCity;
+  return track;
 }
 
 export function serializeTrackDefinition(def: TrackDefinition): string {
@@ -204,19 +214,116 @@ export function createProceduralTrack(seed: number, opts?: ProceduralTrackOption
   return createTrackFromDefinition(createProceduralTrackDefinition(seed, opts));
 }
 
-function buildTrackFromPoints(points: Vec2[], widthM: number, segmentWidthsM?: number[]): Track {
+export function createPointToPointTrackDefinition(seed: number): TrackDefinition {
+  const rand = mulberry32(Math.floor(seed) || 1);
+  
+  // Generate two cities
+  const startX = 0;
+  const startY = 0;
+  const startCity = generateCity(startX, startY, seed, { numStores: 4, numDecorations: 6 });
+  
+  // End city is far away
+  const distance = 300 + rand() * 200;
+  const angle = rand() * Math.PI * 2;
+  const endX = startX + Math.cos(angle) * distance;
+  const endY = startY + Math.sin(angle) * distance;
+  const endCity = generateCity(endX, endY, seed + 1000, { numStores: 4, numDecorations: 6 });
+  
+  // Create a winding road between the cities
+  const numControlPoints = 12 + Math.floor(rand() * 6);
+  const controlPoints: Vec2[] = [{ x: startX, y: startY }];
+  
+  for (let i = 1; i < numControlPoints - 1; i++) {
+    const t = i / (numControlPoints - 1);
+    // Base interpolation
+    const baseX = lerp(startX, endX, t);
+    const baseY = lerp(startY, endY, t);
+    
+    // Add perpendicular noise for winding
+    const perpAngle = angle + Math.PI / 2;
+    const noiseAmount = (Math.sin(t * Math.PI) * 0.5 + 0.5) * 80; // More noise in middle
+    const noise = (rand() - 0.5) * noiseAmount;
+    
+    controlPoints.push({
+      x: baseX + Math.cos(perpAngle) * noise,
+      y: baseY + Math.sin(perpAngle) * noise
+    });
+  }
+  
+  controlPoints.push({ x: endX, y: endY });
+  
+  // Sample the path (not closed!)
+  const points = sampleOpenCatmullRom(controlPoints, 10);
+  
+  const baseWidthM = 7.5;
+  
+  // Width variance
+  const segmentWidthsM: number[] = [];
+  for (let i = 0; i < points.length; i++) {
+    const t = i / points.length;
+    let widthMult = 1 + 0.2 * Math.sin(t * Math.PI * 4) + (rand() - 0.5) * 0.1;
+    widthMult = clamp(widthMult, 0.7, 1.3);
+    segmentWidthsM.push(baseWidthM * widthMult);
+  }
+  
+  return {
+    points,
+    baseWidthM,
+    segmentWidthsM,
+    isLoop: false,
+    startCity,
+    endCity,
+    meta: { name: `Route ${seed}`, seed, source: "point-to-point" }
+  };
+}
+
+// Sample Catmull-Rom spline for OPEN paths (not closed loops)
+function sampleOpenCatmullRom(control: Vec2[], steps: number): Vec2[] {
+  if (control.length < 2) return control;
+  
+  const out: Vec2[] = [];
+  
+  for (let i = 0; i < control.length - 1; i++) {
+    // For open paths, we need to handle endpoints differently
+    const p0 = i === 0 ? control[0] : control[i - 1];
+    const p1 = control[i];
+    const p2 = control[i + 1];
+    const p3 = i === control.length - 2 ? control[i + 1] : control[i + 2];
+    
+    for (let s = 0; s < steps; s++) {
+      const t = s / steps;
+      out.push(catmullRom(p0, p1, p2, p3, t));
+    }
+  }
+  
+  // Add final point
+  out.push(control[control.length - 1]);
+  
+  return out;
+}
+
+function buildTrackFromPoints(points: Vec2[], widthM: number, segmentWidthsM?: number[], isLoop = true): Track {
   const segmentLengthsM: number[] = [];
   const cumulativeLengthsM: number[] = [];
   let total = 0;
-  for (let i = 0; i < points.length; i++) {
+  
+  const numSegments = isLoop ? points.length : points.length - 1;
+  
+  for (let i = 0; i < numSegments; i++) {
     cumulativeLengthsM.push(total);
     const a = points[i];
-    const b = points[(i + 1) % points.length];
+    const b = isLoop ? points[(i + 1) % points.length] : points[i + 1];
     const dx = b.x - a.x;
     const dy = b.y - a.y;
     const len = Math.hypot(dx, dy);
     segmentLengthsM.push(len);
     total += len;
+  }
+  
+  // For point-to-point, add a final cumulative length entry
+  if (!isLoop) {
+    cumulativeLengthsM.push(total);
+    segmentLengthsM.push(0); // No segment after last point
   }
 
   return {
@@ -225,7 +332,8 @@ function buildTrackFromPoints(points: Vec2[], widthM: number, segmentWidthsM?: n
     segmentWidthsM,
     segmentLengthsM,
     cumulativeLengthsM,
-    totalLengthM: total
+    totalLengthM: total,
+    isLoop
   };
 }
 
@@ -284,9 +392,11 @@ export function projectToTrack(track: Track, p: Vec2): TrackProjection {
   let bestDist2 = Number.POSITIVE_INFINITY;
   let best: TrackProjection | null = null;
 
-  for (let i = 0; i < track.points.length; i++) {
+  const numSegments = track.isLoop ? track.points.length : track.points.length - 1;
+
+  for (let i = 0; i < numSegments; i++) {
     const a = track.points[i];
-    const b = track.points[(i + 1) % track.points.length];
+    const b = track.isLoop ? track.points[(i + 1) % track.points.length] : track.points[i + 1];
 
     const abx = b.x - a.x;
     const aby = b.y - a.y;
@@ -304,7 +414,9 @@ export function projectToTrack(track: Track, p: Vec2): TrackProjection {
     if (dist2 >= bestDist2) continue;
 
     const segLen = track.segmentLengthsM[i];
-    const sM = wrapS(track.cumulativeLengthsM[i] + segLen * t, track.totalLengthM);
+    const sM = track.isLoop 
+      ? wrapS(track.cumulativeLengthsM[i] + segLen * t, track.totalLengthM)
+      : track.cumulativeLengthsM[i] + segLen * t;
 
     // Signed lateral offset using segment normal (left-hand normal).
     const segLenSafe = Math.max(1e-6, Math.hypot(abx, aby));
@@ -345,7 +457,7 @@ export function projectToTrack(track: Track, p: Vec2): TrackProjection {
 }
 
 export function pointOnTrack(track: Track, sM: number): { p: Vec2; headingRad: number } {
-  const s = wrapS(sM, track.totalLengthM);
+  const s = track.isLoop ? wrapS(sM, track.totalLengthM) : clamp(sM, 0, track.totalLengthM);
 
   let segmentIndex = 0;
   for (let i = 0; i < track.segmentLengthsM.length; i++) {

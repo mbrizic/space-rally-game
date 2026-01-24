@@ -1,4 +1,5 @@
 import { clamp } from "./math";
+import type { City } from "../sim/city";
 
 type Camera2D = {
   centerX: number;
@@ -761,5 +762,68 @@ export class Renderer2D {
     ctx.fill();
 
     ctx.restore();
+  }
+
+  drawCity(city: City): void {
+    const ctx = this.ctx;
+
+    // Draw buildings
+    for (const building of city.buildings) {
+      ctx.save();
+      ctx.translate(building.x, building.y);
+      ctx.rotate(building.rotation);
+
+      if (building.type === "store") {
+        // Store buildings - more prominent
+        ctx.fillStyle = "rgba(180, 160, 140, 0.8)";
+        ctx.strokeStyle = "rgba(100, 80, 60, 0.9)";
+        ctx.lineWidth = 0.15;
+      } else {
+        // Decorative buildings
+        ctx.fillStyle = "rgba(140, 140, 150, 0.6)";
+        ctx.strokeStyle = "rgba(80, 80, 90, 0.7)";
+        ctx.lineWidth = 0.1;
+      }
+
+      const hw = building.width / 2;
+      const hh = building.height / 2;
+
+      ctx.fillRect(-hw, -hh, building.width, building.height);
+      ctx.strokeRect(-hw, -hh, building.width, building.height);
+
+      // Draw store name if it's a store
+      if (building.type === "store" && building.name) {
+        ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+        ctx.font = "0.8px monospace";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(building.name, 0, 0);
+      }
+
+      ctx.restore();
+    }
+
+    // Draw parking spots
+    for (const spot of city.parkingSpots) {
+      ctx.save();
+      ctx.translate(spot.x, spot.y);
+      ctx.rotate(spot.rotation);
+
+      // Parking spot marker
+      ctx.strokeStyle = "rgba(255, 200, 100, 0.7)";
+      ctx.lineWidth = 0.15;
+      ctx.strokeRect(-1.5, -1, 3, 2);
+
+      // Arrow showing parking direction
+      ctx.fillStyle = "rgba(255, 200, 100, 0.5)";
+      ctx.beginPath();
+      ctx.moveTo(0, -0.5);
+      ctx.lineTo(0.5, 0.5);
+      ctx.lineTo(-0.5, 0.5);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.restore();
+    }
   }
 }
