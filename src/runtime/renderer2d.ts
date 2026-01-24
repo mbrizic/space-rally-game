@@ -622,7 +622,7 @@ export class Renderer2D {
 
     const w = this.viewportWidthCssPx || this.canvas.clientWidth;
     const x = w / 2;
-    const y = 14;
+    const y = 80; // Moved down to avoid overlapping with Rally info
 
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
@@ -767,7 +767,7 @@ export class Renderer2D {
     ctx.restore();
   }
 
-  drawRpmMeter(opts: { rpm: number; maxRpm: number; redlineRpm: number; gear: number }): void {
+  drawRpmMeter(opts: { rpm: number; maxRpm: number; redlineRpm: number; gear: number; totalDistanceKm?: number }): void {
     const ctx = this.ctx;
     ctx.save();
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -848,6 +848,14 @@ export class Renderer2D {
     ctx.font = "bold 14px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
     ctx.fillStyle = "rgba(180, 220, 255, 0.7)";
     ctx.fillText("GEAR", centerX + radius + 50, centerY + 35);
+
+    // Total distance driven (if provided)
+    if (opts.totalDistanceKm !== undefined) {
+      ctx.font = "bold 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+      ctx.fillStyle = "rgba(180, 220, 255, 0.6)";
+      ctx.textAlign = "center";
+      ctx.fillText(`${opts.totalDistanceKm.toFixed(1)} km`, centerX, centerY + 50);
+    }
 
     ctx.restore();
   }

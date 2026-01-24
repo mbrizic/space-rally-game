@@ -83,6 +83,8 @@ export class Game {
   private audioUnlocked = false;
   private running = false;
   private proceduralSeed = 20260124;
+  private totalDistanceM = 0; // Total distance driven across all sessions
+  private lastSaveTime = 0; // For periodic localStorage saves
 
   private lastFrameTimeMs = 0;
   private accumulatorMs = 0;
@@ -118,6 +120,12 @@ export class Game {
     this.input = new KeyboardInput(window);
     this.tuning = tuning;
     this.canvas = canvas;
+    
+    // Load total distance from localStorage
+    const savedDistance = localStorage.getItem('space-rally-total-distance');
+    if (savedDistance) {
+      this.totalDistanceM = parseFloat(savedDistance) || 0;
+    }
     // Start with a point-to-point track
     this.setTrack(createPointToPointTrackDefinition(this.proceduralSeed));
 
@@ -468,6 +476,16 @@ export class Game {
     this.state.carTelemetry = stepped.telemetry;
     this.driftInfo = this.driftDetector.detect(stepped.telemetry, this.speedMS(), this.state.timeSeconds);
 
+    // Track total distance driven
+    const distanceThisFrame = this.speedMS() * dtSeconds;
+    this.totalDistanceM += distanceThisFrame;
+
+    // Save to localStorage periodically (once per second)
+    if (this.state.timeSeconds - this.lastSaveTime >= 1.0) {
+      localStorage.setItem('space-rally-total-distance', this.totalDistanceM.toString());
+      this.lastSaveTime = this.state.timeSeconds;
+    }
+
     // Update audio
     if (this.audioUnlocked) {
       const rpmNorm = rpmFraction(this.engineState, this.engineParams);
@@ -782,7 +800,8 @@ export class Game {
       rpm: this.engineState.rpm,
       maxRpm: this.engineParams.maxRpm,
       redlineRpm: this.engineParams.redlineRpm,
-      gear: this.engineState.gear
+      gear: this.engineState.gear,
+      totalDistanceKm: this.totalDistanceM / 1000
     });
 
     // Notification (if recent)
