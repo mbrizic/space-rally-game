@@ -16,7 +16,7 @@ export class ParticlePool {
     private readonly particles: Particle[];
     private readonly poolSize: number;
 
-    constructor(poolSize = 500) {
+    constructor(poolSize = 2000) {
         this.poolSize = poolSize;
         this.particles = [];
         for (let i = 0; i < poolSize; i++) {
@@ -108,35 +108,35 @@ export function getParticleConfig(surface: Surface): {
                 color: "rgba(180, 185, 195, 0.4)", // Light gray smoke
                 sizeM: 0.18,
                 lifetime: 0.6,
-                spawnRate: 20 // particles per second (increased)
+                spawnRate: 35 // Moderate smoke
             };
         case "gravel":
             return {
-                color: "rgba(210, 190, 140, 0.5)", // Tan/beige dust
-                sizeM: 0.22,
-                lifetime: 0.8,
-                spawnRate: 30 // increased
+                color: "rgba(210, 190, 140, 0.6)", // Tan/beige dust - more opaque
+                sizeM: 0.28,
+                lifetime: 1.2,
+                spawnRate: 120 // MASSIVE dust clouds
             };
         case "dirt":
             return {
-                color: "rgba(165, 125, 90, 0.5)", // Brown dust
-                sizeM: 0.20,
-                lifetime: 0.75,
-                spawnRate: 25 // increased
+                color: "rgba(165, 125, 90, 0.6)", // Brown dust - more opaque
+                sizeM: 0.25,
+                lifetime: 1.0,
+                spawnRate: 100 // Big dust plumes
             };
         case "ice":
             return {
-                color: "rgba(200, 230, 255, 0.3)", // Light blue ice crystals
-                sizeM: 0.15,
-                lifetime: 0.4,
-                spawnRate: 35 // More particles for ice spray
+                color: "rgba(200, 230, 255, 0.4)", // Light blue ice crystals
+                sizeM: 0.18,
+                lifetime: 0.6,
+                spawnRate: 80 // Lots of ice spray
             };
         case "offtrack":
             return {
-                color: "rgba(140, 165, 130, 0.4)", // Green-gray dust
-                sizeM: 0.16,
-                lifetime: 0.5,
-                spawnRate: 15 // increased
+                color: "rgba(140, 165, 130, 0.5)", // Green-gray dust
+                sizeM: 0.22,
+                lifetime: 0.8,
+                spawnRate: 60 // Decent grass/dirt kick-up
             };
     }
 }

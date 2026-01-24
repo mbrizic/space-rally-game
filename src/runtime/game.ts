@@ -55,7 +55,7 @@ export class Game {
   private visualRollVel = 0;
   private readonly driftDetector = new DriftDetector();
   private driftInfo: DriftInfo = { state: DriftState.NO_DRIFT, intensity: 0, duration: 0, score: 0 };
-  private readonly particlePool = new ParticlePool(500);
+  private readonly particlePool = new ParticlePool(2000);
   private particleAccumulator = 0;
   private cameraShakeX = 0;
   private cameraShakeY = 0;
@@ -430,10 +430,13 @@ export class Game {
 
     this.updateVisualRoll(dtSeconds);
 
-    // Emit particles when drifting
-    if (this.driftInfo.intensity > 0.3) {
+    // Emit particles when drifting OR using handbrake
+    const speedMS = this.speedMS();
+    const driftIntensity = Math.max(this.driftInfo.intensity, handbrake * Math.min(speedMS / 15, 1));
+    
+    if (driftIntensity > 0.15) {
       const particleConfig = getParticleConfig(this.lastSurface);
-      const particlesPerSecond = particleConfig.spawnRate * this.driftInfo.intensity;
+      const particlesPerSecond = particleConfig.spawnRate * driftIntensity;
       this.particleAccumulator += particlesPerSecond * dtSeconds;
 
       const particlesToEmit = Math.floor(this.particleAccumulator);
@@ -448,12 +451,12 @@ export class Game {
         const rearY = this.state.car.yM - sinH * rearOffsetM;
 
         // Add some spread
-        const spreadX = (Math.random() - 0.5) * 0.4;
-        const spreadY = (Math.random() - 0.5) * 0.4;
+        const spreadX = (Math.random() - 0.5) * 0.6;
+        const spreadY = (Math.random() - 0.5) * 0.6;
 
         // Particle velocity is somewhat opposite of car velocity with randomness
-        const vxSpread = (Math.random() - 0.5) * 2;
-        const vySpread = (Math.random() - 0.5) * 2;
+        const vxSpread = (Math.random() - 0.5) * 3;
+        const vySpread = (Math.random() - 0.5) * 3;
 
         this.particlePool.emit({
           x: rearX + spreadX,
@@ -515,9 +518,16 @@ export class Game {
 
     ctx.clearRect(0, 0, width, height);
 
+    // In runner mode, offset camera to show more ahead
+    const cameraOffsetY = this.cameraMode === "runner" ? 3 : 0; // 3m offset forward
+    const cosRot = Math.cos(this.state.car.headingRad);
+    const sinRot = Math.sin(this.state.car.headingRad);
+    const offsetX = cosRot * cameraOffsetY;
+    const offsetY = sinRot * cameraOffsetY;
+
     this.renderer.beginCamera({
-      centerX: this.state.car.xM + this.cameraShakeX,
-      centerY: this.state.car.yM + this.cameraShakeY,
+      centerX: this.state.car.xM + this.cameraShakeX + offsetX,
+      centerY: this.state.car.yM + this.cameraShakeY + offsetY,
       pixelsPerMeter: 36,
       rotationRad: this.cameraRotationRad
     });
