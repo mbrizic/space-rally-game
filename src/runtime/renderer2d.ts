@@ -142,7 +142,7 @@ export class Renderer2D {
 
     ctx.save();
     ctx.lineJoin = "round";
-    ctx.lineCap = "round";
+    ctx.lineCap = "butt"; // Changed from "round" to prevent visible circles at segment endpoints
 
     // Road fill - draw each segment with its own width if available
     const fillStyles = track.segmentFillStyles;
