@@ -83,9 +83,13 @@ export class Renderer2D {
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0); // Identity (pixel space)
 
+    // Clear the ENTIRE canvas (in actual device pixels, not CSS pixels)
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    
     const style = STYLE_CONFIGS[opts.renderStyle || "clean"];
     ctx.fillStyle = style.bgColor;
-    ctx.fillRect(0, 0, opts.width, opts.height);
+    // Fill the entire canvas (device pixels)
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
     ctx.restore();
   }
