@@ -298,8 +298,11 @@ export class Renderer2D {
     }
     ctx.stroke();
 
+    // Reset shadow after edges
+    ctx.shadowBlur = 0;
+    ctx.shadowColor = 'transparent';
+
     // Centerline
-    ctx.shadowBlur = 0; // Reset shadow for centerline
     ctx.strokeStyle = style.centerlineColor;
     ctx.lineWidth = 0.20;
     ctx.setLineDash([1.2, 1.5]);
