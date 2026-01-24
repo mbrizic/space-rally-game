@@ -125,7 +125,57 @@
 - [x] Updated controls: T for editor (was E), J/K for shifting
 - [x] Editor save/load changed to 1/2 keys
 
+## Phase 9: Track Generation Quality & Corner System ✅
+- [x] **Corner-Based Track Generation**
+  - Predefined corner types: hairpin (~178°), sharp (~90°), medium (~63°), gentle (~36°), chicane
+  - 5-7 corners per track (was 8-13) for better spacing
+  - 20% hairpins, 25% sharp, 25% medium, 15% gentle, 15% chicanes
+  - Longer tracks: 1000-1600m (increased from 800-1400m)
+- [x] **Zero-Tolerance Unit Tests**
+  - Self-intersection test: ZERO crossing segments allowed (strict)
+  - Straightness test: No segments > 100m straight anywhere
+  - 500-track stress test: 100% must pass quality checks
+  - All tests passing: 7/7 self-intersection + 3/3 straightness ✅
+- [x] **Retry Logic for Quality Guarantee**
+  - Up to 15 attempts per track to meet quality standards
+  - Checks for self-intersections AND long straights
+  - Returns only tracks that pass both checks
+  - Result: 100% tracks meet standards (0/500 failures)
+- [x] **Improved Collision Avoidance**
+  - "Turn Away" strategy: actively avoids previous track sections
+  - 180m search radius (was 100m)
+  - 70m minimum separation (was 50m)
+  - Urgency-based turning: 50-100% turn based on proximity
+- [x] **Increased Obstacle Clearances**
+  - Buildings: 5m from track (was 2m) - no more city blocks on road!
+  - Trees: 3m from track (was 1.5m)
+  - All obstacles check against ENTIRE track, not just local segment
+- [x] **Pacenotes Integration with Corner Metadata**
+  - Track generation records all planned corners (type, position, angle)
+  - Pacenotes use actual corner data instead of detecting curvature
+  - Accurate grading: Hairpins show as "L1/R1", sharp as "L2/R2", etc.
+  - Fixed scan logic: properly finds corners 40-240m ahead
+  - Debug logging (1% of calls) for troubleshooting
+- [x] **Minimap Feature**
+  - Toggleable with 'M' key
+  - Shows full track, cities, and car position
+  - Top-right corner placement with auto-scaling
+  - Semi-transparent background
+
+### Known Issues / TODO:
+⚠️ **MAJOR: Tracks are samey and boring!**
+- Retry logic rejects most interesting tracks (hairpins often cause loops)
+- Trade-off: 100% reliable tracks vs. variety/excitement
+- **Need better solution:**
+  - Predict loops BEFORE placing hairpins
+  - Smarter "turn away" that preserves corner types
+  - Or accept visual overlaps if not driveable intersections
+  - Current approach: safe but dull (documented in track.ts)
+
 ## Future Ideas
+- [ ] **FIX TRACK VARIETY** (Priority #1 after today's session!)
+  - Smarter hairpin placement without retry rejection
+  - More varied track layouts while maintaining quality
 - [ ] Better looking tracks - maybe with few different renderers, so each stage can be rendered in different style
 - [ ] More track variety (jumps, elevation changes)
 - [ ] Weather effects
