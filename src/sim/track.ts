@@ -229,8 +229,8 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
   const angle = rand() * Math.PI * 2;
   
   // Create control points for the MAIN ROUTE (between cities)
-  // Use a simpler approach that works well with Catmull-Rom splines
-  const baseControlPoints = 16 + Math.floor(rand() * 8); // More control points for longer tracks
+  // Use MANY control points to preserve curvature after spline smoothing
+  const baseControlPoints = 36 + Math.floor(rand() * 16); // MANY control points for wavy rally stages
   const controlPoints: Vec2[] = [];
   
   let currentX = 0;
@@ -251,13 +251,13 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
     
     // BALANCED LIMITS: Allow proper hairpins and tight turns, but prevent extreme looping
     // With longer tracks (800-1400m), we can afford more turning while keeping cities apart
-    const maxTotalAngle = Math.PI * 1.1; // ~200 degrees max total turning (relaxed from 108°)
+    const maxTotalAngle = Math.PI * 2.0; // ~360 degrees max total turning - allow for VERY wavy rally stages
     const remainingAngleBudget = maxTotalAngle - totalAbsAngleChange;
     
     if (i > 2 && i < baseControlPoints - 3 && remainingAngleBudget > Math.PI / 6) {
       // Only add special corners in the middle section, and only if we have budget
       
-      if (cornerType < 0.20 && remainingAngleBudget > Math.PI * 0.75) {
+      if (cornerType < 0.12 && remainingAngleBudget > Math.PI * 0.75) {
         // REAL HAIRPIN (only if we have >135 degrees budget remaining)
         const turnDir = rand() > 0.5 ? 1 : -1;
         
@@ -276,20 +276,24 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
         currentX += Math.cos(currentAngle) * (segmentLength * 0.3);
         currentY += Math.sin(currentAngle) * (segmentLength * 0.3);
         continue;
-      } else if (cornerType < 0.40 && remainingAngleBudget > Math.PI / 3) {
+      } else if (cornerType < 0.30 && remainingAngleBudget > Math.PI / 3) {
         // Sharp 90-degree corner
         const turnDir = rand() > 0.5 ? 1 : -1;
         angleChange = (Math.PI / 2) * turnDir * (0.85 + rand() * 0.2); // 77-99 degrees
       } else if (cornerType < 0.65 && remainingAngleBudget > Math.PI / 6) {
-        // Medium corner: 45-60 degrees
+        // Medium corner: 45-68 degrees - COMMON for rally feel
         const turnDir = rand() > 0.5 ? 1 : -1;
         angleChange = (Math.PI / 4) * turnDir * (1 + rand() * 0.5); // 45-68 degrees
+      } else {
+        // Sweeping curve: 15-35 degrees - rally stages are NEVER straight!
+        const turnDir = rand() > 0.5 ? 1 : -1;
+        angleChange = (Math.PI / 12) * turnDir * (1 + rand() * 1.3); // 15-35 degrees
       }
     }
     
-    // Normal point or gentle curve
+    // Default meandering - much more aggressive for rally feel
     if (angleChange === 0) {
-      angleChange = (rand() - 0.5) * 0.3; // Very gentle meandering
+      angleChange = (rand() - 0.5) * 1.2; // Aggressive meandering (~35 degrees)
     }
     
     // HARD LIMIT: No turn can exceed remaining budget
@@ -300,9 +304,9 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
     // VERIFY: After this turn, are we still making forward progress?
     const testAngle = currentAngle + angleChange;
     const angleDiffFromInitial = Math.abs(((testAngle - initialAngle + Math.PI) % (Math.PI * 2)) - Math.PI);
-    if (angleDiffFromInitial > Math.PI * 0.80) { // Never face more than 144 degrees away from initial
-      // This turn would make us face too far backward, reduce it moderately
-      angleChange *= 0.3;
+    if (angleDiffFromInitial > Math.PI * 0.85) { // Never face more than ~150 degrees away from initial
+      // This turn would make us face too far backward, reduce it gently
+      angleChange *= 0.5; // Less aggressive dampening
     }
     
     currentAngle += angleChange;
@@ -322,8 +326,8 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
     }
   }
   
-  // Sample the main route
-  const routePoints = sampleOpenCatmullRom(filteredControlPoints, 10);
+  // Sample the main route - fewer samples between control points to preserve angles
+  const routePoints = sampleOpenCatmullRom(filteredControlPoints, 2);
   
   // Calculate direction at start and end of route
   const startDir = { 
