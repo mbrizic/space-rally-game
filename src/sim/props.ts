@@ -115,7 +115,7 @@ function clamp(value: number, min: number, max: number): number {
 /**
  * Calculate the shortest distance from a point (px, py) to a line segment (ax, ay) -> (bx, by)
  */
-function pointToSegmentDistance(
+export function pointToSegmentDistance(
   px: number,
   py: number,
   ax: number,
@@ -174,23 +174,43 @@ export function generateWaterBodies(track: Track, opts?: { seed?: number }): Wat
     const sides: number[] = sideChoice < 0.3 ? [-1] : sideChoice < 0.6 ? [1] : [-1, 1];
     
     for (const sign of sides) {
-      // Place water overlapping with road edge - makes it dangerous!
-      const offset = roadHalfWidthM * 0.5 + rand() * 4; // Starts from middle of road edge
+      // Bigger water bodies - more visible and dangerous
+      const baseRadius = 6 + rand() * 8; // 6-14m base
+      const radiusX = baseRadius * (0.8 + rand() * 0.4);
+      const radiusY = baseRadius * (0.8 + rand() * 0.4);
+      const maxRadius = Math.max(radiusX, radiusY);
       
-      const jitterAlong = (rand() - 0.5) * 10;
+      // Place water BESIDE the track - center must be far enough that water doesn't touch road
+      // Water center offset = road edge + water radius + safety gap
+      const safetyGap = 3; // Guaranteed minimum gap from road edge
+      const minOffset = roadHalfWidthM + maxRadius + safetyGap;
+      const offset = minOffset + rand() * 6; // Plus some extra randomness
+      
+      const jitterAlong = (rand() - 0.5) * 8; // Reduced jitter to avoid hitting other segments
       const tx = -normal.y;
       const ty = normal.x;
       
       const x = p.x + normal.x * sign * offset + tx * jitterAlong;
       const y = p.y + normal.y * sign * offset + ty * jitterAlong;
-      
-      // Bigger water bodies - more visible and dangerous
-      const baseRadius = 5 + rand() * 7; // 5-12m base (bigger)
-      const radiusX = baseRadius * (0.8 + rand() * 0.4);
-      const radiusY = baseRadius * (0.8 + rand() * 0.4);
       const rotation = rand() * Math.PI;
       
-      waterBodies.push({ id: id++, x, y, radiusX, radiusY, rotation });
+      // Validate: check that water doesn't overlap with ANY track segment
+      let overlapsTrack = false;
+      for (let i = 0; i < track.points.length - 1; i++) {
+        const a = track.points[i];
+        const b = track.points[i + 1];
+        const dist = pointToSegmentDistance(x, y, a.x, a.y, b.x, b.y);
+        
+        // Water overlaps if center minus radius is within road bounds
+        if (dist - maxRadius < roadHalfWidthM) {
+          overlapsTrack = true;
+          break;
+        }
+      }
+      
+      if (!overlapsTrack) {
+        waterBodies.push({ id: id++, x, y, radiusX, radiusY, rotation });
+      }
     }
     
     // Schedule next water body
