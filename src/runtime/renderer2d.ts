@@ -142,7 +142,7 @@ export class Renderer2D {
 
     ctx.save();
     ctx.lineJoin = "round";
-    ctx.lineCap = "round";
+    ctx.lineCap = "square"; // Square extends slightly to ensure coverage without visible circles
 
     // Road fill - draw each segment with its own width if available
     const fillStyles = track.segmentFillStyles;
