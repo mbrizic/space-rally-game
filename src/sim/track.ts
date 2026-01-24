@@ -1,4 +1,13 @@
+import { mulberry32 } from "./rng";
+
 export type Vec2 = { x: number; y: number };
+
+export type TrackDefinition = {
+  points: Vec2[]; // loop; last point implicitly connects to first
+  baseWidthM: number;
+  segmentWidthsM?: number[]; // optional per-segment widths (same length as points)
+  meta?: { name?: string; seed?: number; source?: "default" | "procedural" | "editor" };
+};
 
 export type Track = {
   points: Vec2[]; // loop; last point implicitly connects to first
@@ -20,7 +29,51 @@ export type TrackProjection = {
   widthM: number; // width at this segment
 };
 
-export function createDefaultTrack(): Track {
+export function createTrackFromDefinition(def: TrackDefinition): Track {
+  return buildTrackFromPoints(def.points, def.baseWidthM, def.segmentWidthsM);
+}
+
+export function serializeTrackDefinition(def: TrackDefinition): string {
+  return JSON.stringify(def);
+}
+
+export function parseTrackDefinition(json: string): TrackDefinition | null {
+  try {
+    const v = JSON.parse(json) as Partial<TrackDefinition>;
+    if (!v || !Array.isArray(v.points) || typeof v.baseWidthM !== "number") return null;
+    const baseWidthM = v.baseWidthM;
+    const points: Vec2[] = [];
+    for (const p of v.points) {
+      if (!p || typeof (p as any).x !== "number" || typeof (p as any).y !== "number") return null;
+      points.push({ x: (p as any).x, y: (p as any).y });
+    }
+    const segmentWidthsM =
+      Array.isArray(v.segmentWidthsM) && v.segmentWidthsM.length === points.length
+        ? v.segmentWidthsM.map((n) => (typeof n === "number" && Number.isFinite(n) ? n : baseWidthM))
+        : undefined;
+
+    const meta = v.meta && typeof v.meta === "object" ? (v.meta as any) : undefined;
+    const safeMeta =
+      meta && (meta.name || meta.seed || meta.source)
+        ? {
+            name: typeof meta.name === "string" ? meta.name : undefined,
+            seed: typeof meta.seed === "number" ? meta.seed : undefined,
+            source: meta.source === "default" || meta.source === "procedural" || meta.source === "editor" ? meta.source : undefined
+          }
+        : undefined;
+
+    return {
+      points,
+      baseWidthM,
+      segmentWidthsM,
+      meta: safeMeta
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function createDefaultTrackDefinition(): TrackDefinition {
   // Closed-loop rally-ish stage, specified as sparse control points in meters.
   const controlPoints: Vec2[] = [
     { x: 0, y: 0 },
@@ -55,30 +108,103 @@ export function createDefaultTrack(): Track {
   // Denser sampling makes the track smoother while keeping projection/collision simple.
   const points = sampleClosedCatmullRom(controlPoints, 10);
 
-  // Create width variance: narr ow chicanes at specific sections, wider straights
-  const segmentWidths: number[] = [];
+  // Create width variance: narrow chicanes at specific sections, wider straights.
+  const segmentWidthsM: number[] = [];
   for (let i = 0; i < points.length; i++) {
     const s = i / points.length; // normalized position [0..1]
 
-    // Define narrow sections (chicanes) and wide sections
     let widthMultiplier = 1.0;
-
-    // Narrow sections at ~20-25%, ~45-50%, ~70-75%
     if ((s > 0.20 && s < 0.25) || (s > 0.45 && s < 0.50) || (s > 0.70 && s < 0.75)) {
-      widthMultiplier = 0.65; // 35% narrower
-    }
-    // Wide sections at ~10-15%, ~35-40%, ~85-90%
-    else if ((s > 0.10 && s < 0.15) || (s > 0.35 && s < 0.40) || (s > 0.85 && s < 0.90)) {
-      widthMultiplier = 1.4; // 40% wider
+      widthMultiplier = 0.65;
+    } else if ((s > 0.10 && s < 0.15) || (s > 0.35 && s < 0.40) || (s > 0.85 && s < 0.90)) {
+      widthMultiplier = 1.4;
     }
 
-    segmentWidths.push(baseWidthM * widthMultiplier);
+    segmentWidthsM.push(baseWidthM * widthMultiplier);
   }
 
-  return buildTrack(points, baseWidthM, segmentWidths);
+  return {
+    points,
+    baseWidthM,
+    segmentWidthsM,
+    meta: { name: "Default", source: "default" }
+  };
 }
 
-function buildTrack(points: Vec2[], widthM: number, segmentWidthsM?: number[]): Track {
+export function createDefaultTrack(): Track {
+  return createTrackFromDefinition(createDefaultTrackDefinition());
+}
+
+export type ProceduralTrackOptions = {
+  controlPoints?: number;
+  baseRadiusM?: number;
+  radiusJitterM?: number;
+  baseWidthM?: number;
+  samplesPerSegment?: number;
+};
+
+export function createProceduralTrackDefinition(seed: number, opts?: ProceduralTrackOptions): TrackDefinition {
+  const rand = mulberry32(Math.floor(seed) || 1);
+
+  const controlCount = Math.max(8, Math.floor(opts?.controlPoints ?? 18));
+  const baseRadiusM = Math.max(20, opts?.baseRadiusM ?? 78);
+  const radiusJitterM = Math.max(0, opts?.radiusJitterM ?? 28);
+  const baseWidthM = Math.max(6, opts?.baseWidthM ?? 10);
+  const samplesPerSegment = Math.max(6, Math.floor(opts?.samplesPerSegment ?? 9));
+
+  const phase1 = rand() * Math.PI * 2;
+  const phase2 = rand() * Math.PI * 2;
+
+  const controlPoints: Vec2[] = [];
+  for (let i = 0; i < controlCount; i++) {
+    const t = i / controlCount;
+    const angle = t * Math.PI * 2;
+
+    const smoothNoise =
+      0.55 * Math.sin(angle * 2 + phase1) +
+      0.25 * Math.sin(angle * 5 + phase2) +
+      (rand() - 0.5) * 0.25;
+    const r = baseRadiusM + smoothNoise * radiusJitterM;
+
+    controlPoints.push({ x: Math.cos(angle) * r, y: Math.sin(angle) * r });
+  }
+
+  const points = sampleClosedCatmullRom(controlPoints, samplesPerSegment);
+
+  // Width variance: smooth + a couple of narrow "squeeze" zones.
+  const squeezeCenters = [rand(), rand(), rand()].sort((a, b) => a - b);
+  const segmentWidthsM: number[] = [];
+  for (let i = 0; i < points.length; i++) {
+    const s = i / points.length;
+
+    let widthMult =
+      1 +
+      0.25 * Math.sin(s * Math.PI * 2 * 2 + phase1) +
+      0.12 * Math.sin(s * Math.PI * 2 * 6 + phase2);
+    widthMult += (rand() - 0.5) * 0.04;
+    widthMult = clamp(widthMult, 0.65, 1.55);
+
+    for (const c of squeezeCenters) {
+      const d = circular01Distance(s, c);
+      if (d < 0.030) widthMult *= lerp(0.62, 1, d / 0.030);
+    }
+
+    segmentWidthsM.push(baseWidthM * clamp(widthMult, 0.55, 1.65));
+  }
+
+  return {
+    points,
+    baseWidthM,
+    segmentWidthsM,
+    meta: { name: `Procedural ${seed}`, seed, source: "procedural" }
+  };
+}
+
+export function createProceduralTrack(seed: number, opts?: ProceduralTrackOptions): Track {
+  return createTrackFromDefinition(createProceduralTrackDefinition(seed, opts));
+}
+
+function buildTrackFromPoints(points: Vec2[], widthM: number, segmentWidthsM?: number[]): Track {
   const segmentLengthsM: number[] = [];
   const cumulativeLengthsM: number[] = [];
   let total = 0;
@@ -139,6 +265,19 @@ function catmullRom(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: number): Vec2 {
       (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 +
       (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3);
   return { x, y };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+function circular01Distance(a: number, b: number): number {
+  const d = Math.abs(a - b) % 1;
+  return Math.min(d, 1 - d);
 }
 
 export function projectToTrack(track: Track, p: Vec2): TrackProjection {

@@ -2,7 +2,15 @@ import { KeyboardInput } from "./input";
 import { Renderer2D } from "./renderer2d";
 import { clamp } from "./math";
 import { createCarState, defaultCarParams, stepCar, type CarTelemetry } from "../sim/car";
-import { createDefaultTrack, pointOnTrack, projectToTrack, type TrackProjection } from "../sim/track";
+import {
+  createDefaultTrackDefinition,
+  createProceduralTrackDefinition,
+  createTrackFromDefinition,
+  pointOnTrack,
+  projectToTrack,
+  type TrackDefinition,
+  type TrackProjection
+} from "../sim/track";
 import { surfaceForTrackSM, type Surface } from "../sim/surface";
 import { generateTrees, type CircleObstacle } from "../sim/props";
 import { DriftDetector, DriftState, type DriftInfo } from "../sim/drift";
@@ -23,10 +31,11 @@ export class Game {
   private readonly renderer: Renderer2D;
   private readonly input: KeyboardInput;
   private readonly tuning?: TuningPanel;
-  private readonly track = createDefaultTrack();
-  private readonly trackSegmentFillStyles: string[];
-  private readonly trees: CircleObstacle[];
-  private readonly checkpointSM: number[];
+  private trackDef: TrackDefinition = createDefaultTrackDefinition();
+  private track = createTrackFromDefinition(this.trackDef);
+  private trackSegmentFillStyles: string[] = [];
+  private trees: CircleObstacle[] = [];
+  private checkpointSM: number[] = [];
   private nextCheckpointIndex = 0;
   private insideActiveGate = false;
   private lapActive = false;
@@ -55,6 +64,7 @@ export class Game {
   private readonly slideAudio = new SlideAudio();
   private audioUnlocked = false;
   private running = false;
+  private proceduralSeed = 20260124;
 
   private lastFrameTimeMs = 0;
   private accumulatorMs = 0;
@@ -88,25 +98,11 @@ export class Game {
     this.renderer = new Renderer2D(canvas);
     this.input = new KeyboardInput(window);
     this.tuning = tuning;
-
-    this.trackSegmentFillStyles = [];
-    for (let i = 0; i < this.track.points.length; i++) {
-      const midSM = this.track.cumulativeLengthsM[i] + this.track.segmentLengthsM[i] * 0.5;
-      const surface = surfaceForTrackSM(this.track.totalLengthM, midSM, false);
-      this.trackSegmentFillStyles.push(surfaceFillStyle(surface));
-    }
-
-    this.checkpointSM = [
-      0,
-      this.track.totalLengthM * 0.25,
-      this.track.totalLengthM * 0.5,
-      this.track.totalLengthM * 0.75
-    ];
-
-    this.trees = generateTrees(this.track, { seed: 20260123 });
+    this.setTrack(createDefaultTrackDefinition());
 
     window.addEventListener("keydown", (e) => {
       if (e.code === "KeyR") this.reset();
+      if (e.code === "KeyN") this.randomizeTrack();
       if (e.code === "KeyF") {
         this.showForceArrows = !this.showForceArrows;
         this.tuning?.setShowArrows(this.showForceArrows);
@@ -127,6 +123,45 @@ export class Game {
     });
 
     this.reset();
+  }
+
+  private randomizeTrack(): void {
+    // Deterministic-ish but changing seeds; makes it easy to share a specific stage later.
+    this.proceduralSeed = (this.proceduralSeed + 1) % 1_000_000_000;
+    const def = createProceduralTrackDefinition(this.proceduralSeed);
+    this.setTrack(def);
+    this.reset();
+  }
+
+  private setTrack(def: TrackDefinition): void {
+    this.trackDef = def;
+    this.track = createTrackFromDefinition(def);
+
+    this.trackSegmentFillStyles = [];
+    for (let i = 0; i < this.track.points.length; i++) {
+      const midSM = this.track.cumulativeLengthsM[i] + this.track.segmentLengthsM[i] * 0.5;
+      const surface = surfaceForTrackSM(this.track.totalLengthM, midSM, false);
+      this.trackSegmentFillStyles.push(surfaceFillStyle(surface));
+    }
+
+    this.checkpointSM = [
+      0,
+      this.track.totalLengthM * 0.25,
+      this.track.totalLengthM * 0.5,
+      this.track.totalLengthM * 0.75
+    ];
+
+    const treeSeed = Math.floor(def.meta?.seed ?? 20260123);
+    this.trees = generateTrees(this.track, { seed: treeSeed });
+
+    // Reset stage-related state when swapping tracks.
+    this.lapActive = false;
+    this.lapStartTimeSeconds = this.state.timeSeconds;
+    this.lapCount = 0;
+    this.bestLapTimeSeconds = null;
+    this.nextCheckpointIndex = 0;
+    this.insideActiveGate = false;
+    this.lastTrackS = 0;
   }
 
   private async tryUnlockAudio(): Promise<void> {
@@ -355,6 +390,7 @@ export class Game {
       lines: [
         `FPS: ${this.fps.toFixed(0)}`,
         `t: ${this.state.timeSeconds.toFixed(2)}s`,
+        `track: ${this.trackDef.meta?.name ?? "Custom"}${this.trackDef.meta?.seed ? ` (seed ${this.trackDef.meta.seed})` : ""}`,
         `speed: ${speedMS.toFixed(2)} m/s (${speedKmH.toFixed(0)} km/h)`,
         `steer: ${this.input.axis("steer").toFixed(2)}  throttle: ${this.input.axis("throttle").toFixed(2)}  brake/rev: ${this.input
           .axis("brake")
