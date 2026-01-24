@@ -240,7 +240,7 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
   let totalAbsAngleChange = 0; // Track ABSOLUTE cumulative angle
   
   // DISTRIBUTED APPROACH: Budget per segment instead of total exhaustion
-  const maxTotalAngle = Math.PI * 1.8; // ~320 degrees max total - wavy rally stages
+  const maxTotalAngle = Math.PI * 2.2; // ~400 degrees max total - VERY wavy rally stages
   const avgAnglePerSegment = maxTotalAngle / baseControlPoints; // Distribute evenly
   
   for (let i = 0; i < baseControlPoints; i++) {
@@ -265,8 +265,8 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
     if (i > 2 && i < baseControlPoints - 3 && remainingSegments > 5) {
       // Only add special corners in the middle section
       
-      if (cornerType < 0.10 && segmentAngleBudget > Math.PI * 0.7) {
-        // HAIRPIN - rare and only if we have budget
+      if (cornerType < 0.18 && segmentAngleBudget > Math.PI * 0.7) {
+        // HAIRPIN - MORE COMMON for rally excitement!
         const turnDir = rand() > 0.5 ? 1 : -1;
         const turn1 = Math.min((Math.PI * 0.45) * turnDir * (0.95 + rand() * 0.1), segmentAngleBudget * 0.48);
         const turn2 = Math.min((Math.PI * 0.45) * turnDir * (0.95 + rand() * 0.1), segmentAngleBudget * 0.48);
@@ -282,22 +282,22 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
         currentX += Math.cos(currentAngle) * (segmentLength * 0.3);
         currentY += Math.sin(currentAngle) * (segmentLength * 0.3);
         continue;
-      } else if (cornerType < 0.30) {
-        // Sharp corner: 55-85 degrees
+      } else if (cornerType < 0.45) {
+        // Sharp corner: 60-90 degrees - MORE COMMON
         const turnDir = rand() > 0.5 ? 1 : -1;
-        angleChange = (Math.PI / 3) * turnDir * (0.95 + rand() * 0.5); // 55-85 degrees
-      } else if (cornerType < 0.70) {
-        // Medium corner: 30-55 degrees - VERY COMMON
+        angleChange = (Math.PI / 2.5) * turnDir * (0.95 + rand() * 0.6); // 60-90 degrees
+      } else if (cornerType < 0.85) {
+        // Medium corner: 35-60 degrees - VERY COMMON
         const turnDir = rand() > 0.5 ? 1 : -1;
-        angleChange = (Math.PI / 6) * turnDir * (1 + rand() * 0.9); // 30-55 degrees
+        angleChange = (Math.PI / 5) * turnDir * (1 + rand() * 0.9); // 35-60 degrees
       } else {
-        // Gentle curve: 15-30 degrees - constant waviness
+        // Gentle curve: 20-35 degrees - constant waviness
         const turnDir = rand() > 0.5 ? 1 : -1;
-        angleChange = (Math.PI / 12) * turnDir * (1 + rand() * 1.0); // 15-30 degrees
+        angleChange = (Math.PI / 9) * turnDir * (1 + rand() * 1.0); // 20-35 degrees
       }
     } else {
       // Start/end sections: still wavy but gentler
-      angleChange = (rand() - 0.5) * 0.8; // ±23 degrees
+      angleChange = (rand() - 0.5) * 1.0; // ±29 degrees
     }
     
     // Clamp to segment budget
