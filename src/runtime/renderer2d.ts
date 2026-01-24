@@ -4,6 +4,7 @@ type Camera2D = {
   centerX: number;
   centerY: number;
   pixelsPerMeter: number;
+  rotationRad?: number;
 };
 
 export class Renderer2D {
@@ -51,11 +52,28 @@ export class Renderer2D {
     ctx.save();
     ctx.translate(width / 2, height / 2);
     ctx.scale(camera.pixelsPerMeter, camera.pixelsPerMeter);
+    if (camera.rotationRad) ctx.rotate(camera.rotationRad);
     ctx.translate(-camera.centerX, -camera.centerY);
   }
 
   endCamera(): void {
     this.ctx.restore();
+  }
+
+  screenToWorld(xCssPx: number, yCssPx: number): { x: number; y: number } {
+    const width = this.viewportWidthCssPx || this.canvas.clientWidth;
+    const height = this.viewportHeightCssPx || this.canvas.clientHeight;
+
+    const dx = (xCssPx - width / 2) / this.camera.pixelsPerMeter;
+    const dy = (yCssPx - height / 2) / this.camera.pixelsPerMeter;
+
+    const rot = this.camera.rotationRad ?? 0;
+    const cosR = Math.cos(-rot);
+    const sinR = Math.sin(-rot);
+    const rx = dx * cosR - dy * sinR;
+    const ry = dx * sinR + dy * cosR;
+
+    return { x: rx + this.camera.centerX, y: ry + this.camera.centerY };
   }
 
   drawGrid(opts: { spacingMeters: number; majorEvery: number }): void {

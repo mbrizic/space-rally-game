@@ -56,6 +56,7 @@ export class Game {
   private cameraShakeX = 0;
   private cameraShakeY = 0;
   private collisionFlashAlpha = 0;
+  private cameraMode: "follow" | "runner" = "follow";
   // Engine simulation
   private engineState: EngineState = createEngineState();
   private readonly engineParams = defaultEngineParams();
@@ -103,6 +104,7 @@ export class Game {
     window.addEventListener("keydown", (e) => {
       if (e.code === "KeyR") this.reset();
       if (e.code === "KeyN") this.randomizeTrack();
+      if (e.code === "KeyC") this.toggleCameraMode();
       if (e.code === "KeyF") {
         this.showForceArrows = !this.showForceArrows;
         this.tuning?.setShowArrows(this.showForceArrows);
@@ -123,6 +125,10 @@ export class Game {
     });
 
     this.reset();
+  }
+
+  private toggleCameraMode(): void {
+    this.cameraMode = this.cameraMode === "follow" ? "runner" : "follow";
   }
 
   private randomizeTrack(): void {
@@ -342,10 +348,13 @@ export class Game {
 
     ctx.clearRect(0, 0, width, height);
 
+    const cameraRot =
+      this.cameraMode === "runner" ? -this.state.car.headingRad - Math.PI / 2 : 0;
     this.renderer.beginCamera({
       centerX: this.state.car.xM + this.cameraShakeX,
       centerY: this.state.car.yM + this.cameraShakeY,
-      pixelsPerMeter: 36
+      pixelsPerMeter: 36,
+      rotationRad: cameraRot
     });
 
     this.renderer.drawGrid({ spacingMeters: 1, majorEvery: 5 });
@@ -391,6 +400,7 @@ export class Game {
         `FPS: ${this.fps.toFixed(0)}`,
         `t: ${this.state.timeSeconds.toFixed(2)}s`,
         `track: ${this.trackDef.meta?.name ?? "Custom"}${this.trackDef.meta?.seed ? ` (seed ${this.trackDef.meta.seed})` : ""}`,
+        `camera: ${this.cameraMode}`,
         `speed: ${speedMS.toFixed(2)} m/s (${speedKmH.toFixed(0)} km/h)`,
         `steer: ${this.input.axis("steer").toFixed(2)}  throttle: ${this.input.axis("throttle").toFixed(2)}  brake/rev: ${this.input
           .axis("brake")
@@ -414,6 +424,8 @@ export class Game {
         `A/D or ←/→ steer`,
         `Space  handbrake`,
         `R      reset`,
+        `N      new procedural track`,
+        `C      camera: ${this.cameraMode}`,
         `F      force arrows: ${this.showForceArrows ? "ON" : "OFF"}`,
         `arrows: forces + velocity`,
         `cross START to begin timer`
