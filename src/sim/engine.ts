@@ -189,5 +189,8 @@ export function stepEngine(
  * Get RPM as fraction of redline (0..1+)
  */
 export function rpmFraction(state: EngineState, params: EngineParams): number {
-    return (state.rpm - params.idleRpm) / (params.redlineRpm - params.idleRpm);
+    const range = params.redlineRpm - params.idleRpm;
+    // Defensive: avoid division by zero if idle == redline
+    if (range === 0) return 0;
+    return (state.rpm - params.idleRpm) / range;
 }
