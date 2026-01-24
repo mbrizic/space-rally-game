@@ -791,6 +791,105 @@ export class Renderer2D {
     ctx.restore();
   }
 
+  drawMinimap(opts: { track: any; carX: number; carY: number; carHeading: number }): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+
+    const w = this.viewportWidthCssPx || this.canvas.clientWidth;
+    const h = this.viewportHeightCssPx || this.canvas.clientHeight;
+
+    // Minimap in top-right corner
+    const minimapSize = Math.min(w, h) * 0.2; // 20% of screen
+    const padding = 20;
+    const minimapX = w - minimapSize - padding;
+    const minimapY = padding;
+
+    // Semi-transparent background
+    ctx.fillStyle = "rgba(20, 25, 30, 0.7)";
+    ctx.fillRect(minimapX, minimapY, minimapSize, minimapSize);
+
+    // Border
+    ctx.strokeStyle = "rgba(180, 220, 255, 0.5)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(minimapX, minimapY, minimapSize, minimapSize);
+
+    // Calculate track bounds
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const pt of opts.track.points) {
+      minX = Math.min(minX, pt.x);
+      maxX = Math.max(maxX, pt.x);
+      minY = Math.min(minY, pt.y);
+      maxY = Math.max(maxY, pt.y);
+    }
+
+    const trackWidth = maxX - minX;
+    const trackHeight = maxY - minY;
+    const scale = Math.min(minimapSize / trackWidth, minimapSize / trackHeight) * 0.85;
+    const offsetX = minimapX + minimapSize / 2 - (minX + maxX) / 2 * scale;
+    const offsetY = minimapY + minimapSize / 2 - (minY + maxY) / 2 * scale;
+
+    // Draw track
+    ctx.strokeStyle = "rgba(120, 140, 160, 0.6)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    for (let i = 0; i < opts.track.points.length; i++) {
+      const pt = opts.track.points[i];
+      const x = offsetX + pt.x * scale;
+      const y = offsetY + pt.y * scale;
+      if (i === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    }
+    ctx.stroke();
+
+    // Draw cities
+    if (opts.track.startCity) {
+      const cx = offsetX + opts.track.startCity.centerX * scale;
+      const cy = offsetY + opts.track.startCity.centerY * scale;
+      ctx.fillStyle = "rgba(255, 220, 100, 0.7)";
+      ctx.beginPath();
+      ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (opts.track.endCity) {
+      const cx = offsetX + opts.track.endCity.centerX * scale;
+      const cy = offsetY + opts.track.endCity.centerY * scale;
+      ctx.fillStyle = "rgba(100, 255, 100, 0.7)";
+      ctx.beginPath();
+      ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Draw car
+    const carX = offsetX + opts.carX * scale;
+    const carY = offsetY + opts.carY * scale;
+    
+    ctx.save();
+    ctx.translate(carX, carY);
+    ctx.rotate(opts.carHeading);
+    
+    // Car triangle
+    ctx.fillStyle = "rgba(255, 100, 100, 0.9)";
+    ctx.beginPath();
+    ctx.moveTo(6, 0);
+    ctx.lineTo(-4, -3);
+    ctx.lineTo(-4, 3);
+    ctx.closePath();
+    ctx.fill();
+    
+    // Car outline
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    
+    ctx.restore();
+
+    ctx.restore();
+  }
+
   private drawHudArrow(fromX: number, fromY: number, dx: number, dy: number, color: string): void {
     const ctx = this.ctx;
     const len = Math.hypot(dx, dy);

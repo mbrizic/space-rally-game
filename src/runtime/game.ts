@@ -52,6 +52,7 @@ export class Game {
   private lastSurface: Surface = { name: "tarmac", frictionMu: 1, rollingResistanceN: 260 };
   private lastTrackS = 0;
   private showForceArrows = false;
+  private showMinimap = true;
   private gear: "F" | "R" = "F";
   private visualRollOffsetM = 0;
   private visualRollVel = 0;
@@ -128,6 +129,9 @@ export class Game {
       if (e.code === "KeyF") {
         this.showForceArrows = !this.showForceArrows;
         this.tuning?.setShowArrows(this.showForceArrows);
+      }
+      if (e.code === "KeyM") {
+        this.showMinimap = !this.showMinimap;
       }
       // Unlock audio on first key press
       if (!this.audioUnlocked) {
@@ -684,6 +688,7 @@ export class Game {
         `R      reset`,
         `N      new route`,
         `C      camera: ${this.cameraMode}`,
+        `M      minimap: ${this.showMinimap ? "ON" : "OFF"}`,
         `T      editor`,
         `F      force arrows: ${this.showForceArrows ? "ON" : "OFF"}`
       ]
@@ -787,6 +792,16 @@ export class Game {
     // Damage overlay (red vignette)
     if (this.damage01 > 0.15) {
       this.renderer.drawDamageOverlay({ damage01: this.damage01 });
+    }
+
+    // Minimap
+    if (this.showMinimap) {
+      this.renderer.drawMinimap({
+        track: this.track,
+        carX: this.state.car.xM,
+        carY: this.state.car.yM,
+        carHeading: this.state.car.headingRad
+      });
     }
 
     // Collision flash
