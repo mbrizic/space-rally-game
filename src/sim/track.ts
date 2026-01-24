@@ -223,14 +223,14 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
   // end-50m to end: Ending city
   
   const cityLength = 50; // Length of road through each city
-  const minDistance = 400; // MINIMUM route distance (increased from 300)
-  const maxDistance = 600; // MAXIMUM route distance (increased from 500)
+  const minDistance = 800; // MUCH LONGER: 800-1400m (was 400-600m)
+  const maxDistance = 1400;
   const distance = minDistance + rand() * (maxDistance - minDistance);
   const angle = rand() * Math.PI * 2;
   
   // Create control points for the MAIN ROUTE (between cities)
   // Use a simpler approach that works well with Catmull-Rom splines
-  const baseControlPoints = 12 + Math.floor(rand() * 6);
+  const baseControlPoints = 16 + Math.floor(rand() * 8); // More control points for longer tracks
   const controlPoints: Vec2[] = [];
   
   let currentX = 0;
@@ -249,41 +249,41 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
     let angleChange = 0;
     const segmentLength = distance / (baseControlPoints - 1);
     
-    // STRICT LIMITS: Total absolute angle change must stay under 110 degrees
-    // Being conservative since Catmull-Rom splines add smoothing curvature
-    const maxTotalAngle = Math.PI * 0.60; // 108 degrees max total turning
+    // BALANCED LIMITS: Allow proper hairpins and tight turns, but prevent extreme looping
+    // With longer tracks (800-1400m), we can afford more turning while keeping cities apart
+    const maxTotalAngle = Math.PI * 1.1; // ~200 degrees max total turning (relaxed from 108°)
     const remainingAngleBudget = maxTotalAngle - totalAbsAngleChange;
     
     if (i > 2 && i < baseControlPoints - 3 && remainingAngleBudget > Math.PI / 6) {
       // Only add special corners in the middle section, and only if we have budget
       
-      if (cornerType < 0.12 && remainingAngleBudget > Math.PI * 0.5) {
-        // Hairpin (only if we have >90 degrees budget remaining)
+      if (cornerType < 0.20 && remainingAngleBudget > Math.PI * 0.75) {
+        // REAL HAIRPIN (only if we have >135 degrees budget remaining)
         const turnDir = rand() > 0.5 ? 1 : -1;
         
-        // CONSERVATIVE hairpin: only 70-80 degrees each turn (total 140-160, not 180)
-        const turn1 = (Math.PI * 0.4) * turnDir; // ~72 degrees
-        const turn2 = (Math.PI * 0.4) * turnDir; // ~72 degrees
+        // True hairpin: 85-90 degrees each turn (total ~170-180 degrees)
+        const turn1 = (Math.PI * 0.47) * turnDir * (0.95 + rand() * 0.1); // ~85-90 degrees
+        const turn2 = (Math.PI * 0.47) * turnDir * (0.95 + rand() * 0.1); // ~85-90 degrees
         
         currentAngle += turn1;
         totalAbsAngleChange += Math.abs(turn1);
-        currentX += Math.cos(currentAngle) * (segmentLength * 0.4);
-        currentY += Math.sin(currentAngle) * (segmentLength * 0.4);
+        currentX += Math.cos(currentAngle) * (segmentLength * 0.3);
+        currentY += Math.sin(currentAngle) * (segmentLength * 0.3);
         controlPoints.push({ x: currentX, y: currentY });
         
         currentAngle += turn2;
         totalAbsAngleChange += Math.abs(turn2);
-        currentX += Math.cos(currentAngle) * (segmentLength * 0.4);
-        currentY += Math.sin(currentAngle) * (segmentLength * 0.4);
+        currentX += Math.cos(currentAngle) * (segmentLength * 0.3);
+        currentY += Math.sin(currentAngle) * (segmentLength * 0.3);
         continue;
-      } else if (cornerType < 0.30 && remainingAngleBudget > Math.PI / 4) {
-        // Sharp corner: max 60-70 degrees (NOT 90)
+      } else if (cornerType < 0.40 && remainingAngleBudget > Math.PI / 3) {
+        // Sharp 90-degree corner
         const turnDir = rand() > 0.5 ? 1 : -1;
-        angleChange = (Math.PI / 3) * turnDir * (0.9 + rand() * 0.2); // 54-72 degrees
-      } else if (cornerType < 0.55 && remainingAngleBudget > Math.PI / 8) {
-        // Medium corner: 30-45 degrees
+        angleChange = (Math.PI / 2) * turnDir * (0.85 + rand() * 0.2); // 77-99 degrees
+      } else if (cornerType < 0.65 && remainingAngleBudget > Math.PI / 6) {
+        // Medium corner: 45-60 degrees
         const turnDir = rand() > 0.5 ? 1 : -1;
-        angleChange = (Math.PI / 6) * turnDir * (1 + rand() * 0.5); // 30-45 degrees
+        angleChange = (Math.PI / 4) * turnDir * (1 + rand() * 0.5); // 45-68 degrees
       }
     }
     
@@ -300,9 +300,9 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
     // VERIFY: After this turn, are we still making forward progress?
     const testAngle = currentAngle + angleChange;
     const angleDiffFromInitial = Math.abs(((testAngle - initialAngle + Math.PI) % (Math.PI * 2)) - Math.PI);
-    if (angleDiffFromInitial > Math.PI * 0.55) { // Never face more than 99 degrees away from initial
-      // This turn would make us face too far backward, reduce it aggressively
-      angleChange *= 0.05;
+    if (angleDiffFromInitial > Math.PI * 0.80) { // Never face more than 144 degrees away from initial
+      // This turn would make us face too far backward, reduce it moderately
+      angleChange *= 0.3;
     }
     
     currentAngle += angleChange;

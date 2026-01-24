@@ -296,11 +296,12 @@ export class Game {
     this.trackDef = def;
     this.track = createTrackFromDefinition(def);
 
+    const trackSeed = def.meta?.seed ?? 1;
     this.trackSegmentFillStyles = [];
     this.trackSegmentShoulderStyles = [];
     for (let i = 0; i < this.track.points.length; i++) {
       const midSM = this.track.cumulativeLengthsM[i] + this.track.segmentLengthsM[i] * 0.5;
-      const surface = surfaceForTrackSM(this.track.totalLengthM, midSM, false);
+      const surface = surfaceForTrackSM(this.track.totalLengthM, midSM, false, trackSeed);
       this.trackSegmentFillStyles.push(surfaceFillStyle(surface));
       this.trackSegmentShoulderStyles.push(surfaceShoulderStyle(surface));
     }
@@ -406,7 +407,8 @@ export class Game {
     const projectionBefore = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
     const roadHalfWidthM = projectionBefore.widthM * 0.5;
     const offTrack = projectionBefore.distanceToCenterlineM > roadHalfWidthM;
-    this.lastSurface = surfaceForTrackSM(this.track.totalLengthM, projectionBefore.sM, offTrack);
+    const trackSeed = this.trackDef.meta?.seed ?? 1;
+    this.lastSurface = surfaceForTrackSM(this.track.totalLengthM, projectionBefore.sM, offTrack, trackSeed);
 
     // Step engine simulation BEFORE car simulation to use its output
     const engineResult = stepEngine(

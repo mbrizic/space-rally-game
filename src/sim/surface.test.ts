@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 import { surfaceForTrackSM } from "./surface";
 
 describe("surface types", () => {
-  it("returns all surface types correctly throughout track", () => {
+  it("returns valid surface types throughout track with randomization", () => {
     const totalLength = 1000;
+    const trackSeed = 12345;
     
     // Sample the entire track
     const surfaces = new Set<string>();
     for (let s = 0; s < totalLength; s += 10) {
-      const surface = surfaceForTrackSM(totalLength, s, false);
+      const surface = surfaceForTrackSM(totalLength, s, false, trackSeed);
       surfaces.add(surface.name);
       
       // All surfaces should have valid friction
@@ -18,11 +19,13 @@ describe("surface types", () => {
       // All surfaces should have valid rolling resistance
       expect(surface.rollingResistanceN).toBeGreaterThan(0);
       expect(surface.rollingResistanceN).toBeLessThan(2000);
+      
+      // Surface name should be one of the valid types
+      expect(["tarmac", "gravel", "dirt", "ice", "offtrack"]).toContain(surface.name);
     }
     
-    // Check that ice is included
-    expect(surfaces.has("ice")).toBe(true);
-    expect(surfaces.has("tarmac")).toBe(true);
+    // Check that we have some variety (at least 2 different surfaces)
+    expect(surfaces.size).toBeGreaterThanOrEqual(2);
   });
 
   it("returns offtrack surface when off track", () => {
@@ -31,29 +34,33 @@ describe("surface types", () => {
     expect(surface.frictionMu).toBeLessThan(1);
   });
 
-  it("ice has lower friction than tarmac", () => {
+  it("different surface types have appropriate friction values", () => {
     const totalLength = 1000;
-    let iceFound = false;
-    let tarmacFound = false;
-    let iceFriction = 0;
-    let tarmacFriction = 0;
+    const trackSeed = 99999;
+    const surfaceMap = new Map<string, number>();
 
+    // Collect friction values for each surface type we encounter
     for (let s = 0; s < totalLength; s += 5) {
-      const surface = surfaceForTrackSM(totalLength, s, false);
-      if (surface.name === "ice") {
-        iceFound = true;
-        iceFriction = surface.frictionMu;
-      }
-      if (surface.name === "tarmac") {
-        tarmacFound = true;
-        tarmacFriction = surface.frictionMu;
+      const surface = surfaceForTrackSM(totalLength, s, false, trackSeed);
+      if (!surfaceMap.has(surface.name)) {
+        surfaceMap.set(surface.name, surface.frictionMu);
       }
     }
 
-    expect(iceFound).toBe(true);
-    expect(tarmacFound).toBe(true);
-    expect(iceFriction).toBeLessThan(tarmacFriction);
-    expect(iceFriction).toBeLessThan(0.5); // Ice should be very slippery
+    // Ice should be slippery (if present)
+    if (surfaceMap.has("ice")) {
+      expect(surfaceMap.get("ice")!).toBeLessThan(0.5);
+    }
+    
+    // Tarmac should have high grip (if present)
+    if (surfaceMap.has("tarmac")) {
+      expect(surfaceMap.get("tarmac")!).toBeGreaterThan(1.0);
+    }
+    
+    // If both are present, ice should be slipperier
+    if (surfaceMap.has("ice") && surfaceMap.has("tarmac")) {
+      expect(surfaceMap.get("ice")!).toBeLessThan(surfaceMap.get("tarmac")!);
+    }
   });
 
   it("handles wrap-around at track boundaries", () => {
