@@ -115,11 +115,20 @@
     - 200 tracks: ✅ Lengths 895-1597m
   - Zero failures - hairpins work perfectly without cities overlapping!
 
+## Phase 8: Manual Gearbox ✅
+- [x] Manual transmission as DEFAULT mode
+- [x] Q/E keys for gear shifting (downshift/upshift)
+- [x] Toggle option in tuning panel to switch to automatic
+- [x] Engine respects manual mode (no auto-shifting)
+- [x] PROMINENT gear display (48px bold, bright blue)
+- [x] Added "GEAR" label for clarity
+- [x] Updated controls: T for editor (was E), Q/E for shifting
+- [x] Editor save/load changed to 1/2 keys
+
 ## Future Ideas
 - [ ] Better looking tracks - maybe with few different renderers, so each stage can be rendered in different style
 - [ ] More track variety (jumps, elevation changes)
 - [ ] Weather effects
-- [ ] Manual gearbox
 - [ ] Mobile phone controls
 
 ## Long-term crazy ideas (that I still want to have)
