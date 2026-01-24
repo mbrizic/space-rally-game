@@ -90,6 +90,15 @@
 - [x] Brighter road borders (white 15% opacity, thicker)
 - [x] More visible centerline (20% opacity, longer dashes)
 - [x] Improved overall visual clarity for different surfaces
+- [x] Enhanced particle prominence
+  - 30-52% bigger particles (gravel up to 0.42m)
+  - 70-85% opacity (much brighter colors)
+  - Longer lifetimes (particles linger more)
+  - Added subtle glow effect with shadow blur
+- [x] Fixed track generation bug: cities too close
+  - Track cumulative angle changes to prevent looping
+  - Minimum 200m city separation enforced
+  - Automatic adjustment if cities end up too close
 
 ## Future Ideas
 - [ ] Better looking tracks - maybe with few different renderers, so each stage can be rendered in different style
