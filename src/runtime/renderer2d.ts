@@ -130,7 +130,13 @@ export class Renderer2D {
     ctx.stroke();
   }
 
-  drawTrack(track: { points: { x: number; y: number }[]; widthM: number; segmentWidthsM?: number[]; segmentFillStyles?: string[] }): void {
+  drawTrack(track: { 
+    points: { x: number; y: number }[]; 
+    widthM: number; 
+    segmentWidthsM?: number[]; 
+    segmentFillStyles?: string[];
+    segmentShoulderStyles?: string[];
+  }): void {
     const ctx = this.ctx;
     if (track.points.length < 2) return;
 
@@ -140,6 +146,7 @@ export class Renderer2D {
 
     // Road fill - draw each segment with its own width if available
     const fillStyles = track.segmentFillStyles;
+    const shoulderStyles = track.segmentShoulderStyles;
     const segmentWidths = track.segmentWidthsM;
 
     // For point-to-point tracks, don't draw wraparound segment
@@ -151,9 +158,13 @@ export class Renderer2D {
       const b = track.points[i + 1];
       const widthM = segmentWidths ? segmentWidths[i] : track.widthM;
 
-      // Shoulder
-      ctx.strokeStyle = "rgba(90, 120, 95, 0.16)";
-      ctx.lineWidth = widthM * 1.32;
+      // Shoulder - use surface-specific color if available
+      if (shoulderStyles && shoulderStyles.length === track.points.length) {
+        ctx.strokeStyle = shoulderStyles[i];
+      } else {
+        ctx.strokeStyle = "rgba(90, 120, 95, 0.16)";
+      }
+      ctx.lineWidth = widthM * 1.40; // Slightly wider for better visibility
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
@@ -172,14 +183,14 @@ export class Renderer2D {
       ctx.stroke();
     }
 
-    // Road border - draw each segment
+    // Road border - draw each segment with more visible edges
     for (let i = 0; i < numSegments; i++) {
       const a = track.points[i];
       const b = track.points[i + 1];
       const widthM = segmentWidths ? segmentWidths[i] : track.widthM;
 
-      ctx.strokeStyle = "rgba(210, 220, 235, 0.26)";
-      ctx.lineWidth = Math.max(0.15, widthM * 0.06);
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.15)"; // Lighter, more visible border
+      ctx.lineWidth = Math.max(0.2, widthM * 0.08); // Slightly thicker
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
@@ -187,9 +198,9 @@ export class Renderer2D {
     }
 
     // Centerline (no closePath for point-to-point)
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.10)";
-    ctx.lineWidth = 0.18;
-    ctx.setLineDash([0.8, 1.2]);
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.20)"; // More visible
+    ctx.lineWidth = 0.20; // Slightly thicker
+    ctx.setLineDash([1.2, 1.5]); // Longer dashes
     ctx.beginPath();
     ctx.moveTo(track.points[0].x, track.points[0].y);
     for (let i = 1; i < track.points.length; i++) ctx.lineTo(track.points[i].x, track.points[i].y);

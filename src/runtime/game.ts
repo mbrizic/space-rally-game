@@ -37,6 +37,7 @@ export class Game {
   private trackDef!: TrackDefinition; // Will be set in constructor
   private track!: ReturnType<typeof createTrackFromDefinition>; // Will be set in constructor
   private trackSegmentFillStyles: string[] = [];
+  private trackSegmentShoulderStyles: string[] = [];
   private trees: CircleObstacle[] = [];
   private checkpointSM: number[] = [];
   private nextCheckpointIndex = 0;
@@ -99,7 +100,8 @@ export class Game {
       lateralForceFrontN: 0,
       lateralForceRearN: 0,
       normalLoadFrontN: 0,
-      normalLoadRearN: 0
+      normalLoadRearN: 0,
+      wheelspinIntensity: 0
     }
   };
   private carParams = defaultCarParams();
@@ -295,10 +297,12 @@ export class Game {
     this.track = createTrackFromDefinition(def);
 
     this.trackSegmentFillStyles = [];
+    this.trackSegmentShoulderStyles = [];
     for (let i = 0; i < this.track.points.length; i++) {
       const midSM = this.track.cumulativeLengthsM[i] + this.track.segmentLengthsM[i] * 0.5;
       const surface = surfaceForTrackSM(this.track.totalLengthM, midSM, false);
       this.trackSegmentFillStyles.push(surfaceFillStyle(surface));
+      this.trackSegmentShoulderStyles.push(surfaceShoulderStyle(surface));
     }
 
     // Track layout: 0-50m city, 50m START, route, end-50m FINISH, last 50m city
@@ -436,13 +440,22 @@ export class Game {
 
     this.updateVisualRoll(dtSeconds);
 
-    // Emit particles when drifting OR using handbrake
+    // Emit particles when drifting OR using handbrake OR wheelspinning
     const speedMS = this.speedMS();
     const driftIntensity = Math.max(this.driftInfo.intensity, handbrake * Math.min(speedMS / 15, 1));
+    const rawWheelspinIntensity = this.state.carTelemetry.wheelspinIntensity;
     
-    if (driftIntensity > 0.15) {
+    // Scale wheelspin by surface - much less on tarmac, more on low-grip surfaces
+    const surfaceFriction = this.lastSurface.frictionMu;
+    const wheelspinSurfaceScale = Math.max(0.1, 1.5 - surfaceFriction); // 0.5 on tarmac, 1.0+ on gravel/dirt
+    const wheelspinIntensity = rawWheelspinIntensity * wheelspinSurfaceScale;
+    
+    // Combine drift and wheelspin - wheelspin is most visible at lower speeds
+    const totalIntensity = Math.max(driftIntensity, wheelspinIntensity * (1 - Math.min(speedMS / 30, 1)));
+    
+    if (totalIntensity > 0.2) {
       const particleConfig = getParticleConfig(this.lastSurface);
-      const particlesPerSecond = particleConfig.spawnRate * driftIntensity;
+      const particlesPerSecond = particleConfig.spawnRate * totalIntensity;
       this.particleAccumulator += particlesPerSecond * dtSeconds;
 
       const particlesToEmit = Math.floor(this.particleAccumulator);
@@ -460,15 +473,16 @@ export class Game {
         const spreadX = (Math.random() - 0.5) * 0.6;
         const spreadY = (Math.random() - 0.5) * 0.6;
 
-        // Particle velocity is somewhat opposite of car velocity with randomness
-        const vxSpread = (Math.random() - 0.5) * 3;
-        const vySpread = (Math.random() - 0.5) * 3;
+        // Particle velocity - wheelspin particles are slightly more spread out
+        const isWheelspin = wheelspinIntensity > driftIntensity;
+        const vxSpread = (Math.random() - 0.5) * (isWheelspin ? 3.5 : 3);
+        const vySpread = (Math.random() - 0.5) * (isWheelspin ? 3.5 : 3);
 
         this.particlePool.emit({
           x: rearX + spreadX,
           y: rearY + spreadY,
-          vx: -this.state.car.vxMS * cosH * 0.3 + vxSpread,
-          vy: -this.state.car.vxMS * sinH * 0.3 + vySpread,
+          vx: -this.state.car.vxMS * cosH * (isWheelspin ? 0.35 : 0.3) + vxSpread,
+          vy: -this.state.car.vxMS * sinH * (isWheelspin ? 0.35 : 0.3) + vySpread,
           lifetime: particleConfig.lifetime,
           sizeM: particleConfig.sizeM,
           color: particleConfig.color,
@@ -549,7 +563,11 @@ export class Game {
       this.renderer.drawCity(this.track.endCity);
     }
     
-    this.renderer.drawTrack({ ...this.track, segmentFillStyles: this.trackSegmentFillStyles });
+    this.renderer.drawTrack({ 
+      ...this.track, 
+      segmentFillStyles: this.trackSegmentFillStyles,
+      segmentShoulderStyles: this.trackSegmentShoulderStyles
+    });
     if (this.editorMode) {
       this.renderer.drawTrackEditorPoints({
         points: this.trackDef.points,
@@ -1131,14 +1149,29 @@ function gateLabel(index: number, total: number): string {
 function surfaceFillStyle(surface: Surface): string {
   switch (surface.name) {
     case "tarmac":
-      return "rgba(210, 220, 235, 0.14)";
+      return "rgba(70, 75, 85, 0.35)"; // Darker gray - asphalt
     case "gravel":
-      return "rgba(210, 190, 140, 0.14)";
+      return "rgba(180, 155, 110, 0.45)"; // Tan/beige - gravel
     case "dirt":
-      return "rgba(165, 125, 90, 0.14)";
+      return "rgba(140, 100, 70, 0.45)"; // Brown - dirt
     case "ice":
-      return "rgba(200, 230, 255, 0.25)";
+      return "rgba(180, 220, 245, 0.50)"; // Light blue - ice
     case "offtrack":
-      return "rgba(120, 170, 120, 0.10)";
+      return "rgba(100, 130, 90, 0.25)"; // Green-gray - grass
+  }
+}
+
+function surfaceShoulderStyle(surface: Surface): string {
+  switch (surface.name) {
+    case "tarmac":
+      return "rgba(50, 55, 65, 0.25)"; // Darker shoulder
+    case "gravel":
+      return "rgba(160, 135, 90, 0.30)"; // Darker gravel
+    case "dirt":
+      return "rgba(120, 80, 50, 0.30)"; // Darker brown
+    case "ice":
+      return "rgba(160, 200, 225, 0.35)"; // Darker ice blue
+    case "offtrack":
+      return "rgba(80, 110, 70, 0.20)"; // Darker grass
   }
 }

@@ -227,26 +227,73 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
   const angle = rand() * Math.PI * 2;
   
   // Create control points for the MAIN ROUTE (between cities)
-  // This will be from position cityLength to position cityLength+distance
-  const numControlPoints = 12 + Math.floor(rand() * 6);
+  // Use a simpler approach that works well with Catmull-Rom splines
+  const baseControlPoints = 10 + Math.floor(rand() * 5);
   const controlPoints: Vec2[] = [];
   
-  for (let i = 0; i < numControlPoints; i++) {
-    const t = i / (numControlPoints - 1);
-    // Base interpolation along the angle
-    const distAlong = t * distance;
-    const baseX = Math.cos(angle) * distAlong;
-    const baseY = Math.sin(angle) * distAlong;
+  let currentX = 0;
+  let currentY = 0;
+  let currentAngle = angle;
+  
+  for (let i = 0; i < baseControlPoints; i++) {
+    // Decide if this should be a special corner
+    const cornerType = rand();
+    let angleChange = 0;
+    let segmentLength = distance / (baseControlPoints - 1);
     
-    // Add perpendicular noise for winding (more in the middle)
-    const perpAngle = angle + Math.PI / 2;
-    const noiseAmount = (Math.sin(t * Math.PI) * 0.5 + 0.5) * 80;
-    const noise = (rand() - 0.5) * noiseAmount;
+    if (i > 2 && i < baseControlPoints - 3) {
+      // Only add special corners in the middle section
+      if (cornerType < 0.15) {
+        // Hairpin! Add multiple tight control points
+        const turnDir = rand() > 0.5 ? 1 : -1;
+        const hairpinRadius = 25 + rand() * 15;
+        
+        // Entry
+        controlPoints.push({ x: currentX, y: currentY });
+        currentX += Math.cos(currentAngle) * (segmentLength * 0.3);
+        currentY += Math.sin(currentAngle) * (segmentLength * 0.3);
+        
+        // Apex (turn 90 degrees)
+        currentAngle += (Math.PI / 2) * turnDir;
+        controlPoints.push({
+          x: currentX + Math.cos(currentAngle + Math.PI / 2 * turnDir) * hairpinRadius * 0.5,
+          y: currentY + Math.sin(currentAngle + Math.PI / 2 * turnDir) * hairpinRadius * 0.5
+        });
+        currentX += Math.cos(currentAngle) * 5;
+        currentY += Math.sin(currentAngle) * 5;
+        
+        // Second apex (complete the hairpin, another 90 degrees)
+        currentAngle += (Math.PI / 2) * turnDir;
+        controlPoints.push({
+          x: currentX + Math.cos(currentAngle + Math.PI / 2 * turnDir) * hairpinRadius * 0.5,
+          y: currentY + Math.sin(currentAngle + Math.PI / 2 * turnDir) * hairpinRadius * 0.5
+        });
+        
+        // Exit
+        currentX += Math.cos(currentAngle) * (segmentLength * 0.3);
+        currentY += Math.sin(currentAngle) * (segmentLength * 0.3);
+        continue;
+      } else if (cornerType < 0.30) {
+        // Sharp 90-degree corner
+        const turnDir = rand() > 0.5 ? 1 : -1;
+        angleChange = (Math.PI / 2) * turnDir * (0.85 + rand() * 0.15);
+      } else if (cornerType < 0.50) {
+        // Medium corner (45-60 degrees)
+        const turnDir = rand() > 0.5 ? 1 : -1;
+        angleChange = (Math.PI / 4) * turnDir * (1 + rand() * 0.5);
+      }
+    }
     
-    controlPoints.push({
-      x: baseX + Math.cos(perpAngle) * noise,
-      y: baseY + Math.sin(perpAngle) * noise
-    });
+    // Normal point or gentle curve
+    if (angleChange === 0) {
+      angleChange = (rand() - 0.5) * 0.4; // Gentle meandering
+    }
+    
+    currentAngle += angleChange;
+    currentX += Math.cos(currentAngle) * segmentLength;
+    currentY += Math.sin(currentAngle) * segmentLength;
+    
+    controlPoints.push({ x: currentX, y: currentY });
   }
   
   // Sample the main route

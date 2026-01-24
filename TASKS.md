@@ -53,12 +53,52 @@
 - [x] Updated README with vibe-coding quote and hosting info
 - [x] Deployed to https://spacerally.supercollider.hr/
 
+## Phase 5: Point-to-Point Racing & Cities ✅
+- [x] Convert from lap-based to point-to-point racing system
+- [x] Procedural city generation with grid-based building layout
+- [x] Cities with 20m road corridors (prevent building/road collisions)
+- [x] Removed isLoop system - all tracks are point-to-point
+- [x] Fixed track rendering (no wraparound segments)
+- [x] Proper race timing with start/finish lines
+- [x] Cities positioned BEFORE start/finish lines
+- [x] Building collision detection with proper hitboxes
+- [x] Runner camera mode as default
+- [x] Camera positioned lower to see more ahead (3m offset)
+- [x] Massively increased particle effects (gravel: 120/s, dirt: 100/s)
+- [x] Fixed handbrake particle triggering
+
+## Phase 6: Track Variety & Feedback ✅
+- [x] Hairpin turns (0-2 per track, ~180-degree turns with 25-40m radius)
+- [x] 90-degree sharp corners (0-2 per track, 30-50m radius)
+- [x] Improved track variety with mixed corner types
+- [x] Wheelspin detection and visual feedback
+- [x] Wheelspin particles when full throttle exceeds grip (especially on low-grip surfaces)
+- [x] Fixed pacenotes to only call out real corners (higher thresholds, minimum 15m length)
+- [x] Pacenotes ignore grade-6 (very gentle) curves
+- [x] Speed-scaled lookahead (45-105m based on speed)
+- [x] Reduced wheelspin intensity (especially on tarmac)
+
+## Phase 7: Surface Visual Feedback ✅
+- [x] Distinct colors for each surface type (35-50% opacity instead of 10-14%)
+  - Tarmac: Dark gray (70,75,85) - asphalt look
+  - Gravel: Tan/beige (180,155,110) - gravel look
+  - Dirt: Brown (140,100,70) - dirt look
+  - Ice: Light blue (180,220,245) - ice look
+  - Offtrack: Green-gray (100,130,90) - grass look
+- [x] Surface-specific shoulder colors (darker variants of each surface)
+- [x] Wider, more visible shoulders (1.40x track width)
+- [x] Brighter road borders (white 15% opacity, thicker)
+- [x] More visible centerline (20% opacity, longer dashes)
+- [x] Improved overall visual clarity for different surfaces
+
 ## Future Ideas
-- [ ] Guns (as mentioned in README)
-- [ ] More track variety (jumps, elevation)
-- [ ] Gravity simulation and dynamic changing of it
+- [ ] Better looking tracks - maybe with few different renderers, so each stage can be rendered in different style
+- [ ] More track variety (jumps, elevation changes)
 - [ ] Weather effects
-- [ ] Car customization
-- [ ] Manual gearbox 
+- [ ] Manual gearbox
 - [ ] Mobile phone controls
-- [ ] Wheelspin on less grippy surface
+
+## Long-term crazy ideas (that I still want to have)
+- [ ] The ability to shoot from the car, to kill enemy aliens/zombies who spawn across the track
+- [ ] Multiplayer - one player drives, the other shoots
+- [ ] Gravity simulation and dynamic changing of it

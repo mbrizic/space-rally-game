@@ -75,6 +75,7 @@ export type CarTelemetry = {
   lateralForceRearN: number;
   normalLoadFrontN: number;
   normalLoadRearN: number;
+  wheelspinIntensity: number; // 0..1, how much wheels are spinning beyond grip
 };
 
 export function defaultCarParams(): CarParams {
@@ -338,6 +339,22 @@ export function stepCar(
     alphaRearRad
   };
 
+  // Calculate wheelspin intensity: when requested force exceeds available grip
+  // Focus on drive wheels (mostly rear in our 30/70 split)
+  // Only count positive (driving) forces, not braking
+  const driveForceRequestedRear = Math.max(0, fxRearRequestN);
+  const availableGripRear = maxFRear;
+  const rearSpinRatio = availableGripRear > 0 ? driveForceRequestedRear / availableGripRear : 0;
+  const rearExcess = Math.max(0, rearSpinRatio - 0.92); // Start showing wheelspin at 92% grip usage (higher threshold)
+  
+  const driveForceRequestedFront = Math.max(0, fxFrontRequestN);
+  const availableGripFront = fxLimitFront;
+  const frontSpinRatio = availableGripFront > 0 ? driveForceRequestedFront / availableGripFront : 0;
+  const frontExcess = Math.max(0, frontSpinRatio - 0.92);
+  
+  // Weight rear more heavily since we're RWD-biased, reduced multiplier for subtler effect
+  const wheelspinIntensity = clamp((rearExcess * 0.7 + frontExcess * 0.3) * 8, 0, 1);
+
   return {
     state: nextState,
     telemetry: {
@@ -351,7 +368,8 @@ export function stepCar(
       lateralForceFrontN,
       lateralForceRearN,
       normalLoadFrontN,
-      normalLoadRearN
+      normalLoadRearN,
+      wheelspinIntensity
     }
   };
 }

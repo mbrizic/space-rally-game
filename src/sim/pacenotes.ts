@@ -8,21 +8,24 @@ export type Pacenote = {
 };
 
 export function computePacenote(track: Track, sM: number, speedMS: number): Pacenote | null {
-  // Look a bit beyond the visible area; scale with speed so it feels "rally-ish".
-  const lookaheadStartM = 38 + clamp(speedMS, 0, 40) * 0.8; // ~38..70m
-  const scanLengthM = 140;
+  // Look ahead based on speed, with more aggressive scaling
+  const lookaheadStartM = 45 + clamp(speedMS, 0, 50) * 1.2; // ~45..105m
+  const scanLengthM = 180;
   const stepM = 2.5;
 
   const start = pointOnTrack(track, sM + lookaheadStartM);
   let prevHeading = start.headingRad;
 
-  const enterCurv = 0.020;
-  const exitCurv = 0.012;
+  // Higher thresholds to only detect "real" corners, not gentle curves
+  const enterCurv = 0.035; // Increased from 0.020
+  const exitCurv = 0.020; // Increased from 0.012
+  const minCornerLengthM = 15; // Must be at least 15m long to be a "real" corner
 
   let inCorner = false;
   let cornerStartDistM = 0;
   let maxAbsCurv = 0;
   let signedCurvSum = 0;
+  let cornerFoundDistM = -1;
 
   for (let dM = stepM; dM <= scanLengthM + 1e-6; dM += stepM) {
     const h = pointOnTrack(track, sM + lookaheadStartM + dM).headingRad;
@@ -41,19 +44,27 @@ export function computePacenote(track: Track, sM: number, speedMS: number): Pace
       maxAbsCurv = Math.max(maxAbsCurv, absCurv);
       signedCurvSum += curv;
 
-      // End the corner once curvature falls back under threshold for a bit.
+      // End the corner once curvature falls back under threshold
       const cornerLen = dM - cornerStartDistM;
-      if (cornerLen > 10 && absCurv < exitCurv) break;
+      if (cornerLen > minCornerLengthM && absCurv < exitCurv) {
+        // Found a complete corner! Stop scanning.
+        cornerFoundDistM = cornerStartDistM;
+        break;
+      }
     }
 
     prevHeading = h;
   }
 
-  if (!inCorner) return null;
+  // Only return if we found a complete, significant corner
+  if (!inCorner || cornerFoundDistM < 0) return null;
+
+  // Filter out very gentle curves (grade 6 = barely a corner)
+  const grade = gradeFromCurvature(maxAbsCurv);
+  if (grade === 6) return null; // Too gentle, ignore it
 
   const direction: "L" | "R" = signedCurvSum >= 0 ? "R" : "L";
-  const grade = gradeFromCurvature(maxAbsCurv);
-  const distanceM = Math.max(0, Math.round(lookaheadStartM + cornerStartDistM));
+  const distanceM = Math.max(0, Math.round(lookaheadStartM + cornerFoundDistM));
   const label = `${direction}${grade} in ${distanceM}m`;
   return { direction, grade, distanceM, label };
 }
