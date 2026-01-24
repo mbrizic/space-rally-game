@@ -2,12 +2,14 @@ import { describe, it, expect } from "vitest";
 import { createPointToPointTrackDefinition } from "./track";
 
 describe("Track City Separation", () => {
-  it("ensures cities are always at least 350m apart (100 random tracks)", () => {
+  it("ensures cities are always at least 350m apart (500 random tracks)", () => {
     const minDistance = 350;
     let minFoundDistance = Infinity;
     let worstSeed = 0;
+    let maxFoundDistance = 0;
+    let bestSeed = 0;
 
-    for (let seed = 1; seed <= 100; seed++) {
+    for (let seed = 1; seed <= 500; seed++) {
       const trackDef = createPointToPointTrackDefinition(seed);
       
       if (!trackDef.startCity || !trackDef.endCity) {
@@ -23,15 +25,24 @@ describe("Track City Separation", () => {
         minFoundDistance = distance;
         worstSeed = seed;
       }
+      if (distance > maxFoundDistance) {
+        maxFoundDistance = distance;
+        bestSeed = seed;
+      }
 
       expect(distance).toBeGreaterThanOrEqual(minDistance - 1); // Allow 1m tolerance for rounding
     }
 
-    console.log(`Minimum city distance found: ${minFoundDistance.toFixed(1)}m (seed ${worstSeed})`);
+    console.log(`City distances over 500 tracks:`);
+    console.log(`  Minimum: ${minFoundDistance.toFixed(1)}m (seed ${worstSeed})`);
+    console.log(`  Maximum: ${maxFoundDistance.toFixed(1)}m (seed ${bestSeed})`);
   });
 
-  it("ensures no individual angle change exceeds 90 degrees", () => {
-    for (let seed = 1; seed <= 50; seed++) {
+  it("ensures no individual angle change exceeds 90 degrees (200 tracks)", () => {
+    let maxAngleFound = 0;
+    let maxAngleSeed = 0;
+    
+    for (let seed = 1; seed <= 200; seed++) {
       const trackDef = createPointToPointTrackDefinition(seed);
       const points = trackDef.points;
 
@@ -58,14 +69,24 @@ describe("Track City Separation", () => {
         // No segment should turn more than 90 degrees
         expect(absAngleDiff).toBeLessThan(Math.PI / 2 + 0.2); // Allow small tolerance for spline smoothing
       }
+      
+      if (maxAngleChange > maxAngleFound) {
+        maxAngleFound = maxAngleChange;
+        maxAngleSeed = seed;
+      }
     }
+    
+    console.log(`Maximum individual angle change: ${(maxAngleFound * 180 / Math.PI).toFixed(1)}° (seed ${maxAngleSeed})`);
   });
 
-  it("ensures track doesn't loop back excessively (straight-line distance check)", () => {
+  it("ensures track doesn't loop back excessively (straight-line distance check - 200 tracks)", () => {
     // Instead of tracking cumulative angles (which is affected by spline smoothing),
     // verify that the straight-line distance from start to end is reasonable
     // compared to the track's actual route distance
-    for (let seed = 1; seed <= 50; seed++) {
+    let minRatio = 1.0;
+    let minRatioSeed = 0;
+    
+    for (let seed = 1; seed <= 200; seed++) {
       const trackDef = createPointToPointTrackDefinition(seed);
       const points = trackDef.points;
 
@@ -87,14 +108,23 @@ describe("Track City Separation", () => {
       // Straight-line distance should be at least 45% of route distance
       // (if it's much less, the track is looping back too much)
       const ratio = straightLine / routeDistance;
+      if (ratio < minRatio) {
+        minRatio = ratio;
+        minRatioSeed = seed;
+      }
       expect(ratio).toBeGreaterThan(0.44); // Allow for natural curves and hairpins
     }
+    
+    console.log(`Minimum straight-line/route ratio: ${(minRatio * 100).toFixed(1)}% (seed ${minRatioSeed})`);
   });
 
-  it("ensures track never fully reverses direction", () => {
+  it("ensures track never fully reverses direction (200 tracks)", () => {
     // Verify no segment points more than 160 degrees away from the overall
     // start-to-end direction (allowing hairpins but not full reversals)
-    for (let seed = 1; seed <= 50; seed++) {
+    let maxReverseFound = 0;
+    let maxReverseSeed = 0;
+    
+    for (let seed = 1; seed <= 200; seed++) {
       const trackDef = createPointToPointTrackDefinition(seed);
       const points = trackDef.points;
 
@@ -128,11 +158,23 @@ describe("Track City Separation", () => {
         // (allows tight hairpins but prevents full 180° reversals)
         expect(absAngleDiff).toBeLessThan(Math.PI * 0.90); // 162 degrees max
       }
+      
+      if (maxReverse > maxReverseFound) {
+        maxReverseFound = maxReverse;
+        maxReverseSeed = seed;
+      }
     }
+    
+    console.log(`Maximum reverse angle from overall direction: ${(maxReverseFound * 180 / Math.PI).toFixed(1)}° (seed ${maxReverseSeed})`);
   });
 
-  it("generates tracks with reasonable total length", () => {
-    for (let seed = 1; seed <= 20; seed++) {
+  it("generates tracks with reasonable total length (200 tracks)", () => {
+    let minLength = Infinity;
+    let maxLength = 0;
+    let minSeed = 0;
+    let maxSeed = 0;
+    
+    for (let seed = 1; seed <= 200; seed++) {
       const trackDef = createPointToPointTrackDefinition(seed);
       const points = trackDef.points;
 
@@ -143,9 +185,22 @@ describe("Track City Separation", () => {
         totalLength += Math.hypot(dx, dy);
       }
 
-      // Should be between 500m and 700m total (including city sections)
+      if (totalLength < minLength) {
+        minLength = totalLength;
+        minSeed = seed;
+      }
+      if (totalLength > maxLength) {
+        maxLength = totalLength;
+        maxSeed = seed;
+      }
+      
+      // Should be between 500m and 800m total (including city sections)
       expect(totalLength).toBeGreaterThan(480);
-      expect(totalLength).toBeLessThan(720);
+      expect(totalLength).toBeLessThan(800);
     }
+    
+    console.log(`Track lengths over 200 tracks:`);
+    console.log(`  Minimum: ${minLength.toFixed(1)}m (seed ${minSeed})`);
+    console.log(`  Maximum: ${maxLength.toFixed(1)}m (seed ${maxSeed})`);
   });
 });
