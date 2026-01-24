@@ -351,9 +351,7 @@ export class Game {
     const rect = this.canvas.getBoundingClientRect();
     this.mouseX = e.clientX - rect.left;
     this.mouseY = e.clientY - rect.top;
-    
-    // Convert to world coordinates
-    this.updateMouseWorldPosition();
+    // World position will be updated in render() after camera is set
   };
 
   private onMouseClick = (): void => {
@@ -676,6 +674,9 @@ export class Game {
       pixelsPerMeter: 36,
       rotationRad: this.cameraRotationRad
     });
+    
+    // Update mouse world position now that camera is set
+    this.updateMouseWorldPosition();
 
     this.renderer.drawGrid({ spacingMeters: 1, majorEvery: 5 });
     
@@ -738,9 +739,6 @@ export class Game {
     }
 
     this.renderer.endCamera();
-    
-    // Update mouse world position after camera is set
-    this.updateMouseWorldPosition();
     
     // Draw crosshair at mouse position (screen space)
     this.renderer.drawCrosshair(this.mouseX, this.mouseY);
@@ -1459,25 +1457,25 @@ export class Game {
         // Push car away
         const nx = dx / dist;
         const ny = dy / dist;
-        this.state.car.xM += nx * overlap * 0.3;
-        this.state.car.yM += ny * overlap * 0.3;
+        this.state.car.xM += nx * overlap * 0.4;
+        this.state.car.yM += ny * overlap * 0.4;
         
-        // Reduce car velocity (running over zombie slows you down a bit)
-        this.state.car.vxMS *= 0.85;
-        this.state.car.vyMS *= 0.85;
+        // Reduce car velocity significantly (zombies are HEAVY)
+        this.state.car.vxMS *= 0.70; // 30% speed reduction (was 15%)
+        this.state.car.vyMS *= 0.70;
         
-        // Add yaw disturbance (car gets unstable)
-        const lateralImpact = (this.state.car.vyMS * nx - this.state.car.vxMS * ny) * 0.15;
+        // Add strong yaw disturbance (car gets very unstable)
+        const lateralImpact = (this.state.car.vyMS * nx - this.state.car.vxMS * ny) * 0.4; // 0.4 (was 0.15)
         this.state.car.yawRateRadS += lateralImpact;
         
-        // Small damage
-        this.damage01 = clamp(this.damage01 + impact * 0.03, 0, 1);
+        // More damage
+        this.damage01 = clamp(this.damage01 + impact * 0.05, 0, 1); // 0.05 (was 0.03)
         
-        // Camera shake
-        const shakeIntensity = Math.min(impact * 0.2, 1.5);
+        // Bigger camera shake
+        const shakeIntensity = Math.min(impact * 0.35, 2.0); // 0.35 and 2.0 (was 0.2 and 1.5)
         this.cameraShakeX = (Math.random() - 0.5) * shakeIntensity;
         this.cameraShakeY = (Math.random() - 0.5) * shakeIntensity;
-        this.collisionFlashAlpha = Math.min(impact * 0.08, 0.3);
+        this.collisionFlashAlpha = Math.min(impact * 0.12, 0.4); // 0.12 and 0.4 (was 0.08 and 0.3)
         
         // Kill enemy
         this.enemyPool.damage(enemy.id, 1.0);

@@ -119,10 +119,10 @@ export function generateEnemies(track: Track, opts?: { seed?: number; count?: nu
   const enemies: Enemy[] = [];
   const roadHalfWidthM = track.widthM * 0.5;
   
-  // Place enemies at intervals along the track (more zombies!)
-  const minSpacing = 30; // 30m between spawns
-  const maxSpacing = 60; // 60m between spawns
-  const desiredCount = opts?.count ?? Math.floor(track.totalLengthM / 40); // ~1 per 40m (2.5x more)
+  // Place enemies at intervals along the track (EVEN MORE zombies!)
+  const minSpacing = 20; // 20m between spawns
+  const maxSpacing = 40; // 40m between spawns
+  const desiredCount = opts?.count ?? Math.floor(track.totalLengthM / 25); // ~1 per 25m (4x more than original)
   
   let nextEnemyAt = minSpacing + rand() * (maxSpacing - minSpacing);
   
