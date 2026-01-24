@@ -177,14 +177,14 @@ export function stepEngine(
     const manualMode = inputs.manualTransmission ?? false;
     
     if (!manualMode) {
-        // Automatic shifting
-        if (newRpm > params.redlineRpm * 0.95 && newGear < params.gearRatios.length) {
+        // Automatic shifting - shift earlier for realistic automatic behavior
+        if (newRpm > params.redlineRpm * 0.80 && newGear < params.gearRatios.length) {
             newGear++;
-        } else if (newRpm < params.idleRpm * 2.5 && newGear > 1 && speedMS > 2) {
+        } else if (newRpm < params.idleRpm * 2.2 && newGear > 1 && speedMS > 2) {
             // Check if downshifting wouldn't over-rev
             const lowerGearRatio = params.gearRatios[newGear - 2];
             const lowerGearRpm = engineRpmFromWheelRpm(wheelRpm, lowerGearRatio, params.finalDriveRatio);
-            if (lowerGearRpm < params.redlineRpm * 0.8) {
+            if (lowerGearRpm < params.redlineRpm * 0.85) {
                 newGear--;
             }
         }
