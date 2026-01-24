@@ -14,10 +14,16 @@
 - [x] Start countdown + GO
 
 ## Phase 2
+- [x] Drift detection + HUD indicator (slip/saturation-based)
+- [x] Particle system (pooled) + drift smoke/dust by surface
+- [x] Track width variance by s (narrow/wide sections)
+- [x] Add swerve/chicane sections to the track layout
+- [x] Update off-track + collisions/rendering to respect varying width
+- [x] Feedback polish: collision punch, clearer damage + surface cues
 
-- [ ] Drift detection + HUD indicator (slip/saturation-based)
-- [ ] Particle system (pooled) + drift smoke/dust by surface
-- [ ] Track width variance by s (narrow/wide sections)
-- [ ] Add swerve/chicane sections to the track layout
-- [ ] Update off-track + collisions/rendering to respect varying width
-- [ ] Feedback polish: collision punch, clearer damage + surface cues
+## Phase 3
+- [x] Engine simulation (engine.ts) with RPM and power curves
+- [x] Modular audio system (audio-engine.ts, audio-slide.ts)
+- [x] Surface-dependent sliding sounds
+- [x] RPM Meter HUD and gear indicator
+- [x] Composable architecture for sim/audio components
