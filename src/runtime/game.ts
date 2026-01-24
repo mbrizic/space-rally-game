@@ -543,7 +543,7 @@ export class Game {
       while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
       while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
       // Smooth interpolation: slower rotation for stability during rapid maneuvers
-      const rotationSpeed = 1.2; // rad/s - lower = more stable, less disorienting
+      const rotationSpeed = 0.8; // rad/s - lower = more stable, less disorienting
       this.cameraRotationRad += angleDiff * rotationSpeed * dtSeconds;
     } else {
       this.cameraRotationRad = 0;
@@ -578,7 +578,7 @@ export class Game {
     this.renderer.drawBg();
 
     // Offset camera to show more track ahead - car is lower on screen
-    const cameraOffsetY = this.cameraMode === "runner" ? 8 : 5; // Show 5-8m ahead
+    const cameraOffsetY = this.cameraMode === "runner" ? 6 : 3; // Show 3-6m ahead
     const cosRot = Math.cos(this.state.car.headingRad);
     const sinRot = Math.sin(this.state.car.headingRad);
     const offsetX = cosRot * cameraOffsetY;
