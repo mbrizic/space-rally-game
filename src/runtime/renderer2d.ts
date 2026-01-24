@@ -1,5 +1,6 @@
 import { clamp } from "./math";
 import type { City } from "../sim/city";
+import { STYLE_CONFIGS, type RenderStyle } from "./renderer-styles";
 
 type Camera2D = {
   centerX: number;
@@ -77,7 +78,22 @@ export class Renderer2D {
     return { x: rx + this.camera.centerX, y: ry + this.camera.centerY };
   }
 
-  drawGrid(opts: { spacingMeters: number; majorEvery: number }): void {
+  drawBg(opts: { width: number; height: number; renderStyle?: RenderStyle }): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0); // Identity (pixel space)
+
+    const style = STYLE_CONFIGS[opts.renderStyle || "clean"];
+    ctx.fillStyle = style.bgColor;
+    ctx.fillRect(0, 0, opts.width, opts.height);
+
+    ctx.restore();
+  }
+
+  drawGrid(opts: { width: number; height: number; spacingMeters: number; majorEvery: number; renderStyle?: RenderStyle }): void {
+    const style = STYLE_CONFIGS[opts.renderStyle || "clean"];
+    if (style.gridAlpha === 0) return; // Skip grid for styles that don't want it
+    
     const ctx = this.ctx;
     const spacing = opts.spacingMeters;
     const majorEvery = Math.max(1, Math.floor(opts.majorEvery));
@@ -99,9 +115,10 @@ export class Renderer2D {
 
     ctx.lineWidth = 1 / this.camera.pixelsPerMeter;
 
+    const gridAlpha = style.gridAlpha;
     for (let x = startX; x <= endX + 1e-9; x += spacing) {
       const isMajor = (Math.round(x / spacing) % majorEvery) === 0;
-      ctx.strokeStyle = isMajor ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.05)";
+      ctx.strokeStyle = isMajor ? `rgba(255,255,255,${gridAlpha * 1.5})` : `rgba(255,255,255,${gridAlpha})`;
       ctx.beginPath();
       ctx.moveTo(x, startY);
       ctx.lineTo(x, endY);
@@ -110,7 +127,7 @@ export class Renderer2D {
 
     for (let y = startY; y <= endY + 1e-9; y += spacing) {
       const isMajor = (Math.round(y / spacing) % majorEvery) === 0;
-      ctx.strokeStyle = isMajor ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.05)";
+      ctx.strokeStyle = isMajor ? `rgba(255,255,255,${gridAlpha * 1.5})` : `rgba(255,255,255,${gridAlpha})`;
       ctx.beginPath();
       ctx.moveTo(startX, y);
       ctx.lineTo(endX, y);
@@ -136,12 +153,14 @@ export class Renderer2D {
     segmentWidthsM?: number[]; 
     segmentFillStyles?: string[];
     segmentShoulderStyles?: string[];
+    renderStyle?: RenderStyle;
   }): void {
     const ctx = this.ctx;
     if (track.points.length < 2) return;
 
     ctx.save();
 
+    const style = STYLE_CONFIGS[track.renderStyle || "clean"];
     const fillStyles = track.segmentFillStyles;
     const shoulderStyles = track.segmentShoulderStyles;
     const segmentWidths = track.segmentWidthsM;
@@ -207,14 +226,17 @@ export class Renderer2D {
       for (let i = 1; i < track.points.length; i++) {
         const newStyle = shoulderStyles[i];
         if (newStyle !== currentStyle) {
-          drawFilledSection(sectionStart, i, currentStyle, 1.40);
+          const styledColor = style.shoulderColor(currentStyle);
+          drawFilledSection(sectionStart, i, styledColor, 1.40);
           sectionStart = i;
           currentStyle = newStyle;
         }
       }
-      drawFilledSection(sectionStart, track.points.length - 1, currentStyle, 1.40);
+      const styledColor = style.shoulderColor(currentStyle);
+      drawFilledSection(sectionStart, track.points.length - 1, styledColor, 1.40);
     } else {
-      drawFilledSection(0, track.points.length - 1, "rgba(90, 120, 95, 0.16)", 1.40);
+      const defaultShoulder = style.shoulderColor("rgba(90, 120, 95, 0.16)");
+      drawFilledSection(0, track.points.length - 1, defaultShoulder, 1.40);
     }
 
     // Draw road fill - batch consecutive segments with same style
@@ -225,21 +247,30 @@ export class Renderer2D {
       for (let i = 1; i < track.points.length; i++) {
         const newStyle = fillStyles[i];
         if (newStyle !== currentStyle) {
-          drawFilledSection(sectionStart, i, currentStyle, 1.0);
+          const styledColor = style.roadColor(currentStyle);
+          drawFilledSection(sectionStart, i, styledColor, 1.0);
           sectionStart = i;
           currentStyle = newStyle;
         }
       }
-      drawFilledSection(sectionStart, track.points.length - 1, currentStyle, 1.0);
+      const styledColor = style.roadColor(currentStyle);
+      drawFilledSection(sectionStart, track.points.length - 1, styledColor, 1.0);
     } else {
-      drawFilledSection(0, track.points.length - 1, "rgba(210, 220, 235, 0.10)", 1.0);
+      const defaultRoad = style.roadColor("rgba(210, 220, 235, 0.10)");
+      drawFilledSection(0, track.points.length - 1, defaultRoad, 1.0);
     }
 
     // Road edge lines (left and right borders)
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+    ctx.strokeStyle = style.edgeColor;
     ctx.lineWidth = 0.15;
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
+    
+    // Add glow effect for night mode
+    if (style.glowEdges) {
+      ctx.shadowBlur = 8;
+      ctx.shadowColor = style.edgeColor;
+    }
     
     // Left edge
     ctx.beginPath();
@@ -268,7 +299,8 @@ export class Renderer2D {
     ctx.stroke();
 
     // Centerline
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.20)";
+    ctx.shadowBlur = 0; // Reset shadow for centerline
+    ctx.strokeStyle = style.centerlineColor;
     ctx.lineWidth = 0.20;
     ctx.setLineDash([1.2, 1.5]);
     ctx.beginPath();

@@ -1,6 +1,14 @@
 import { mulberry32 } from "./rng";
 import { generateCity, type City } from "./city";
 
+// Helper function for render style selection
+function getRandomRenderStyle(seed: number): "clean" | "realistic" | "day" | "night" {
+  const styles = ["clean", "realistic", "day", "night"] as const;
+  const rng = mulberry32(seed + 9999); // Offset seed for style selection
+  const index = Math.floor(rng() * styles.length);
+  return styles[index];
+}
+
 export type Vec2 = { x: number; y: number };
 
 export type TrackCornerInfo = {
@@ -19,6 +27,7 @@ export type TrackDefinition = {
   endCity?: City;
   corners?: TrackCornerInfo[]; // Planned corners for pacenotes
   meta?: { name?: string; seed?: number; source?: "default" | "procedural" | "editor" | "point-to-point" };
+  renderStyle?: "clean" | "realistic" | "day" | "night";
 };
 
 export type Track = {
@@ -31,6 +40,7 @@ export type Track = {
   startCity?: City;
   endCity?: City;
   corners?: TrackCornerInfo[]; // Planned corners for pacenotes
+  renderStyle?: "clean" | "realistic" | "day" | "night";
 };
 
 export type TrackProjection = {
@@ -49,6 +59,7 @@ export function createTrackFromDefinition(def: TrackDefinition): Track {
   track.startCity = def.startCity;
   track.endCity = def.endCity;
   track.corners = def.corners;
+  track.renderStyle = def.renderStyle;
   return track;
 }
 
@@ -700,6 +711,9 @@ function tryCreatePointToPointTrackDefinition(seed: number): TrackDefinition {
       track: trackForCollisionCheck
     });
     
+    // Assign random render style based on seed
+    const renderStyle = getRandomRenderStyle(seed);
+    
     return {
       points: allPoints,
       baseWidthM,
@@ -707,6 +721,7 @@ function tryCreatePointToPointTrackDefinition(seed: number): TrackDefinition {
       startCity,
       endCity,
       corners: cornerInfos,
+      renderStyle,
       meta: { name: `Route ${seed}`, seed, source: "point-to-point" }
     };
   }
@@ -767,6 +782,9 @@ function tryCreatePointToPointTrackDefinition(seed: number): TrackDefinition {
     track: trackForCollisionCheck
   });
   
+  // Assign random render style based on seed
+  const renderStyle = getRandomRenderStyle(seed);
+  
   return {
     points: allPoints,
     baseWidthM,
@@ -774,6 +792,7 @@ function tryCreatePointToPointTrackDefinition(seed: number): TrackDefinition {
     startCity,
     endCity,
     corners: cornerInfos,
+    renderStyle,
     meta: { name: `Route ${seed}`, seed, source: "point-to-point" }
   };
 }
