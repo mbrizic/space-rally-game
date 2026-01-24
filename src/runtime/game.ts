@@ -745,9 +745,10 @@ export class Game {
 
     if (this.showDebugMenu) {
       const deg = (rad: number) => (rad * 180) / Math.PI;
+      // Tires panel - positioned below Tuning panel (which is at ~280px and ~200px tall)
       this.renderer.drawPanel({
         x: 12,
-        y: height - 12,
+        y: 490, // Below Debug (~270px) + Tuning (~200px) + 20px gap
         title: "Tires",
         lines: [
           `steerAngle: ${deg(this.state.carTelemetry.steerAngleRad).toFixed(1)}°`,
@@ -758,8 +759,7 @@ export class Game {
           `FyF: ${this.state.carTelemetry.lateralForceFrontN.toFixed(0)} N`,
           `FyR: ${this.state.carTelemetry.lateralForceRearN.toFixed(0)} N`
         ],
-        anchorX: "left",
-        anchorY: "bottom"
+        anchorX: "left"
       });
 
       // Side visualization of vectors (body frame: +x forward, +y left).
