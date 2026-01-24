@@ -141,82 +141,136 @@ export class Renderer2D {
     if (track.points.length < 2) return;
 
     ctx.save();
-    ctx.lineJoin = "round";
-    ctx.lineCap = "square"; // Square extends slightly to ensure coverage without visible circles
 
-    // Road fill - draw each segment with its own width if available
     const fillStyles = track.segmentFillStyles;
     const shoulderStyles = track.segmentShoulderStyles;
     const segmentWidths = track.segmentWidthsM;
 
-    // Helper to draw continuous path sections with same style
-    const drawPathSection = (startIdx: number, endIdx: number, style: string, width: number) => {
-      ctx.strokeStyle = style;
-      ctx.lineWidth = width;
-      ctx.beginPath();
-      ctx.moveTo(track.points[startIdx].x, track.points[startIdx].y);
-      for (let i = startIdx + 1; i <= endIdx; i++) {
-        ctx.lineTo(track.points[i].x, track.points[i].y);
+    // Calculate perpendicular normals for each point
+    const normals: { nx: number; ny: number }[] = [];
+    for (let i = 0; i < track.points.length; i++) {
+      let dx: number, dy: number;
+      if (i === 0) {
+        dx = track.points[1].x - track.points[0].x;
+        dy = track.points[1].y - track.points[0].y;
+      } else if (i === track.points.length - 1) {
+        dx = track.points[i].x - track.points[i - 1].x;
+        dy = track.points[i].y - track.points[i - 1].y;
+      } else {
+        // Average of adjacent segments for smooth corners
+        dx = track.points[i + 1].x - track.points[i - 1].x;
+        dy = track.points[i + 1].y - track.points[i - 1].y;
       }
-      ctx.stroke();
+      const len = Math.sqrt(dx * dx + dy * dy) || 1;
+      // Perpendicular (rotate 90 degrees)
+      normals.push({ nx: -dy / len, ny: dx / len });
+    }
+
+    // Helper to draw a filled polygon section of the road
+    const drawFilledSection = (startIdx: number, endIdx: number, style: string, widthMultiplier: number) => {
+      ctx.fillStyle = style;
+      ctx.beginPath();
+      
+      // Left edge (forward direction)
+      for (let i = startIdx; i <= endIdx; i++) {
+        const p = track.points[i];
+        const n = normals[i];
+        const halfWidth = ((segmentWidths ? segmentWidths[i] : track.widthM) * widthMultiplier) / 2;
+        const x = p.x + n.nx * halfWidth;
+        const y = p.y + n.ny * halfWidth;
+        if (i === startIdx) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      
+      // Right edge (backward direction)
+      for (let i = endIdx; i >= startIdx; i--) {
+        const p = track.points[i];
+        const n = normals[i];
+        const halfWidth = ((segmentWidths ? segmentWidths[i] : track.widthM) * widthMultiplier) / 2;
+        const x = p.x - n.nx * halfWidth;
+        const y = p.y - n.ny * halfWidth;
+        ctx.lineTo(x, y);
+      }
+      
+      ctx.closePath();
+      ctx.fill();
     };
 
     // Draw shoulders - batch consecutive segments with same style
     if (shoulderStyles && shoulderStyles.length === track.points.length) {
       let sectionStart = 0;
       let currentStyle = shoulderStyles[0];
-      let currentWidth = segmentWidths ? segmentWidths[0] : track.widthM;
       
       for (let i = 1; i < track.points.length; i++) {
         const newStyle = shoulderStyles[i];
-        const newWidth = segmentWidths ? segmentWidths[i] : track.widthM;
-        
-        if (newStyle !== currentStyle || Math.abs(newWidth - currentWidth) > 0.01) {
-          drawPathSection(sectionStart, i, currentStyle, currentWidth * 1.40);
+        if (newStyle !== currentStyle) {
+          drawFilledSection(sectionStart, i, currentStyle, 1.40);
           sectionStart = i;
           currentStyle = newStyle;
-          currentWidth = newWidth;
         }
       }
-      drawPathSection(sectionStart, track.points.length - 1, currentStyle, currentWidth * 1.40);
+      drawFilledSection(sectionStart, track.points.length - 1, currentStyle, 1.40);
     } else {
-      // Single style for all - draw as one path
-      const width = track.widthM;
-      drawPathSection(0, track.points.length - 1, "rgba(90, 120, 95, 0.16)", width * 1.40);
+      drawFilledSection(0, track.points.length - 1, "rgba(90, 120, 95, 0.16)", 1.40);
     }
 
     // Draw road fill - batch consecutive segments with same style
     if (fillStyles && fillStyles.length === track.points.length) {
       let sectionStart = 0;
       let currentStyle = fillStyles[0];
-      let currentWidth = segmentWidths ? segmentWidths[0] : track.widthM;
       
       for (let i = 1; i < track.points.length; i++) {
         const newStyle = fillStyles[i];
-        const newWidth = segmentWidths ? segmentWidths[i] : track.widthM;
-        
-        if (newStyle !== currentStyle || Math.abs(newWidth - currentWidth) > 0.01) {
-          drawPathSection(sectionStart, i, currentStyle, currentWidth);
+        if (newStyle !== currentStyle) {
+          drawFilledSection(sectionStart, i, currentStyle, 1.0);
           sectionStart = i;
           currentStyle = newStyle;
-          currentWidth = newWidth;
         }
       }
-      drawPathSection(sectionStart, track.points.length - 1, currentStyle, currentWidth);
+      drawFilledSection(sectionStart, track.points.length - 1, currentStyle, 1.0);
     } else {
-      // Single style for all - draw as one path
-      const width = track.widthM;
-      drawPathSection(0, track.points.length - 1, "rgba(210, 220, 235, 0.10)", width);
+      drawFilledSection(0, track.points.length - 1, "rgba(210, 220, 235, 0.10)", 1.0);
     }
 
-    // Road border - draw as continuous path
-    const borderWidth = segmentWidths ? segmentWidths[0] : track.widthM;
-    drawPathSection(0, track.points.length - 1, "rgba(255, 255, 255, 0.15)", Math.max(0.2, borderWidth * 0.08));
+    // Road edge lines (left and right borders)
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+    ctx.lineWidth = 0.15;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    
+    // Left edge
+    ctx.beginPath();
+    for (let i = 0; i < track.points.length; i++) {
+      const p = track.points[i];
+      const n = normals[i];
+      const halfWidth = (segmentWidths ? segmentWidths[i] : track.widthM) / 2;
+      const x = p.x + n.nx * halfWidth;
+      const y = p.y + n.ny * halfWidth;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    
+    // Right edge
+    ctx.beginPath();
+    for (let i = 0; i < track.points.length; i++) {
+      const p = track.points[i];
+      const n = normals[i];
+      const halfWidth = (segmentWidths ? segmentWidths[i] : track.widthM) / 2;
+      const x = p.x - n.nx * halfWidth;
+      const y = p.y - n.ny * halfWidth;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
 
-    // Centerline (no closePath for point-to-point)
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.20)"; // More visible
-    ctx.lineWidth = 0.20; // Slightly thicker
-    ctx.setLineDash([1.2, 1.5]); // Longer dashes
+    // Centerline
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.20)";
+    ctx.lineWidth = 0.20;
+    ctx.setLineDash([1.2, 1.5]);
     ctx.beginPath();
     ctx.moveTo(track.points[0].x, track.points[0].y);
     for (let i = 1; i < track.points.length; i++) ctx.lineTo(track.points[i].x, track.points[i].y);
