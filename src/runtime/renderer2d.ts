@@ -444,6 +444,38 @@ export class Renderer2D {
     ctx.restore();
   }
 
+  drawWater(waterBodies: { x: number; y: number; radiusX: number; radiusY: number; rotation: number }[]): void {
+    const ctx = this.ctx;
+    ctx.save();
+    
+    for (const w of waterBodies) {
+      ctx.save();
+      ctx.translate(w.x, w.y);
+      ctx.rotate(w.rotation);
+      
+      // Water fill - semi-transparent blue
+      ctx.fillStyle = "rgba(40, 90, 140, 0.7)";
+      ctx.beginPath();
+      ctx.ellipse(0, 0, w.radiusX, w.radiusY, 0, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Darker edge/shore
+      ctx.strokeStyle = "rgba(30, 60, 100, 0.9)";
+      ctx.lineWidth = 0.3;
+      ctx.stroke();
+      
+      // Inner highlight for depth effect
+      ctx.fillStyle = "rgba(60, 120, 180, 0.4)";
+      ctx.beginPath();
+      ctx.ellipse(-w.radiusX * 0.2, -w.radiusY * 0.2, w.radiusX * 0.5, w.radiusY * 0.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.restore();
+    }
+    
+    ctx.restore();
+  }
+
   drawTrackEditorPoints(opts: { points: { x: number; y: number }[]; activeIndex?: number | null }): void {
     const ctx = this.ctx;
     ctx.save();

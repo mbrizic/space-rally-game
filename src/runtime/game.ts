@@ -13,7 +13,7 @@ import {
   type TrackProjection
 } from "../sim/track";
 import { surfaceForTrackSM, type Surface } from "../sim/surface";
-import { generateTrees, type CircleObstacle } from "../sim/props";
+import { generateTrees, generateWaterBodies, type CircleObstacle, type WaterBody } from "../sim/props";
 import { DriftDetector, DriftState, type DriftInfo } from "../sim/drift";
 import { createEngineState, defaultEngineParams, stepEngine, rpmFraction, shiftUp, shiftDown, type EngineState } from "../sim/engine";
 import { ParticlePool, getParticleConfig } from "./particles";
@@ -39,6 +39,8 @@ export class Game {
   private trackSegmentFillStyles: string[] = [];
   private trackSegmentShoulderStyles: string[] = [];
   private trees: CircleObstacle[] = [];
+  private waterBodies: WaterBody[] = [];
+  private inWater = false;
   private checkpointSM: number[] = [];
   private nextCheckpointIndex = 0;
   private insideActiveGate = false;
@@ -346,6 +348,7 @@ export class Game {
 
     const treeSeed = Math.floor(def.meta?.seed ?? 20260123);
     this.trees = generateTrees(this.track, { seed: treeSeed });
+    this.waterBodies = generateWaterBodies(this.track, { seed: treeSeed + 777 });
 
     // Reset stage-related state when swapping tracks.
     this.raceActive = false;
@@ -553,6 +556,7 @@ export class Game {
 
     this.resolveTreeCollisions();
     this.resolveBuildingCollisions();
+    this.checkWaterHazards(dtSeconds);
     if (this.damage01 >= 1) {
       this.damage01 = 1;
       this.state.car.vxMS = 0;
@@ -605,6 +609,7 @@ export class Game {
         activeIndex: this.editorDragIndex ?? this.editorHoverIndex
       });
     }
+    this.renderer.drawWater(this.waterBodies);
     this.renderer.drawTrees(this.trees);
     this.renderer.drawParticles(this.particlePool.getActiveParticles());
     // Draw start line at the first checkpoint position (edge of starting city)
@@ -659,7 +664,7 @@ export class Game {
         `handbrake: ${this.input.axis("handbrake").toFixed(2)}  gear: ${this.gear}`,
         `yawRate: ${this.state.car.yawRateRadS.toFixed(2)} rad/s`,
         `next gate: ${gateLabel(this.nextCheckpointIndex, this.checkpointSM.length)}`,
-        `surface: ${this.lastSurface.name}  (μ=${this.lastSurface.frictionMu.toFixed(2)})`,
+        `surface: ${this.lastSurface.name}  (μ=${this.lastSurface.frictionMu.toFixed(2)})${this.inWater ? " [WATER!]" : ""}`,
         `damage: ${(this.damage01 * 100).toFixed(0)}%`
       ]
     });
@@ -1191,6 +1196,46 @@ export class Game {
       this.fps = (this.frameCounter / this.fpsWindowMs) * 1000;
       this.frameCounter = 0;
       this.fpsWindowMs = 0;
+    }
+  }
+
+  private checkWaterHazards(dtSeconds: number): void {
+    const carX = this.state.car.xM;
+    const carY = this.state.car.yM;
+    
+    let inAnyWater = false;
+    
+    for (const water of this.waterBodies) {
+      // Transform car position to water's local coordinate system
+      const dx = carX - water.x;
+      const dy = carY - water.y;
+      
+      // Rotate to align with ellipse axes
+      const cos = Math.cos(-water.rotation);
+      const sin = Math.sin(-water.rotation);
+      const localX = dx * cos - dy * sin;
+      const localY = dx * sin + dy * cos;
+      
+      // Check if inside ellipse: (x/a)^2 + (y/b)^2 <= 1
+      const normalizedDist = (localX * localX) / (water.radiusX * water.radiusX) 
+                           + (localY * localY) / (water.radiusY * water.radiusY);
+      
+      if (normalizedDist <= 1) {
+        inAnyWater = true;
+        break;
+      }
+    }
+    
+    this.inWater = inAnyWater;
+    
+    if (inAnyWater) {
+      // Strong drag effect - water slows the car significantly
+      const waterDrag = 0.85; // Lose 15% velocity per frame when in water
+      const waterAngularDrag = 0.7; // Even more yaw damping
+      
+      this.state.car.vxMS *= Math.pow(waterDrag, dtSeconds * 60);
+      this.state.car.vyMS *= Math.pow(waterDrag, dtSeconds * 60);
+      this.state.car.yawRateRadS *= Math.pow(waterAngularDrag, dtSeconds * 60);
     }
   }
 }

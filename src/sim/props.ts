@@ -9,6 +9,15 @@ export type CircleObstacle = {
   r: number;
 };
 
+export type WaterBody = {
+  id: number;
+  x: number;
+  y: number;
+  radiusX: number; // Ellipse semi-axis X
+  radiusY: number; // Ellipse semi-axis Y
+  rotation: number; // Radians
+};
+
 export function generateTrees(track: Track, opts?: { seed?: number }): CircleObstacle[] {
   const seed = opts?.seed ?? 1337;
   const rand = mulberry32(seed);
@@ -132,4 +141,77 @@ function pointToSegmentDistance(
   
   // Return distance to closest point
   return Math.hypot(px - closestX, py - closestY);
+}
+
+/**
+ * Generate water bodies near the track - dangerous hazards that slow the car significantly
+ */
+export function generateWaterBodies(track: Track, opts?: { seed?: number }): WaterBody[] {
+  const seed = opts?.seed ?? 4242;
+  const rand = mulberry32(seed);
+
+  const waterBodies: WaterBody[] = [];
+  const roadHalfWidthM = track.widthM * 0.5;
+  
+  // Place water at strategic intervals (every 150-300m of track)
+  const minSpacing = 150;
+  const maxSpacing = 300;
+  
+  let nextWaterAt = minSpacing + rand() * (maxSpacing - minSpacing);
+  let id = 1;
+  
+  for (let s = nextWaterAt; s < track.totalLengthM - 100; s = nextWaterAt) {
+    const { p, normal } = pointAndNormalOnTrack(track, s);
+    
+    // Skip if too close to start or end
+    if (s < 80 || s > track.totalLengthM - 80) {
+      nextWaterAt = s + minSpacing;
+      continue;
+    }
+    
+    // Decide which side (or both for a crossing hazard)
+    const sideChoice = rand();
+    const sides: number[] = sideChoice < 0.3 ? [-1] : sideChoice < 0.6 ? [1] : [-1, 1];
+    
+    for (const sign of sides) {
+      // Place water partially on the road edge - makes it dangerous!
+      const offset = roadHalfWidthM + rand() * 3; // Can start from road edge
+      
+      const jitterAlong = (rand() - 0.5) * 15;
+      const tx = -normal.y;
+      const ty = normal.x;
+      
+      const x = p.x + normal.x * sign * offset + tx * jitterAlong;
+      const y = p.y + normal.y * sign * offset + ty * jitterAlong;
+      
+      // Random ellipse size - some puddles, some ponds
+      const baseRadius = 3 + rand() * 6; // 3-9m base
+      const radiusX = baseRadius * (0.7 + rand() * 0.6);
+      const radiusY = baseRadius * (0.7 + rand() * 0.6);
+      const rotation = rand() * Math.PI;
+      
+      // Check it doesn't completely block the track
+      let overlapsTooMuch = false;
+      for (let i = 0; i < track.points.length - 1; i++) {
+        const a = track.points[i];
+        const b = track.points[i + 1];
+        const distToSegment = pointToSegmentDistance(x, y, a.x, a.y, b.x, b.y);
+        
+        // Don't allow water that would completely cover the road
+        if (distToSegment < roadHalfWidthM - 2) {
+          overlapsTooMuch = true;
+          break;
+        }
+      }
+      
+      if (!overlapsTooMuch) {
+        waterBodies.push({ id: id++, x, y, radiusX, radiusY, rotation });
+      }
+    }
+    
+    // Schedule next water body
+    nextWaterAt = s + minSpacing + rand() * (maxSpacing - minSpacing);
+  }
+
+  return waterBodies;
 }
