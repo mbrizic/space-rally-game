@@ -354,6 +354,10 @@ export class Game {
   };
 
   private onMouseClick = (): void => {
+    // Unlock audio on first click
+    if (!this.audioUnlocked) {
+      this.tryUnlockAudio();
+    }
     this.shoot();
   };
 
@@ -364,11 +368,17 @@ export class Game {
     
     this.lastShotTime = now;
     
-    // Spawn projectile from car position toward mouse cursor
+    // Spawn projectile from front of car (1.5m ahead) so it's visible
     const carX = this.state.car.xM;
     const carY = this.state.car.yM;
+    const carHeading = this.state.car.headingRad;
     
-    this.projectilePool.spawn(carX, carY, this.mouseWorldX, this.mouseWorldY);
+    const spawnDistance = 1.5; // Spawn 1.5m ahead of car center
+    const spawnX = carX + Math.cos(carHeading) * spawnDistance;
+    const spawnY = carY + Math.sin(carHeading) * spawnDistance;
+    
+    // Use slower speed for better visibility (200 m/s instead of 800 m/s)
+    this.projectilePool.spawn(spawnX, spawnY, this.mouseWorldX, this.mouseWorldY, 200);
     
     // Play gunshot sound
     this.effectsAudio.playEffect("gunshot", 0.8);

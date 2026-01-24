@@ -22,7 +22,7 @@ export function createProjectile(
   y: number,
   targetX: number,
   targetY: number,
-  speed: number = 800 // Realistic bullet speed: 800 m/s (~2600 ft/s, typical rifle)
+  speed: number = 200 // Game-friendly speed: 200 m/s (more visible, still fast)
 ): Projectile {
   // Calculate direction vector
   const dx = targetX - x;
@@ -40,7 +40,7 @@ export function createProjectile(
     vx,
     vy,
     age: 0,
-    maxAge: 3.0 // Despawn after 3 seconds (2.4km travel at 800m/s)
+    maxAge: 5.0 // Despawn after 5 seconds (1km travel at 200m/s)
   };
 }
 
