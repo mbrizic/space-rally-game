@@ -266,12 +266,6 @@ export class Renderer2D {
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
     
-    // Add glow effect for night mode
-    if (style.glowEdges) {
-      ctx.shadowBlur = 8;
-      ctx.shadowColor = style.edgeColor;
-    }
-    
     // Left edge
     ctx.beginPath();
     for (let i = 0; i < track.points.length; i++) {
@@ -297,10 +291,6 @@ export class Renderer2D {
       else ctx.lineTo(x, y);
     }
     ctx.stroke();
-
-    // Reset shadow after edges
-    ctx.shadowBlur = 0;
-    ctx.shadowColor = 'transparent';
 
     // Centerline
     ctx.strokeStyle = style.centerlineColor;
@@ -498,10 +488,6 @@ export class Renderer2D {
   drawParticles(particles: { x: number; y: number; sizeM: number; color: string; lifetime: number; maxLifetime: number }[]): void {
     const ctx = this.ctx;
     ctx.save();
-    
-    // Add subtle glow effect to make particles pop
-    ctx.shadowBlur = 8;
-    ctx.shadowColor = "rgba(255, 255, 255, 0.3)";
     
     for (const p of particles) {
       // Fade alpha based on remaining lifetime

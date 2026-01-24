@@ -18,7 +18,6 @@ export interface StyleConfig {
   // Effects
   addNoiseTexture?: boolean;
   tireMark?: boolean;
-  glowEdges?: boolean;
   ambientLight?: number; // 0-1, for night mode
   
   // Particles
@@ -103,7 +102,6 @@ export const STYLE_CONFIGS: Record<RenderStyle, StyleConfig> = {
     },
     edgeColor: "rgba(200, 200, 180, 0.4)", // Reflective edges
     centerlineColor: "rgba(220, 220, 180, 0.45)", // Reflective centerline
-    glowEdges: true,
     ambientLight: 0.15,
     particleBrightness: 0.7,
   },
