@@ -174,39 +174,23 @@ export function generateWaterBodies(track: Track, opts?: { seed?: number }): Wat
     const sides: number[] = sideChoice < 0.3 ? [-1] : sideChoice < 0.6 ? [1] : [-1, 1];
     
     for (const sign of sides) {
-      // Place water partially on the road edge - makes it dangerous!
-      const offset = roadHalfWidthM + rand() * 3; // Can start from road edge
+      // Place water overlapping with road edge - makes it dangerous!
+      const offset = roadHalfWidthM * 0.5 + rand() * 4; // Starts from middle of road edge
       
-      const jitterAlong = (rand() - 0.5) * 15;
+      const jitterAlong = (rand() - 0.5) * 10;
       const tx = -normal.y;
       const ty = normal.x;
       
       const x = p.x + normal.x * sign * offset + tx * jitterAlong;
       const y = p.y + normal.y * sign * offset + ty * jitterAlong;
       
-      // Random ellipse size - some puddles, some ponds
-      const baseRadius = 3 + rand() * 6; // 3-9m base
-      const radiusX = baseRadius * (0.7 + rand() * 0.6);
-      const radiusY = baseRadius * (0.7 + rand() * 0.6);
+      // Bigger water bodies - more visible and dangerous
+      const baseRadius = 5 + rand() * 7; // 5-12m base (bigger)
+      const radiusX = baseRadius * (0.8 + rand() * 0.4);
+      const radiusY = baseRadius * (0.8 + rand() * 0.4);
       const rotation = rand() * Math.PI;
       
-      // Check it doesn't completely block the track
-      let overlapsTooMuch = false;
-      for (let i = 0; i < track.points.length - 1; i++) {
-        const a = track.points[i];
-        const b = track.points[i + 1];
-        const distToSegment = pointToSegmentDistance(x, y, a.x, a.y, b.x, b.y);
-        
-        // Don't allow water that would completely cover the road
-        if (distToSegment < roadHalfWidthM - 2) {
-          overlapsTooMuch = true;
-          break;
-        }
-      }
-      
-      if (!overlapsTooMuch) {
-        waterBodies.push({ id: id++, x, y, radiusX, radiusY, rotation });
-      }
+      waterBodies.push({ id: id++, x, y, radiusX, radiusY, rotation });
     }
     
     // Schedule next water body

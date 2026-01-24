@@ -904,7 +904,7 @@ export class Renderer2D {
     ctx.restore();
   }
 
-  drawMinimap(opts: { track: any; carX: number; carY: number; carHeading: number }): void {
+  drawMinimap(opts: { track: any; carX: number; carY: number; carHeading: number; waterBodies?: { x: number; y: number; radiusX: number; radiusY: number; rotation: number }[] }): void {
     const ctx = this.ctx;
     ctx.save();
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -957,6 +957,25 @@ export class Renderer2D {
       }
     }
     ctx.stroke();
+
+    // Draw water bodies on minimap
+    if (opts.waterBodies) {
+      ctx.fillStyle = "rgba(40, 120, 200, 0.6)";
+      for (const water of opts.waterBodies) {
+        const wx = offsetX + water.x * scale;
+        const wy = offsetY + water.y * scale;
+        const rx = water.radiusX * scale;
+        const ry = water.radiusY * scale;
+        
+        ctx.save();
+        ctx.translate(wx, wy);
+        ctx.rotate(water.rotation);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, Math.max(2, rx), Math.max(2, ry), 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
 
     // Draw cities
     if (opts.track.startCity) {

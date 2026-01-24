@@ -805,7 +805,8 @@ export class Game {
         track: this.track,
         carX: this.state.car.xM,
         carY: this.state.car.yM,
-        carHeading: this.state.car.headingRad
+        carHeading: this.state.car.headingRad,
+        waterBodies: this.waterBodies
       });
     }
 
