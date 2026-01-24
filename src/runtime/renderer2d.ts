@@ -552,6 +552,86 @@ export class Renderer2D {
     ctx.restore();
   }
 
+  drawRpmMeter(opts: { rpm: number; maxRpm: number; redlineRpm: number; gear: number }): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+
+    const w = this.viewportWidthCssPx || this.canvas.clientWidth;
+    const h = this.viewportHeightCssPx || this.canvas.clientHeight;
+
+    // Position bottom-center
+    const centerX = w / 2;
+    const centerY = h - 60;
+    const radius = 50;
+    const startAngle = Math.PI * 0.75; // 135 degrees
+    const endAngle = Math.PI * 2.25; // 405 degrees (270 degree sweep)
+
+    // Background arc
+    ctx.strokeStyle = "rgba(0,0,0,0.5)";
+    ctx.lineWidth = 14;
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius, startAngle, endAngle);
+    ctx.stroke();
+
+    // Color zones
+    const rpmFraction = opts.rpm / opts.maxRpm;
+    const redlineFraction = opts.redlineRpm / opts.maxRpm;
+    const sweepAngle = endAngle - startAngle;
+
+    // Green zone (0-70% of redline)
+    ctx.strokeStyle = "rgba(80, 200, 120, 0.7)";
+    ctx.lineWidth = 10;
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius, startAngle, startAngle + sweepAngle * redlineFraction * 0.7);
+    ctx.stroke();
+
+    // Yellow zone (70-90% of redline)
+    ctx.strokeStyle = "rgba(255, 200, 60, 0.7)";
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius, startAngle + sweepAngle * redlineFraction * 0.7, startAngle + sweepAngle * redlineFraction * 0.9);
+    ctx.stroke();
+
+    // Red zone (90%+ of redline)
+    ctx.strokeStyle = "rgba(255, 80, 80, 0.7)";
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius, startAngle + sweepAngle * redlineFraction * 0.9, endAngle);
+    ctx.stroke();
+
+    // RPM needle
+    const needleAngle = startAngle + sweepAngle * Math.min(rpmFraction, 1);
+    const needleLength = radius - 8;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(centerX, centerY);
+    ctx.lineTo(
+      centerX + Math.cos(needleAngle) * needleLength,
+      centerY + Math.sin(needleAngle) * needleLength
+    );
+    ctx.stroke();
+
+    // Center dot
+    ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // RPM text
+    ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+    ctx.font = "bold 14px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`${Math.round(opts.rpm)}`, centerX, centerY + 22);
+
+    // Gear indicator
+    ctx.font = "bold 24px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.fillStyle = rpmFraction > redlineFraction * 0.9 ? "rgba(255, 100, 100, 1)" : "rgba(255, 255, 255, 0.95)";
+    ctx.fillText(`${opts.gear}`, centerX + radius + 25, centerY);
+
+    ctx.restore();
+  }
+
   drawDamageOverlay(opts: { damage01: number }): void {
     const ctx = this.ctx;
     ctx.save();

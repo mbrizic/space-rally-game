@@ -6,7 +6,11 @@ import { createDefaultTrack, pointOnTrack, projectToTrack, type TrackProjection 
 import { surfaceForTrackSM, type Surface } from "../sim/surface";
 import { generateTrees, type CircleObstacle } from "../sim/props";
 import { DriftDetector, DriftState, type DriftInfo } from "../sim/drift";
+import { createEngineState, defaultEngineParams, stepEngine, rpmFraction, type EngineState } from "../sim/engine";
 import { ParticlePool, getParticleConfig } from "./particles";
+import { unlockAudio, suspendAudio, resumeAudio } from "../audio/audio-context";
+import { EngineAudio } from "../audio/audio-engine";
+import { SlideAudio } from "../audio/audio-slide";
 import type { TuningPanel } from "./tuning";
 
 type GameState = {
@@ -43,6 +47,13 @@ export class Game {
   private cameraShakeX = 0;
   private cameraShakeY = 0;
   private collisionFlashAlpha = 0;
+  // Engine simulation
+  private engineState: EngineState = createEngineState();
+  private readonly engineParams = defaultEngineParams();
+  // Audio systems
+  private readonly engineAudio = new EngineAudio();
+  private readonly slideAudio = new SlideAudio();
+  private audioUnlocked = false;
   private running = false;
 
   private lastFrameTimeMs = 0;
@@ -100,9 +111,32 @@ export class Game {
         this.showForceArrows = !this.showForceArrows;
         this.tuning?.setShowArrows(this.showForceArrows);
       }
+      // Unlock audio on first key press
+      if (!this.audioUnlocked) {
+        this.tryUnlockAudio();
+      }
+    });
+
+    // Handle tab visibility for audio
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        suspendAudio();
+      } else {
+        resumeAudio();
+      }
     });
 
     this.reset();
+  }
+
+  private async tryUnlockAudio(): Promise<void> {
+    if (this.audioUnlocked) return;
+    const unlocked = await unlockAudio();
+    if (unlocked) {
+      this.audioUnlocked = true;
+      this.engineAudio.start();
+      this.slideAudio.start();
+    }
   }
 
   start(): void {
@@ -171,16 +205,36 @@ export class Game {
     const offTrack = projectionBefore.distanceToCenterlineM > roadHalfWidthM;
     this.lastSurface = surfaceForTrackSM(this.track.totalLengthM, projectionBefore.sM, offTrack);
 
+    // Step engine simulation BEFORE car simulation to use its output
+    const engineResult = stepEngine(
+      this.engineState,
+      this.engineParams,
+      { throttle: Math.abs(throttle), speedMS: this.speedMS() },
+      dtSeconds
+    );
+    this.engineState = engineResult.state;
+
+    // Adjust effective throttle for car physics based on engine power band and gear torque
+    const effectiveThrottle = throttle * engineResult.powerMultiplier * engineResult.torqueScale;
+
     const stepped = stepCar(
       this.state.car,
       this.carParams,
-      { steer, throttle, brake, handbrake },
+      { steer, throttle: effectiveThrottle, brake, handbrake },
       dtSeconds,
       { frictionMu: this.lastSurface.frictionMu, rollingResistanceN: this.lastSurface.rollingResistanceN }
     );
     this.state.car = stepped.state;
     this.state.carTelemetry = stepped.telemetry;
     this.driftInfo = this.driftDetector.detect(stepped.telemetry, this.speedMS(), this.state.timeSeconds);
+
+    // Update audio
+    if (this.audioUnlocked) {
+      const rpmNorm = rpmFraction(this.engineState, this.engineParams);
+      this.engineAudio.update(rpmNorm, this.engineState.throttleInput);
+      this.slideAudio.update(this.driftInfo.intensity, this.lastSurface);
+    }
+
     this.updateVisualRoll(dtSeconds);
 
     // Emit particles when drifting
@@ -397,6 +451,14 @@ export class Game {
       });
     }
 
+    // RPM Meter
+    this.renderer.drawRpmMeter({
+      rpm: this.engineState.rpm,
+      maxRpm: this.engineParams.maxRpm,
+      redlineRpm: this.engineParams.redlineRpm,
+      gear: this.engineState.gear
+    });
+
     // Drift indicator
     this.renderer.drawDriftIndicator({
       intensity: this.driftInfo.intensity,
@@ -571,6 +633,7 @@ export class Game {
     this.visualRollOffsetM = 0;
     this.visualRollVel = 0;
     this.driftDetector.reset();
+    this.engineState = createEngineState();
     this.particlePool.reset();
     this.particleAccumulator = 0;
   }
@@ -661,12 +724,12 @@ export class Game {
   private resolveTreeCollisions(): void {
     if (this.damage01 >= 1) return;
 
-    const carRadius = 1.0; // Reduced for narrower tree trunks
+    const carRadius = 0.85; // Slightly tighter for narrow trunks
     for (const tree of this.trees) {
       const dx = this.state.car.xM - tree.x;
       const dy = this.state.car.yM - tree.y;
       const dist = Math.hypot(dx, dy);
-      const minDist = carRadius + tree.r;
+      const minDist = carRadius + tree.r * 0.4; // Matches visual trunk scale
       if (dist >= minDist || dist < 1e-6) continue;
 
       const nx = dx / dist;
@@ -688,9 +751,11 @@ export class Game {
       const ty = nx;
       const vT = vxW * tx + vyW * ty;
 
-      const restitution = 0.08;
-      const tangentialDamping = 0.35;
-      const newVN = vN > 0 ? -vN * restitution : vN;
+      const restitution = 0.25; // More bouncy rebound
+      const tangentialDamping = 0.5;
+
+      // Rebound if moving towards tree (vN < 0)
+      const newVN = vN < 0 ? -vN * restitution : vN;
       const newVT = vT * tangentialDamping;
 
       const newVxW = newVN * nx + newVT * tx;
@@ -698,13 +763,13 @@ export class Game {
 
       this.state.car.vxMS = newVxW * cosH + newVyW * sinH;
       this.state.car.vyMS = -newVxW * sinH + newVyW * cosH;
-      this.state.car.yawRateRadS *= 0.5;
+      this.state.car.yawRateRadS *= 0.4;
 
-      const impact = Math.max(0, vN);
+      const impact = vN < 0 ? Math.abs(vN) : 0;
       if (impact > 1) {
-        this.damage01 = clamp(this.damage01 + impact * 0.09, 0, 1);
+        this.damage01 = clamp(this.damage01 + impact * 0.08, 0, 1);
         // Camera shake for tree collisions
-        const shakeIntensity = Math.min(impact * 0.2, 2);
+        const shakeIntensity = Math.min(impact * 0.25, 2.5);
         this.cameraShakeX = (Math.random() - 0.5) * shakeIntensity;
         this.cameraShakeY = (Math.random() - 0.5) * shakeIntensity;
         this.collisionFlashAlpha = Math.min(impact * 0.12, 0.4);

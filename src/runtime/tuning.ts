@@ -15,8 +15,8 @@ export class TuningPanel {
   constructor(container: HTMLElement, initial?: Partial<TuningValues>) {
     this.values = {
       engineForceN: initial?.engineForceN ?? 28500,
-      maxSteerDeg: initial?.maxSteerDeg ?? 60,
-      driveBiasFront01: initial?.driveBiasFront01 ?? 1,
+      maxSteerDeg: initial?.maxSteerDeg ?? 57, // matched to 1.0 rad default
+      driveBiasFront01: initial?.driveBiasFront01 ?? 0.30,
       showArrows: initial?.showArrows ?? true
     };
 
