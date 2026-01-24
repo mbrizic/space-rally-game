@@ -385,36 +385,10 @@ export class Game {
   }
 
   private updateMouseWorldPosition(): void {
-    // Get camera transform info
-    const pixelsPerMeter = 36;
-    const cameraOffsetY = this.cameraMode === "runner" ? 6 : 3;
-    const cosRot = Math.cos(this.state.car.headingRad);
-    const sinRot = Math.sin(this.state.car.headingRad);
-    const offsetX = cosRot * cameraOffsetY;
-    const offsetY = sinRot * cameraOffsetY;
-    
-    const cameraCenterX = this.state.car.xM + this.cameraShakeX + offsetX;
-    const cameraCenterY = this.state.car.yM + this.cameraShakeY + offsetY;
-    
-    // Convert mouse CSS pixels to world coordinates
-    const w = this.canvas.clientWidth;
-    const h = this.canvas.clientHeight;
-    
-    // Mouse position relative to center
-    const mouseCenterX = this.mouseX - w / 2;
-    const mouseCenterY = this.mouseY - h / 2;
-    
-    // Account for camera rotation
-    const cos = Math.cos(this.cameraRotationRad);
-    const sin = Math.sin(this.cameraRotationRad);
-    
-    // Rotate mouse position
-    const rotatedX = mouseCenterX * cos - mouseCenterY * sin;
-    const rotatedY = mouseCenterX * sin + mouseCenterY * cos;
-    
-    // Convert to world meters and add camera position
-    this.mouseWorldX = cameraCenterX + rotatedX / pixelsPerMeter;
-    this.mouseWorldY = cameraCenterY + rotatedY / pixelsPerMeter;
+    // Use renderer's screenToWorld method which properly handles camera rotation
+    const worldPos = this.renderer.screenToWorld(this.mouseX, this.mouseY);
+    this.mouseWorldX = worldPos.x;
+    this.mouseWorldY = worldPos.y;
   }
 
   private setTrack(def: TrackDefinition): void {
@@ -638,7 +612,7 @@ export class Game {
 
     this.particlePool.update(dtSeconds);
     this.projectilePool.update(dtSeconds);
-    this.enemyPool.update(dtSeconds);
+    this.enemyPool.update(dtSeconds, this.track);
     this.checkProjectileCollisions();
 
     // Decay camera shake
@@ -1435,21 +1409,32 @@ export class Game {
   }
 
   private createEnemyDeathParticles(x: number, y: number): void {
-    // Create burst of particles when enemy dies
-    const particleCount = 15 + Math.floor(Math.random() * 10);
+    // Create massive burst of particles when enemy dies
+    const particleCount = 40 + Math.floor(Math.random() * 25); // 40-65 particles
     
     for (let i = 0; i < particleCount; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const speed = 2 + Math.random() * 4; // 2-6 m/s
+      const speed = 2 + Math.random() * 5; // 2-7 m/s
+      
+      // Vary particle colors for more visual interest
+      const colorVariant = Math.random();
+      let color;
+      if (colorVariant < 0.7) {
+        color = "rgba(180, 50, 50, 0.85)"; // Dark red
+      } else if (colorVariant < 0.9) {
+        color = "rgba(220, 80, 70, 0.8)"; // Bright red
+      } else {
+        color = "rgba(120, 30, 30, 0.9)"; // Very dark red/brown
+      }
       
       this.particlePool.emit({
         x,
         y,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
-        sizeM: 0.15 + Math.random() * 0.15, // 0.15-0.3m
-        lifetime: 0.8 + Math.random() * 0.4, // 0.8-1.2s
-        color: "rgba(180, 50, 50, 0.85)" // Dark red blood/gore particles
+        sizeM: 0.12 + Math.random() * 0.25, // 0.12-0.37m (varied sizes)
+        lifetime: 0.7 + Math.random() * 0.6, // 0.7-1.3s
+        color
       });
     }
   }

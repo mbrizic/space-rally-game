@@ -16,6 +16,7 @@ export type Enemy = {
   radius: number; // Collision radius (meters)
   wanderAngle: number; // Current wander direction
   timeAlive: number; // Age in seconds
+  trackSegmentHint: number; // Approximate track position for efficient queries
 };
 
 let nextEnemyId = 1;
@@ -23,7 +24,7 @@ let nextEnemyId = 1;
 /**
  * Create a new enemy/zombie
  */
-export function createEnemy(x: number, y: number): Enemy {
+export function createEnemy(x: number, y: number, trackSegmentHint: number): Enemy {
   return {
     id: nextEnemyId++,
     x,
@@ -33,24 +34,68 @@ export function createEnemy(x: number, y: number): Enemy {
     health: 1,
     radius: 0.6, // About human-sized
     wanderAngle: Math.random() * Math.PI * 2,
-    timeAlive: 0
+    timeAlive: 0,
+    trackSegmentHint
   };
 }
 
 /**
  * Update enemy AI and physics
+ * Zombies wander randomly but prefer to stay on/near the road
  */
-export function stepEnemy(enemy: Enemy, dtSeconds: number): Enemy {
+export function stepEnemy(enemy: Enemy, dtSeconds: number, track: Track): Enemy {
   if (enemy.health <= 0) return enemy;
   
   const speed = 1.5; // Slow zombie walk: 1.5 m/s (~3.4 mph)
   
-  // Slow random wander
-  const wanderChange = (Math.random() - 0.5) * 0.3;
-  const newWanderAngle = enemy.wanderAngle + wanderChange;
+  // Find nearest point on track to bias movement toward road
+  const searchStart = Math.max(0, enemy.trackSegmentHint - 20);
+  const searchEnd = Math.min(track.totalLengthM, enemy.trackSegmentHint + 20);
+  let closestDist = Infinity;
+  let closestS = enemy.trackSegmentHint;
   
-  const vx = Math.cos(newWanderAngle) * speed;
-  const vy = Math.sin(newWanderAngle) * speed;
+  // Simple search for nearest track point (could be optimized)
+  for (let s = searchStart; s < searchEnd; s += 5) {
+    const { p } = pointOnTrack(track, s);
+    const dist = Math.hypot(enemy.x - p.x, enemy.y - p.y);
+    if (dist < closestDist) {
+      closestDist = dist;
+      closestS = s;
+    }
+  }
+  
+  const { p: trackPoint } = pointOnTrack(track, closestS);
+  
+  // Calculate direction to road
+  const toRoadX = trackPoint.x - enemy.x;
+  const toRoadY = trackPoint.y - enemy.y;
+  const distToRoad = Math.hypot(toRoadX, toRoadY);
+  
+  // Bias toward road if we're far from it
+  let roadBias = 0;
+  const roadHalfWidth = track.widthM * 0.5;
+  if (distToRoad > roadHalfWidth + 2) {
+    // Far from road - strong bias to return
+    roadBias = 0.7;
+  } else if (distToRoad > roadHalfWidth * 0.5) {
+    // Getting off road - medium bias
+    roadBias = 0.4;
+  } else {
+    // On road - weak bias (more random)
+    roadBias = 0.15;
+  }
+  
+  const roadAngle = Math.atan2(toRoadY, toRoadX);
+  
+  // Random wander component
+  const wanderChange = (Math.random() - 0.5) * 0.5;
+  const wanderAngle = enemy.wanderAngle + wanderChange;
+  
+  // Blend road bias with wander
+  const targetAngle = roadAngle * roadBias + wanderAngle * (1 - roadBias);
+  
+  const vx = Math.cos(targetAngle) * speed;
+  const vy = Math.sin(targetAngle) * speed;
   
   return {
     ...enemy,
@@ -58,8 +103,9 @@ export function stepEnemy(enemy: Enemy, dtSeconds: number): Enemy {
     y: enemy.y + vy * dtSeconds,
     vx,
     vy,
-    wanderAngle: newWanderAngle,
-    timeAlive: enemy.timeAlive + dtSeconds
+    wanderAngle: targetAngle,
+    timeAlive: enemy.timeAlive + dtSeconds,
+    trackSegmentHint: closestS
   };
 }
 
@@ -73,10 +119,10 @@ export function generateEnemies(track: Track, opts?: { seed?: number; count?: nu
   const enemies: Enemy[] = [];
   const roadHalfWidthM = track.widthM * 0.5;
   
-  // Place enemies at intervals along the track
-  const minSpacing = 80; // 80m between spawns
-  const maxSpacing = 150; // 150m between spawns
-  const desiredCount = opts?.count ?? Math.floor(track.totalLengthM / 100); // ~1 per 100m
+  // Place enemies at intervals along the track (more zombies!)
+  const minSpacing = 30; // 30m between spawns
+  const maxSpacing = 60; // 60m between spawns
+  const desiredCount = opts?.count ?? Math.floor(track.totalLengthM / 40); // ~1 per 40m (2.5x more)
   
   let nextEnemyAt = minSpacing + rand() * (maxSpacing - minSpacing);
   
@@ -113,7 +159,7 @@ export function generateEnemies(track: Track, opts?: { seed?: number; count?: nu
     }
     
     if (!tooClose) {
-      enemies.push(createEnemy(x, y));
+      enemies.push(createEnemy(x, y, nextEnemyAt));
     }
     
     // Schedule next enemy
@@ -129,16 +175,16 @@ export function generateEnemies(track: Track, opts?: { seed?: number; count?: nu
 export class EnemyPool {
   private enemies: Enemy[] = [];
   
-  spawn(x: number, y: number): void {
-    this.enemies.push(createEnemy(x, y));
+  spawn(x: number, y: number, trackSegmentHint: number = 0): void {
+    this.enemies.push(createEnemy(x, y, trackSegmentHint));
   }
   
   setEnemies(enemies: Enemy[]): void {
     this.enemies = enemies;
   }
   
-  update(dtSeconds: number): void {
-    this.enemies = this.enemies.map(e => stepEnemy(e, dtSeconds));
+  update(dtSeconds: number, track: Track): void {
+    this.enemies = this.enemies.map(e => stepEnemy(e, dtSeconds, track));
   }
   
   getActive(): Enemy[] {
