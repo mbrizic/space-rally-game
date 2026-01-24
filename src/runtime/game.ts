@@ -15,7 +15,7 @@ import {
 import { surfaceForTrackSM, type Surface } from "../sim/surface";
 import { generateTrees, type CircleObstacle } from "../sim/props";
 import { DriftDetector, DriftState, type DriftInfo } from "../sim/drift";
-import { createEngineState, defaultEngineParams, stepEngine, rpmFraction, type EngineState } from "../sim/engine";
+import { createEngineState, defaultEngineParams, stepEngine, rpmFraction, shiftUp, shiftDown, type EngineState } from "../sim/engine";
 import { ParticlePool, getParticleConfig } from "./particles";
 import { unlockAudio, suspendAudio, resumeAudio } from "../audio/audio-context";
 import { EngineAudio } from "../audio/audio-engine";
@@ -118,9 +118,11 @@ export class Game {
       if (e.code === "KeyR") this.reset();
       if (e.code === "KeyN") this.randomizeTrack();
       if (e.code === "KeyC") this.toggleCameraMode();
-      if (e.code === "KeyE") this.toggleEditorMode();
-      if (e.code === "KeyS" && this.editorMode) this.saveEditorTrack();
-      if (e.code === "KeyL" && this.editorMode) this.loadEditorTrack();
+      if (e.code === "KeyT") this.toggleEditorMode(); // Changed from E to T
+      if (e.code === "KeyQ") this.shiftDown(); // Manual downshift
+      if (e.code === "KeyE") this.shiftUp(); // Manual upshift
+      if (e.code === "Digit1" && this.editorMode) this.saveEditorTrack(); // Changed from S
+      if (e.code === "Digit2" && this.editorMode) this.loadEditorTrack(); // Changed from L
       if (e.code === "KeyF") {
         this.showForceArrows = !this.showForceArrows;
         this.tuning?.setShowArrows(this.showForceArrows);
@@ -284,6 +286,18 @@ export class Game {
     this.cameraMode = this.cameraMode === "follow" ? "runner" : "follow";
   }
 
+  private shiftUp(): void {
+    if (this.tuning?.values.manualTransmission) {
+      this.engineState = shiftUp(this.engineState, this.engineParams.gearRatios.length);
+    }
+  }
+
+  private shiftDown(): void {
+    if (this.tuning?.values.manualTransmission) {
+      this.engineState = shiftDown(this.engineState);
+    }
+  }
+
   private randomizeTrack(): void {
     // Deterministic-ish but changing seeds; makes it easy to share a specific stage later.
     this.proceduralSeed = (this.proceduralSeed + 1) % 1_000_000_000;
@@ -414,7 +428,11 @@ export class Game {
     const engineResult = stepEngine(
       this.engineState,
       this.engineParams,
-      { throttle: Math.abs(throttle), speedMS: this.speedMS() },
+      { 
+        throttle: Math.abs(throttle), 
+        speedMS: this.speedMS(),
+        manualTransmission: this.tuning?.values.manualTransmission ?? true
+      },
       dtSeconds
     );
     this.engineState = engineResult.state;
@@ -646,19 +664,20 @@ export class Game {
             `Left click/drag  move point`,
             `Left click empty add point`,
             `Right click      delete point`,
-            `S               save track`,
-            `L               load track`,
-            `E               exit editor`
+            `1               save track`,
+            `2               load track`,
+            `T               exit editor`
           ]
         : [
         `W / ↑  throttle`,
         `S / ↓  brake / reverse`,
         `A/D or ←/→ steer`,
         `Space  handbrake`,
+        `Q / E  shift down / up`,
         `R      reset`,
         `N      new route`,
         `C      camera: ${this.cameraMode}`,
-        `E      editor`,
+        `T      editor`,
         `F      force arrows: ${this.showForceArrows ? "ON" : "OFF"}`
       ]
     });

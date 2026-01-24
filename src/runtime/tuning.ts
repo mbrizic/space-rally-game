@@ -3,6 +3,7 @@ export type TuningValues = {
   maxSteerDeg: number;
   driveBiasFront01: number;
   showArrows: boolean;
+  manualTransmission: boolean;
 };
 
 export class TuningPanel {
@@ -17,7 +18,8 @@ export class TuningPanel {
       engineForceN: initial?.engineForceN ?? 28500,
       maxSteerDeg: initial?.maxSteerDeg ?? 57, // matched to 1.0 rad default
       driveBiasFront01: initial?.driveBiasFront01 ?? 0.30,
-      showArrows: initial?.showArrows ?? false
+      showArrows: initial?.showArrows ?? false,
+      manualTransmission: initial?.manualTransmission ?? true // Manual is default
     };
 
     this.root = document.createElement("div");
@@ -47,6 +49,28 @@ export class TuningPanel {
       this.sliderRow("driveBiasFront01", "FWD %", 0, 1, 0.01, this.values.driveBiasFront01)
     );
 
+    // Manual transmission checkbox
+    const manualRow = document.createElement("label");
+    manualRow.style.display = "flex";
+    manualRow.style.alignItems = "center";
+    manualRow.style.gap = "8px";
+    manualRow.style.marginTop = "8px";
+    manualRow.style.userSelect = "none";
+
+    const manualCb = document.createElement("input");
+    manualCb.type = "checkbox";
+    manualCb.checked = this.values.manualTransmission;
+    manualCb.addEventListener("change", () => {
+      this.values.manualTransmission = manualCb.checked;
+    });
+    manualRow.appendChild(manualCb);
+
+    const manualTxt = document.createElement("span");
+    manualTxt.textContent = "Manual gearbox (Q/E)";
+    manualRow.appendChild(manualTxt);
+    this.root.appendChild(manualRow);
+
+    // Show arrows checkbox
     const arrowsRow = document.createElement("label");
     arrowsRow.style.display = "flex";
     arrowsRow.style.alignItems = "center";

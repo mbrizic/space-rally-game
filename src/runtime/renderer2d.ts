@@ -720,10 +720,15 @@ export class Renderer2D {
     ctx.textBaseline = "middle";
     ctx.fillText(`${Math.round(opts.rpm)}`, centerX, centerY + 22);
 
-    // Gear indicator
-    ctx.font = "bold 24px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
-    ctx.fillStyle = rpmFraction > redlineFraction * 0.9 ? "rgba(255, 100, 100, 1)" : "rgba(255, 255, 255, 0.95)";
-    ctx.fillText(`${opts.gear}`, centerX + radius + 25, centerY);
+    // Gear indicator - PROMINENT for manual shifting
+    ctx.font = "bold 48px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.fillStyle = rpmFraction > redlineFraction * 0.9 ? "rgba(255, 100, 100, 1)" : "rgba(180, 220, 255, 0.98)";
+    ctx.fillText(`${opts.gear}`, centerX + radius + 40, centerY - 5);
+    
+    // Gear label
+    ctx.font = "bold 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.fillStyle = "rgba(180, 220, 255, 0.7)";
+    ctx.fillText("GEAR", centerX + radius + 40, centerY + 28);
 
     ctx.restore();
   }

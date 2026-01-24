@@ -103,6 +103,22 @@ function engineRpmFromWheelRpm(
 }
 
 /**
+ * Shift up one gear (manual mode)
+ */
+export function shiftUp(state: EngineState, maxGear: number): EngineState {
+    if (state.gear >= maxGear) return state;
+    return { ...state, gear: state.gear + 1 };
+}
+
+/**
+ * Shift down one gear (manual mode)
+ */
+export function shiftDown(state: EngineState): EngineState {
+    if (state.gear <= 1) return state;
+    return { ...state, gear: state.gear - 1 };
+}
+
+/**
  * Step the engine simulation
  * Returns updated state and effective power multiplier
  */
@@ -113,6 +129,7 @@ export function stepEngine(
         throttle: number; // 0..1
         speedMS: number; // current car speed
         wheelRadiusM?: number;
+        manualTransmission?: boolean; // if true, skip auto-shifting
     },
     dtSeconds: number
 ): { state: EngineState; powerMultiplier: number; torqueScale: number } {
@@ -157,16 +174,22 @@ export function stepEngine(
 
     // Auto transmission: shift up near redline, shift down at low RPM
     let newGear = state.gear;
-    if (newRpm > params.redlineRpm * 0.95 && newGear < params.gearRatios.length) {
-        newGear++;
-    } else if (newRpm < params.idleRpm * 2.5 && newGear > 1 && speedMS > 2) {
-        // Check if downshifting wouldn't over-rev
-        const lowerGearRatio = params.gearRatios[newGear - 2];
-        const lowerGearRpm = engineRpmFromWheelRpm(wheelRpm, lowerGearRatio, params.finalDriveRatio);
-        if (lowerGearRpm < params.redlineRpm * 0.8) {
-            newGear--;
+    const manualMode = inputs.manualTransmission ?? false;
+    
+    if (!manualMode) {
+        // Automatic shifting
+        if (newRpm > params.redlineRpm * 0.95 && newGear < params.gearRatios.length) {
+            newGear++;
+        } else if (newRpm < params.idleRpm * 2.5 && newGear > 1 && speedMS > 2) {
+            // Check if downshifting wouldn't over-rev
+            const lowerGearRatio = params.gearRatios[newGear - 2];
+            const lowerGearRpm = engineRpmFromWheelRpm(wheelRpm, lowerGearRatio, params.finalDriveRatio);
+            if (lowerGearRpm < params.redlineRpm * 0.8) {
+                newGear--;
+            }
         }
     }
+    // In manual mode, gear stays the same (controlled by player)
 
     // Calculate power output
     const powerMultiplier = samplePowerCurve(params, newRpm);
