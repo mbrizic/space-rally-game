@@ -46,6 +46,8 @@ export class Game {
   private raceStartTimeSeconds = 0;
   private raceFinished = false;
   private finishTimeSeconds: number | null = null;
+  private notificationText = "";
+  private notificationTimeSeconds = 0;
   private damage01 = 0;
   private lastSurface: Surface = { name: "tarmac", frictionMu: 1, rollingResistanceN: 260 };
   private lastTrackS = 0;
@@ -119,8 +121,8 @@ export class Game {
       if (e.code === "KeyN") this.randomizeTrack();
       if (e.code === "KeyC") this.toggleCameraMode();
       if (e.code === "KeyT") this.toggleEditorMode(); // Changed from E to T
-      if (e.code === "KeyQ") this.shiftDown(); // Manual downshift
-      if (e.code === "KeyE") this.shiftUp(); // Manual upshift
+      if (e.code === "KeyJ") this.shiftDown(); // Manual downshift
+      if (e.code === "KeyK") this.shiftUp(); // Manual upshift
       if (e.code === "Digit1" && this.editorMode) this.saveEditorTrack(); // Changed from S
       if (e.code === "Digit2" && this.editorMode) this.loadEditorTrack(); // Changed from L
       if (e.code === "KeyF") {
@@ -296,6 +298,11 @@ export class Game {
     if (this.tuning?.values.manualTransmission) {
       this.engineState = shiftDown(this.engineState);
     }
+  }
+
+  private showNotification(text: string): void {
+    this.notificationText = text;
+    this.notificationTimeSeconds = this.state.timeSeconds;
   }
 
   private randomizeTrack(): void {
@@ -762,6 +769,12 @@ export class Game {
       gear: this.engineState.gear
     });
 
+    // Notification (if recent)
+    const timeSinceNotification = this.state.timeSeconds - this.notificationTimeSeconds;
+    if (this.notificationText && timeSinceNotification < 2.5) {
+      this.renderer.drawNotification(this.notificationText, timeSinceNotification);
+    }
+
     // Pacenotes
     this.renderer.drawPacenoteBanner({ text: this.pacenoteText });
 
@@ -969,14 +982,20 @@ export class Game {
         this.raceActive = true;
         this.raceStartTimeSeconds = this.state.timeSeconds;
         this.nextCheckpointIndex = 1;
+        this.showNotification("GO!");
       } else if (this.nextCheckpointIndex === this.checkpointSM.length - 1) {
         // Finish line!
         this.raceFinished = true;
         this.finishTimeSeconds = this.state.timeSeconds - this.raceStartTimeSeconds;
         this.nextCheckpointIndex = this.checkpointSM.length; // Move past last checkpoint
+        const time = this.finishTimeSeconds.toFixed(2);
+        this.showNotification(`FINISH! Time: ${time}s`);
       } else {
         // Regular checkpoint
         this.nextCheckpointIndex += 1;
+        const checkpointNum = this.nextCheckpointIndex;
+        const totalCheckpoints = this.checkpointSM.length - 1; // Excluding finish
+        this.showNotification(`Checkpoint ${checkpointNum}/${totalCheckpoints}`);
       }
       this.insideActiveGate = true;
     } else if (!insideGate) {

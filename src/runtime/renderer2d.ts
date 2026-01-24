@@ -658,14 +658,14 @@ export class Renderer2D {
 
     // Position bottom-center
     const centerX = w / 2;
-    const centerY = h - 60;
-    const radius = 50;
+    const centerY = h - 80;
+    const radius = 70;
     const startAngle = Math.PI * 0.75; // 135 degrees
     const endAngle = Math.PI * 2.25; // 405 degrees (270 degree sweep)
 
     // Background arc
     ctx.strokeStyle = "rgba(0,0,0,0.5)";
-    ctx.lineWidth = 14;
+    ctx.lineWidth = 18;
     ctx.beginPath();
     ctx.arc(centerX, centerY, radius, startAngle, endAngle);
     ctx.stroke();
@@ -677,7 +677,7 @@ export class Renderer2D {
 
     // Green zone (0-70% of redline)
     ctx.strokeStyle = "rgba(80, 200, 120, 0.7)";
-    ctx.lineWidth = 10;
+    ctx.lineWidth = 14;
     ctx.beginPath();
     ctx.arc(centerX, centerY, radius, startAngle, startAngle + sweepAngle * redlineFraction * 0.7);
     ctx.stroke();
@@ -696,9 +696,9 @@ export class Renderer2D {
 
     // RPM needle
     const needleAngle = startAngle + sweepAngle * Math.min(rpmFraction, 1);
-    const needleLength = radius - 8;
+    const needleLength = radius - 10;
     ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 4;
     ctx.beginPath();
     ctx.moveTo(centerX, centerY);
     ctx.lineTo(
@@ -710,25 +710,64 @@ export class Renderer2D {
     // Center dot
     ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
     ctx.beginPath();
-    ctx.arc(centerX, centerY, 5, 0, Math.PI * 2);
+    ctx.arc(centerX, centerY, 6, 0, Math.PI * 2);
     ctx.fill();
 
     // RPM text
     ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
-    ctx.font = "bold 14px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.font = "bold 18px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(`${Math.round(opts.rpm)}`, centerX, centerY + 22);
+    ctx.fillText(`${Math.round(opts.rpm)}`, centerX, centerY + 28);
 
     // Gear indicator - PROMINENT for manual shifting
-    ctx.font = "bold 48px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.font = "bold 60px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
     ctx.fillStyle = rpmFraction > redlineFraction * 0.9 ? "rgba(255, 100, 100, 1)" : "rgba(180, 220, 255, 0.98)";
-    ctx.fillText(`${opts.gear}`, centerX + radius + 40, centerY - 5);
+    ctx.fillText(`${opts.gear}`, centerX + radius + 50, centerY - 5);
     
     // Gear label
-    ctx.font = "bold 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.font = "bold 14px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
     ctx.fillStyle = "rgba(180, 220, 255, 0.7)";
-    ctx.fillText("GEAR", centerX + radius + 40, centerY + 28);
+    ctx.fillText("GEAR", centerX + radius + 50, centerY + 35);
+
+    ctx.restore();
+  }
+
+  drawNotification(text: string, timeSinceShown: number): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+
+    const w = this.viewportWidthCssPx || this.canvas.clientWidth;
+    const h = this.viewportHeightCssPx || this.canvas.clientHeight;
+
+    // Position at top-center
+    const centerX = w / 2;
+    const centerY = h * 0.25;
+
+    // Fade in/out animation
+    let alpha = 1.0;
+    if (timeSinceShown < 0.2) {
+      // Fade in
+      alpha = timeSinceShown / 0.2;
+    } else if (timeSinceShown > 2.0) {
+      // Fade out
+      alpha = 1.0 - ((timeSinceShown - 2.0) / 0.5);
+    }
+
+    // Shadow/outline for visibility
+    ctx.font = "bold 48px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    
+    // Black outline
+    ctx.strokeStyle = `rgba(0, 0, 0, ${alpha * 0.8})`;
+    ctx.lineWidth = 8;
+    ctx.strokeText(text, centerX, centerY);
+    
+    // White text
+    ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+    ctx.fillText(text, centerX, centerY);
 
     ctx.restore();
   }

@@ -7,7 +7,7 @@
 ## Features
 
 - 🏎️ **Realistic physics** - Proper tire slip angles, weight transfer, and traction circles
-- ⚙️ **Manual gearbox** - 6-speed manual transmission (default) with Q/E shifting, or toggle to automatic
+- ⚙️ **Manual gearbox** - 6-speed manual transmission (default) with J/K shifting, or toggle to automatic
 - ❄️ **Multiple surfaces** - Tarmac, gravel, dirt, and ice with different friction characteristics
 - 🎮 **Two camera modes** - Fixed follow and stabilized runner mode (toggle with `C`)
 - 🎵 **Procedural audio** - Engine and tire sounds that react to your driving
@@ -21,7 +21,7 @@
 - `S / ↓` - Brake / Reverse
 - `A/D or ←/→` - Steer
 - `Space` - Handbrake
-- `Q / E` - Shift down / up (manual mode)
+- `J / K` - Shift down / up (manual mode)
 - `R` - Reset
 - `N` - Generate new track
 - `C` - Toggle camera mode
