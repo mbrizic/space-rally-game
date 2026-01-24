@@ -37,11 +37,22 @@
 - Trade-off: 100% reliable vs. variety/excitement
 - Need: Smarter hairpin placement OR accept some visual overlaps
 
+## Recent Work ✅ (continued)
+
+### Renderer Styles & Visual Polish
+- [x] Fixed visible circles on track (switched to filled polygons instead of stroked lines)
+- [x] 4 distinct renderer styles: Clean, Realistic, Day, Night
+  - **Clean**: Modern dark background with subtle grid
+  - **Realistic**: Textured, muted colors, darker tarmac
+  - **Day**: Bright sunny colors, grass background
+  - **Night**: Very dark with glowing road edges
+- [x] Per-track style assignment (random based on seed)
+- [x] Style-specific: backgrounds, road colors, shoulders, edges, effects
+
 ## Next Priority
 - [ ] **FIX TRACK VARIETY** - See TRACK_VARIETY_NOTES.md for full context
   - Current: Retry logic rejects interesting hairpins (safe but boring)
   - Options: Zoned layout, outward spiral, accept visual overlaps, relaxed quality
-- [ ] **Better looking tracks** - Different renderers/visual styles per stage
 - [ ] More track variety (jumps, elevation changes)
 
 ## Backlog
