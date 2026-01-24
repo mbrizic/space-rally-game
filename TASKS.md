@@ -39,15 +39,10 @@
 
 ## Recent Work ✅ (continued)
 
-### Renderer Styles & Visual Polish
+### Visual Polish
 - [x] Fixed visible circles on track (switched to filled polygons instead of stroked lines)
-- [x] 4 distinct renderer styles: Clean, Realistic, Day, Night
-  - **Clean**: Modern dark background with subtle grid
-  - **Realistic**: Textured, muted colors, darker tarmac
-  - **Day**: Bright sunny colors, grass background
-  - **Night**: Very dark with glowing road edges
-- [x] Per-track style assignment (random based on seed)
-- [x] Style-specific: backgrounds, road colors, shoulders, edges, effects
+- [x] Fixed canvas clearing on retina displays
+- [x] Made buildings and trees fully opaque (no grid bleeding through)
 
 ## Next Priority
 - [ ] **FIX TRACK VARIETY** - See TRACK_VARIETY_NOTES.md for full context

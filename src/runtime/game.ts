@@ -566,10 +566,9 @@ export class Game {
 
   private render(): void {
     const { width, height } = this.renderer.resizeToDisplay();
-    const renderStyle = this.track.renderStyle || "clean";
 
     // Draw background
-    this.renderer.drawBg({ width, height, renderStyle });
+    this.renderer.drawBg();
 
     // In runner mode, offset camera to show more ahead
     const cameraOffsetY = this.cameraMode === "runner" ? 3 : 0; // 3m offset forward
@@ -585,7 +584,7 @@ export class Game {
       rotationRad: this.cameraRotationRad
     });
 
-    this.renderer.drawGrid({ width, height, spacingMeters: 1, majorEvery: 5, renderStyle });
+    this.renderer.drawGrid({ spacingMeters: 1, majorEvery: 5 });
     
     // Draw cities BEFORE track so road appears on top
     if (this.track.startCity) {
@@ -598,8 +597,7 @@ export class Game {
     this.renderer.drawTrack({ 
       ...this.track, 
       segmentFillStyles: this.trackSegmentFillStyles,
-      segmentShoulderStyles: this.trackSegmentShoulderStyles,
-      renderStyle
+      segmentShoulderStyles: this.trackSegmentShoulderStyles
     });
     if (this.editorMode) {
       this.renderer.drawTrackEditorPoints({
