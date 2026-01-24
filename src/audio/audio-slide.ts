@@ -3,7 +3,7 @@
  * Uses filtered white noise with surface-dependent characteristics
  */
 
-import { getAudioContext, getMasterGain, isAudioUnlocked } from "./audio-context";
+import { getAudioContext, getEnvironmentChannel, isAudioUnlocked } from "./audio-context";
 import type { Surface } from "../sim/surface";
 
 export type SlideAudioParams = {
@@ -114,8 +114,8 @@ export class SlideAudio {
         if (this.isRunning) return true;
 
         const ctx = getAudioContext();
-        const master = getMasterGain();
-        if (!ctx || !master || !isAudioUnlocked()) return false;
+        const envChannel = getEnvironmentChannel();
+        if (!ctx || !envChannel || !isAudioUnlocked()) return false;
 
         // Pre-create noise buffers
         this.whiteNoiseBuffer = createNoiseBuffer(ctx, 2);
@@ -132,7 +132,7 @@ export class SlideAudio {
         this.gainNode.gain.value = 0;
 
         this.filter.connect(this.gainNode);
-        this.gainNode.connect(master);
+        this.gainNode.connect(envChannel);
 
         // Start with white noise (will switch based on surface)
         this.startNoiseSource("white");
@@ -213,7 +213,8 @@ export class SlideAudio {
         this.filter.Q.setTargetAtTime(surfaceParams.filterQ, now, 0.05);
 
         // Volume based on intensity and surface gain
-        const targetGain = this.currentIntensity * surfaceParams.gain * 0.4;
+        // On dedicated environment channel, can be more prominent
+        const targetGain = this.currentIntensity * surfaceParams.gain * 0.7; // Increased from 0.4
         this.gainNode.gain.setTargetAtTime(targetGain, now, 0.03);
     }
 

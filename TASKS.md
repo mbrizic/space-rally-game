@@ -44,6 +44,20 @@
 - [x] Fixed canvas clearing on retina displays
 - [x] Made buildings and trees fully opaque (no grid bleeding through)
 
+### Water Hazards
+- [x] Water bodies placed beside track (off-road penalty)
+- [x] Visible on minimap as blue ellipses
+- [x] Unit tests ensure zero overlap with road (500+ tracks tested)
+- [x] Strong slowdown effect when car enters water
+
+### Audio System Rework
+- [x] Multi-channel mixing architecture (engine/environment/effects)
+- [x] Engine and tire sounds now audible simultaneously
+- [x] Dedicated effects channel for weapons (prepared for future guns)
+- [x] Checkpoint sounds play on effects channel (priority over car sounds)
+- [x] Volume levels optimized: Engine 25%, Environment 35%, Effects 50%
+- [x] See `src/audio/README.md` for full architecture documentation
+
 ## Next Priority
 - [ ] **FIX TRACK VARIETY** - See TRACK_VARIETY_NOTES.md for full context
   - Current: Retry logic rejects interesting hairpins (safe but boring)

@@ -3,7 +3,7 @@
  * Creates realistic engine noise from oscillators based on RPM
  */
 
-import { getAudioContext, getMasterGain, isAudioUnlocked } from "./audio-context";
+import { getAudioContext, getEngineChannel, isAudioUnlocked } from "./audio-context";
 
 export type EngineAudioParams = {
     baseFrequency: number; // frequency at idle RPM
@@ -41,13 +41,13 @@ export class EngineAudio {
         if (this.isRunning) return true;
 
         const ctx = getAudioContext();
-        const master = getMasterGain();
-        if (!ctx || !master || !isAudioUnlocked()) return false;
+        const engineChannel = getEngineChannel();
+        if (!ctx || !engineChannel || !isAudioUnlocked()) return false;
 
         // Create master gain for this engine
         this.masterGain = ctx.createGain();
         this.masterGain.gain.value = 0;
-        this.masterGain.connect(master);
+        this.masterGain.connect(engineChannel);
 
         // Create oscillators for each harmonic
         for (let i = 0; i < this.params.harmonics.length; i++) {
@@ -121,10 +121,10 @@ export class EngineAudio {
         }
 
         // Volume based on throttle and RPM
-        // Louder with throttle, slightly louder at high RPM
-        const baseVolume = 0.1 + this.currentThrottle * 0.4;
-        const rpmBoost = this.currentRpmNorm * 0.15;
-        const targetVolume = baseVolume + rpmBoost;
+        // Engine is on dedicated channel, so can be more prominent
+        const baseVolume = 0.3 + this.currentThrottle * 0.6; // Increased base volume
+        const rpmBoost = this.currentRpmNorm * 0.25; // More RPM presence
+        const targetVolume = Math.min(1.0, baseVolume + rpmBoost);
 
         this.masterGain.gain.setTargetAtTime(targetVolume, now, 0.05);
     }

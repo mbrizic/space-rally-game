@@ -20,6 +20,7 @@ import { ParticlePool, getParticleConfig } from "./particles";
 import { unlockAudio, suspendAudio, resumeAudio } from "../audio/audio-context";
 import { EngineAudio } from "../audio/audio-engine";
 import { SlideAudio } from "../audio/audio-slide";
+import { EffectsAudio } from "../audio/audio-effects";
 import { computePacenote } from "../sim/pacenotes";
 import type { TuningPanel } from "./tuning";
 
@@ -78,6 +79,7 @@ export class Game {
   // Audio systems
   private readonly engineAudio = new EngineAudio();
   private readonly slideAudio = new SlideAudio();
+  private readonly effectsAudio = new EffectsAudio();
   private audioUnlocked = false;
   private running = false;
   private proceduralSeed = 20260124;
@@ -367,6 +369,7 @@ export class Game {
       this.audioUnlocked = true;
       this.engineAudio.start();
       this.slideAudio.start();
+      this.effectsAudio.start();
     }
   }
 
@@ -1004,6 +1007,7 @@ export class Game {
         this.raceStartTimeSeconds = this.state.timeSeconds;
         this.nextCheckpointIndex = 1;
         this.showNotification("GO!");
+        this.effectsAudio.playEffect("checkpoint", 0.8);
       } else if (this.nextCheckpointIndex === this.checkpointSM.length - 1) {
         // Finish line!
         this.raceFinished = true;
@@ -1011,12 +1015,14 @@ export class Game {
         this.nextCheckpointIndex = this.checkpointSM.length; // Move past last checkpoint
         const time = this.finishTimeSeconds.toFixed(2);
         this.showNotification(`FINISH! Time: ${time}s`);
+        this.effectsAudio.playEffect("checkpoint", 1.0); // Louder for finish
       } else {
         // Regular checkpoint
         this.nextCheckpointIndex += 1;
         const checkpointNum = this.nextCheckpointIndex;
         const totalCheckpoints = this.checkpointSM.length - 1; // Excluding finish
         this.showNotification(`Checkpoint ${checkpointNum}/${totalCheckpoints}`);
+        this.effectsAudio.playEffect("checkpoint", 0.7);
       }
       this.insideActiveGate = true;
     } else if (!insideGate) {
