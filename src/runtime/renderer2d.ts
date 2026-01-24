@@ -530,6 +530,46 @@ export class Renderer2D {
     ctx.restore();
   }
 
+  drawProjectiles(projectiles: { x: number; y: number; vx: number; vy: number; age: number }[]): void {
+    const ctx = this.ctx;
+    ctx.save();
+    
+    for (const proj of projectiles) {
+      // Draw bullet as bright tracer line
+      const speed = Math.hypot(proj.vx, proj.vy);
+      const tracerLength = Math.min(speed * 0.02, 15); // 20ms trail, max 15m
+      
+      // Calculate tracer tail position
+      const dx = proj.vx / speed;
+      const dy = proj.vy / speed;
+      const tailX = proj.x - dx * tracerLength;
+      const tailY = proj.y - dy * tracerLength;
+      
+      // Bright tracer with glow
+      ctx.strokeStyle = "rgba(255, 220, 100, 0.95)";
+      ctx.lineWidth = 0.15; // 15cm tracer width
+      ctx.lineCap = "round";
+      
+      // Add glow effect
+      ctx.shadowColor = "rgba(255, 200, 80, 0.8)";
+      ctx.shadowBlur = 0.3;
+      
+      ctx.beginPath();
+      ctx.moveTo(tailX, tailY);
+      ctx.lineTo(proj.x, proj.y);
+      ctx.stroke();
+      
+      // Draw bright head
+      ctx.fillStyle = "rgba(255, 240, 150, 1)";
+      ctx.shadowBlur = 0.4;
+      ctx.beginPath();
+      ctx.arc(proj.x, proj.y, 0.1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    
+    ctx.restore();
+  }
+
   drawPanel(opts: {
     x: number;
     y: number;
@@ -914,6 +954,44 @@ export class Renderer2D {
     gradient.addColorStop(1, `rgba(200, 0, 0, ${alpha})`);
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, w, h);
+
+    ctx.restore();
+  }
+
+  drawCrosshair(x: number, y: number): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+
+    const size = 20; // Crosshair size
+    const gap = 6; // Gap in center
+    const thickness = 2;
+
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+    ctx.lineWidth = thickness;
+    ctx.lineCap = "round";
+
+    // Horizontal line
+    ctx.beginPath();
+    ctx.moveTo(x - size, y);
+    ctx.lineTo(x - gap, y);
+    ctx.moveTo(x + gap, y);
+    ctx.lineTo(x + size, y);
+    ctx.stroke();
+
+    // Vertical line
+    ctx.beginPath();
+    ctx.moveTo(x, y - size);
+    ctx.lineTo(x, y - gap);
+    ctx.moveTo(x, y + gap);
+    ctx.lineTo(x, y + size);
+    ctx.stroke();
+
+    // Center dot
+    ctx.fillStyle = "rgba(255, 220, 80, 0.8)";
+    ctx.beginPath();
+    ctx.arc(x, y, 2, 0, Math.PI * 2);
+    ctx.fill();
 
     ctx.restore();
   }

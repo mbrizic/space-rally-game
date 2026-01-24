@@ -23,6 +23,7 @@ import { SlideAudio } from "../audio/audio-slide";
 import { EffectsAudio } from "../audio/audio-effects";
 import { computePacenote } from "../sim/pacenotes";
 import type { TuningPanel } from "./tuning";
+import { ProjectilePool } from "../sim/projectile";
 
 type GameState = {
   timeSeconds: number;
@@ -85,6 +86,12 @@ export class Game {
   private proceduralSeed = 20260124;
   private totalDistanceM = 0; // Total distance driven across all sessions
   private lastSaveTime = 0; // For periodic localStorage saves
+  private readonly projectilePool = new ProjectilePool();
+  private mouseX = 0; // Mouse position in CSS pixels
+  private mouseY = 0;
+  private mouseWorldX = 0; // Mouse position in world meters
+  private mouseWorldY = 0;
+  private lastShotTime = 0; // For rate limiting shots
 
   private lastFrameTimeMs = 0;
   private accumulatorMs = 0;
@@ -126,6 +133,11 @@ export class Game {
     if (savedDistance) {
       this.totalDistanceM = parseFloat(savedDistance) || 0;
     }
+    
+    // Track mouse position
+    canvas.addEventListener('mousemove', this.onMouseMove);
+    canvas.addEventListener('click', this.onMouseClick);
+    canvas.style.cursor = 'none'; // Hide default cursor, we'll draw crosshair
     // Start with a point-to-point track
     this.setTrack(createPointToPointTrackDefinition(this.proceduralSeed));
 
@@ -144,6 +156,9 @@ export class Game {
       }
       if (e.code === "KeyM") {
         this.showMinimap = !this.showMinimap;
+      }
+      if (e.code === "KeyL") {
+        this.shoot();
       }
       // Unlock audio on first key press
       if (!this.audioUnlocked) {
@@ -327,6 +342,69 @@ export class Game {
     const def = createPointToPointTrackDefinition(this.proceduralSeed);
     this.setTrack(def);
     this.reset();
+  }
+
+  private onMouseMove = (e: MouseEvent): void => {
+    const rect = this.canvas.getBoundingClientRect();
+    this.mouseX = e.clientX - rect.left;
+    this.mouseY = e.clientY - rect.top;
+    
+    // Convert to world coordinates
+    this.updateMouseWorldPosition();
+  };
+
+  private onMouseClick = (): void => {
+    this.shoot();
+  };
+
+  private shoot(): void {
+    // Rate limit: max 5 shots per second (0.2s cooldown)
+    const now = this.state.timeSeconds;
+    if (now - this.lastShotTime < 0.2) return;
+    
+    this.lastShotTime = now;
+    
+    // Spawn projectile from car position toward mouse cursor
+    const carX = this.state.car.xM;
+    const carY = this.state.car.yM;
+    
+    this.projectilePool.spawn(carX, carY, this.mouseWorldX, this.mouseWorldY);
+    
+    // Play gunshot sound
+    this.effectsAudio.playEffect("gunshot", 0.8);
+  }
+
+  private updateMouseWorldPosition(): void {
+    // Get camera transform info
+    const pixelsPerMeter = 36;
+    const cameraOffsetY = this.cameraMode === "runner" ? 6 : 3;
+    const cosRot = Math.cos(this.state.car.headingRad);
+    const sinRot = Math.sin(this.state.car.headingRad);
+    const offsetX = cosRot * cameraOffsetY;
+    const offsetY = sinRot * cameraOffsetY;
+    
+    const cameraCenterX = this.state.car.xM + this.cameraShakeX + offsetX;
+    const cameraCenterY = this.state.car.yM + this.cameraShakeY + offsetY;
+    
+    // Convert mouse CSS pixels to world coordinates
+    const w = this.canvas.clientWidth;
+    const h = this.canvas.clientHeight;
+    
+    // Mouse position relative to center
+    const mouseCenterX = this.mouseX - w / 2;
+    const mouseCenterY = this.mouseY - h / 2;
+    
+    // Account for camera rotation
+    const cos = Math.cos(this.cameraRotationRad);
+    const sin = Math.sin(this.cameraRotationRad);
+    
+    // Rotate mouse position
+    const rotatedX = mouseCenterX * cos - mouseCenterY * sin;
+    const rotatedY = mouseCenterX * sin + mouseCenterY * cos;
+    
+    // Convert to world meters and add camera position
+    this.mouseWorldX = cameraCenterX + rotatedX / pixelsPerMeter;
+    this.mouseWorldY = cameraCenterY + rotatedY / pixelsPerMeter;
   }
 
   private setTrack(def: TrackDefinition): void {
@@ -547,6 +625,7 @@ export class Game {
     }
 
     this.particlePool.update(dtSeconds);
+    this.projectilePool.update(dtSeconds);
 
     // Decay camera shake
     this.cameraShakeX *= 0.85;
@@ -660,12 +739,21 @@ export class Game {
       speed: this.speedMS(),
       rollOffsetM: this.visualRollOffsetM
     });
+    
+    // Draw projectiles (bullets)
+    this.renderer.drawProjectiles(this.projectilePool.getActive());
 
     if (this.showDebugMenu && this.tuning?.values.showArrows) {
       this.drawForceArrows();
     }
 
     this.renderer.endCamera();
+    
+    // Update mouse world position after camera is set
+    this.updateMouseWorldPosition();
+    
+    // Draw crosshair at mouse position (screen space)
+    this.renderer.drawCrosshair(this.mouseX, this.mouseY);
 
     // Rally info - prominent at top center
     const raceTime = this.raceActive && !this.raceFinished 
@@ -734,6 +822,7 @@ export class Game {
         `A/D or ←/→ steer`,
         `Space  handbrake`,
         `J / K  shift down / up`,
+        `L / Click  shoot`,
         `R      reset`,
         `N      new route`,
         `C      camera: ${this.cameraMode}`,
