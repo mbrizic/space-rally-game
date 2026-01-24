@@ -95,10 +95,15 @@
   - 70-85% opacity (much brighter colors)
   - Longer lifetimes (particles linger more)
   - Added subtle glow effect with shadow blur
-- [x] Fixed track generation bug: cities too close
-  - Track cumulative angle changes to prevent looping
-  - Minimum 200m city separation enforced
-  - Automatic adjustment if cities end up too close
+- [x] Fixed track generation bug: cities too close (comprehensive fix with unit tests)
+  - STRICT angle limits: max 108° total turning (prevents any looping)
+  - Individual turns max ~72° (conservative hairpins only)
+  - Tracks never face >99° away from initial direction
+  - Increased route distance to 400-600m (from 300-500m)
+  - Minimum 350m city separation enforced (from 200m)
+  - Filter control points closer than 5m
+  - Added 5 comprehensive unit tests (100+ track generations tested)
+  - All tests verify no looping, proper city separation, reasonable track geometry
 
 ## Future Ideas
 - [ ] Better looking tracks - maybe with few different renderers, so each stage can be rendered in different style
