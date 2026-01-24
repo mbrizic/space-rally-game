@@ -27,6 +27,14 @@ export type City = {
   radius: number;
 };
 
+export type RoadsideBuilding = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+};
+
 const STORE_NAMES = [
   "Gas Station",
   "Repair Shop",
@@ -44,72 +52,110 @@ export function generateCity(
     numStores?: number;
     numDecorations?: number;
     radius?: number;
+    roadAngle?: number; // angle of road passing through center
   }
 ): City {
   const rand = mulberry32(seed);
-  const numStores = options?.numStores ?? 4;
-  const numDecorations = options?.numDecorations ?? 6;
+  const numDecorations = options?.numDecorations ?? 10;
   const radius = options?.radius ?? 35;
+  const roadAngle = options?.roadAngle ?? 0;
 
   const buildings: Building[] = [];
   const parkingSpots: ParkingSpot[] = [];
 
-  // Generate stores in a rough circle around the center
-  const storeNames = [...STORE_NAMES].sort(() => rand() - 0.5).slice(0, numStores);
+  // Calculate perpendicular direction to road (for blocks)
+  const perpAngle = roadAngle + Math.PI / 2;
   
-  for (let i = 0; i < numStores; i++) {
-    const angle = (i / numStores) * Math.PI * 2 + (rand() - 0.5) * 0.5;
-    const distance = radius * 0.6 + (rand() - 0.5) * radius * 0.2;
-    
-    const x = centerX + Math.cos(angle) * distance;
-    const y = centerY + Math.sin(angle) * distance;
-    
-    // Store buildings are larger
-    const width = 8 + rand() * 4;
-    const height = 6 + rand() * 3;
-    const rotation = angle + Math.PI / 2 + (rand() - 0.5) * 0.3;
+  // City design with CLEAR CORRIDOR for road
+  const roadCorridorWidth = 20; // Wide corridor that road passes through (no buildings here!)
+  const buildingWidth = 6;
+  const buildingDepth = 7;
+  const gap = 1.5;
+  
+  // Create stores on both sides of the corridor
+  const storeNames = [...STORE_NAMES].sort(() => rand() - 0.5);
+  let storeIndex = 0;
+  
+  // Left side of road corridor - buildings perpendicular to road, setback from corridor edge
+  const leftSetback = roadCorridorWidth / 2 + 2; // 2m gap from corridor edge
+  for (let i = 0; i < 3; i++) {
+    const alongRoad = (i - 1) * (buildingWidth + gap);
+    const x = centerX + Math.cos(roadAngle) * alongRoad - Math.cos(perpAngle) * leftSetback;
+    const y = centerY + Math.sin(roadAngle) * alongRoad - Math.sin(perpAngle) * leftSetback;
     
     const buildingIndex = buildings.length;
     buildings.push({
       x,
       y,
-      width,
-      height,
-      rotation,
+      width: buildingWidth,
+      height: buildingDepth,
+      rotation: roadAngle,
       type: "store",
-      name: storeNames[i]
+      name: storeNames[storeIndex % storeNames.length]
     });
-
-    // Add 1-2 parking spots in front of each store
-    const numSpots = 1 + Math.floor(rand() * 2);
-    for (let j = 0; j < numSpots; j++) {
-      // Place parking spots in front of the building
-      const spotDistance = 10 + j * 4;
-      const spotAngle = rotation;
-      const spotX = x + Math.cos(spotAngle) * spotDistance;
-      const spotY = y + Math.sin(spotAngle) * spotDistance;
-      
-      parkingSpots.push({
-        x: spotX,
-        y: spotY,
-        rotation: spotAngle,
-        buildingIndex
-      });
-    }
+    storeIndex++;
+    
+    // Parking spot between building and corridor
+    const parkX = x + Math.cos(perpAngle) * (buildingDepth / 2 + 2);
+    const parkY = y + Math.sin(perpAngle) * (buildingDepth / 2 + 2);
+    parkingSpots.push({
+      x: parkX,
+      y: parkY,
+      rotation: perpAngle,
+      buildingIndex
+    });
+  }
+  
+  // Right side of road corridor
+  const rightSetback = roadCorridorWidth / 2 + 2;
+  for (let i = 0; i < 3; i++) {
+    const alongRoad = (i - 1) * (buildingWidth + gap);
+    const x = centerX + Math.cos(roadAngle) * alongRoad + Math.cos(perpAngle) * rightSetback;
+    const y = centerY + Math.sin(roadAngle) * alongRoad + Math.sin(perpAngle) * rightSetback;
+    
+    const buildingIndex = buildings.length;
+    buildings.push({
+      x,
+      y,
+      width: buildingWidth,
+      height: buildingDepth,
+      rotation: roadAngle + Math.PI, // Face opposite direction
+      type: "store",
+      name: storeNames[storeIndex % storeNames.length]
+    });
+    storeIndex++;
+    
+    // Parking spot between building and corridor
+    const parkX = x - Math.cos(perpAngle) * (buildingDepth / 2 + 2);
+    const parkY = y - Math.sin(perpAngle) * (buildingDepth / 2 + 2);
+    parkingSpots.push({
+      x: parkX,
+      y: parkY,
+      rotation: perpAngle + Math.PI,
+      buildingIndex
+    });
   }
 
-  // Add decorative buildings
+  // Add decorative/obstacle buildings OUTSIDE the main corridor area
+  // These form the "city blocks" around the main street
   for (let i = 0; i < numDecorations; i++) {
-    const angle = rand() * Math.PI * 2;
-    const distance = (rand() * 0.5 + 0.3) * radius;
+    const side = rand() > 0.5 ? 1 : -1; // left or right of road
     
-    const x = centerX + Math.cos(angle) * distance;
-    const y = centerY + Math.sin(angle) * distance;
+    // Position along the road, but NOT in the center area
+    let alongRoad = (rand() - 0.5) * 50;
     
-    // Smaller decorative buildings
-    const width = 4 + rand() * 4;
-    const height = 3 + rand() * 3;
-    const rotation = rand() * Math.PI * 2;
+    // Keep buildings well away from the corridor
+    const awayFromRoad = roadCorridorWidth / 2 + 14 + rand() * 12;
+    
+    const x = centerX + Math.cos(roadAngle) * alongRoad + Math.cos(perpAngle) * awayFromRoad * side;
+    const y = centerY + Math.sin(roadAngle) * alongRoad + Math.sin(perpAngle) * awayFromRoad * side;
+    
+    // Vary sizes but keep them small
+    const width = 3 + rand() * 4;
+    const height = 3 + rand() * 4;
+    
+    // Always perpendicular to road (either facing toward or away)
+    const rotation = side > 0 ? roadAngle + Math.PI : roadAngle;
     
     buildings.push({
       x,

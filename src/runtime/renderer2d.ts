@@ -142,10 +142,13 @@ export class Renderer2D {
     const fillStyles = track.segmentFillStyles;
     const segmentWidths = track.segmentWidthsM;
 
+    // For point-to-point tracks, don't draw wraparound segment
+    const numSegments = track.points.length - 1;
+
     // Shoulder / terrain edge hint and road fill
-    for (let i = 0; i < track.points.length; i++) {
+    for (let i = 0; i < numSegments; i++) {
       const a = track.points[i];
-      const b = track.points[(i + 1) % track.points.length];
+      const b = track.points[i + 1];
       const widthM = segmentWidths ? segmentWidths[i] : track.widthM;
 
       // Shoulder
@@ -170,9 +173,9 @@ export class Renderer2D {
     }
 
     // Road border - draw each segment
-    for (let i = 0; i < track.points.length; i++) {
+    for (let i = 0; i < numSegments; i++) {
       const a = track.points[i];
-      const b = track.points[(i + 1) % track.points.length];
+      const b = track.points[i + 1];
       const widthM = segmentWidths ? segmentWidths[i] : track.widthM;
 
       ctx.strokeStyle = "rgba(210, 220, 235, 0.26)";
@@ -183,14 +186,13 @@ export class Renderer2D {
       ctx.stroke();
     }
 
-    // Centerline.
+    // Centerline (no closePath for point-to-point)
     ctx.strokeStyle = "rgba(255, 255, 255, 0.10)";
     ctx.lineWidth = 0.18;
     ctx.setLineDash([0.8, 1.2]);
     ctx.beginPath();
     ctx.moveTo(track.points[0].x, track.points[0].y);
     for (let i = 1; i < track.points.length; i++) ctx.lineTo(track.points[i].x, track.points[i].y);
-    ctx.closePath();
     ctx.stroke();
     ctx.setLineDash([]);
 

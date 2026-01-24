@@ -3,8 +3,6 @@ import { Renderer2D } from "./renderer2d";
 import { clamp } from "./math";
 import { createCarState, defaultCarParams, stepCar, type CarTelemetry } from "../sim/car";
 import {
-  createDefaultTrackDefinition,
-  createProceduralTrackDefinition,
   createPointToPointTrackDefinition,
   createTrackFromDefinition,
   parseTrackDefinition,
@@ -36,17 +34,17 @@ export class Game {
   private readonly input: KeyboardInput;
   private readonly tuning?: TuningPanel;
   private readonly canvas: HTMLCanvasElement;
-  private trackDef: TrackDefinition = createDefaultTrackDefinition();
-  private track = createTrackFromDefinition(this.trackDef);
+  private trackDef!: TrackDefinition; // Will be set in constructor
+  private track!: ReturnType<typeof createTrackFromDefinition>; // Will be set in constructor
   private trackSegmentFillStyles: string[] = [];
   private trees: CircleObstacle[] = [];
   private checkpointSM: number[] = [];
   private nextCheckpointIndex = 0;
   private insideActiveGate = false;
-  private lapActive = false;
-  private lapStartTimeSeconds = 0;
-  private lapCount = 0;
-  private bestLapTimeSeconds: number | null = null;
+  private raceActive = false;
+  private raceStartTimeSeconds = 0;
+  private raceFinished = false;
+  private finishTimeSeconds: number | null = null;
   private damage01 = 0;
   private lastSurface: Surface = { name: "tarmac", frictionMu: 1, rollingResistanceN: 260 };
   private lastTrackS = 0;
@@ -61,7 +59,7 @@ export class Game {
   private cameraShakeX = 0;
   private cameraShakeY = 0;
   private collisionFlashAlpha = 0;
-  private cameraMode: "follow" | "runner" = "follow";
+  private cameraMode: "follow" | "runner" = "runner";
   private cameraRotationRad = 0;
   private pacenoteText = "";
   private editorMode = false;
@@ -111,12 +109,12 @@ export class Game {
     this.input = new KeyboardInput(window);
     this.tuning = tuning;
     this.canvas = canvas;
-    this.setTrack(createDefaultTrackDefinition());
+    // Start with a point-to-point track
+    this.setTrack(createPointToPointTrackDefinition(this.proceduralSeed));
 
     window.addEventListener("keydown", (e) => {
       if (e.code === "KeyR") this.reset();
-      if (e.code === "KeyN") this.randomizeTrack(false); // Loop track
-      if (e.code === "KeyM") this.randomizeTrack(true); // Point-to-point track
+      if (e.code === "KeyN") this.randomizeTrack();
       if (e.code === "KeyC") this.toggleCameraMode();
       if (e.code === "KeyE") this.toggleEditorMode();
       if (e.code === "KeyS" && this.editorMode) this.saveEditorTrack();
@@ -159,7 +157,7 @@ export class Game {
 
     // Editing and procedural generation go well together; pause driving feel by resetting timer state.
     if (this.editorMode) {
-      this.lapActive = false;
+      this.raceActive = false;
     }
   }
 
@@ -284,12 +282,10 @@ export class Game {
     this.cameraMode = this.cameraMode === "follow" ? "runner" : "follow";
   }
 
-  private randomizeTrack(pointToPoint = false): void {
+  private randomizeTrack(): void {
     // Deterministic-ish but changing seeds; makes it easy to share a specific stage later.
     this.proceduralSeed = (this.proceduralSeed + 1) % 1_000_000_000;
-    const def = pointToPoint 
-      ? createPointToPointTrackDefinition(this.proceduralSeed)
-      : createProceduralTrackDefinition(this.proceduralSeed);
+    const def = createPointToPointTrackDefinition(this.proceduralSeed);
     this.setTrack(def);
     this.reset();
   }
@@ -305,21 +301,27 @@ export class Game {
       this.trackSegmentFillStyles.push(surfaceFillStyle(surface));
     }
 
+    // Track layout: 0-50m city, 50m START, route, end-50m FINISH, last 50m city
+    const cityLength = 50;
+    const startLinePos = cityLength; // Exit of starting city
+    const finishLinePos = this.track.totalLengthM - cityLength; // Entrance to ending city
+    const raceDistance = finishLinePos - startLinePos;
+    
     this.checkpointSM = [
-      0,
-      this.track.totalLengthM * 0.25,
-      this.track.totalLengthM * 0.5,
-      this.track.totalLengthM * 0.75
+      startLinePos, // START LINE at exit of starting city
+      startLinePos + raceDistance * 0.33,
+      startLinePos + raceDistance * 0.66,
+      finishLinePos // FINISH LINE at entrance to ending city
     ];
 
     const treeSeed = Math.floor(def.meta?.seed ?? 20260123);
     this.trees = generateTrees(this.track, { seed: treeSeed });
 
     // Reset stage-related state when swapping tracks.
-    this.lapActive = false;
-    this.lapStartTimeSeconds = this.state.timeSeconds;
-    this.lapCount = 0;
-    this.bestLapTimeSeconds = null;
+    this.raceActive = false;
+    this.raceStartTimeSeconds = this.state.timeSeconds;
+    this.raceFinished = false;
+    this.finishTimeSeconds = null;
     this.nextCheckpointIndex = 0;
     this.insideActiveGate = false;
     this.lastTrackS = 0;
@@ -501,10 +503,11 @@ export class Game {
 
     const projectionFinal = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
     this.lastTrackS = projectionFinal.sM;
-    this.updateCheckpointsAndLap(projectionFinal);
+    this.updateCheckpointsAndRace(projectionFinal);
     this.pacenoteText = computePacenote(this.track, this.lastTrackS, this.speedMS())?.label ?? "STRAIGHT";
 
     this.resolveTreeCollisions();
+    this.resolveBuildingCollisions();
     if (this.damage01 >= 1) {
       this.damage01 = 1;
       this.state.car.vxMS = 0;
@@ -538,7 +541,7 @@ export class Game {
 
     this.renderer.drawGrid({ spacingMeters: 1, majorEvery: 5 });
     
-    // Draw cities if present
+    // Draw cities BEFORE track so road appears on top
     if (this.track.startCity) {
       this.renderer.drawCity(this.track.startCity);
     }
@@ -555,21 +558,26 @@ export class Game {
     }
     this.renderer.drawTrees(this.trees);
     this.renderer.drawParticles(this.particlePool.getActiveParticles());
-    const start = pointOnTrack(this.track, 0);
+    // Draw start line at the first checkpoint position (edge of starting city)
+    const start = pointOnTrack(this.track, this.checkpointSM[0]);
+    const startProj = projectToTrack(this.track, start.p);
     this.renderer.drawStartLine({
       x: start.p.x,
       y: start.p.y,
-      headingRad: start.headingRad + Math.PI / 2,
-      widthM: this.track.segmentWidthsM ? this.track.segmentWidthsM[0] : this.track.widthM
+      headingRad: start.headingRad,
+      widthM: startProj.widthM
     });
-    const activeGate = pointOnTrack(this.track, this.checkpointSM[this.nextCheckpointIndex]);
-    const activeGateProj = projectToTrack(this.track, activeGate.p);
-    this.renderer.drawCheckpointLine({
-      x: activeGate.p.x,
-      y: activeGate.p.y,
-      headingRad: activeGate.headingRad + Math.PI / 2,
-      widthM: activeGateProj.widthM
-    });
+    // Draw active checkpoint if race isn't finished
+    if (this.nextCheckpointIndex < this.checkpointSM.length) {
+      const activeGate = pointOnTrack(this.track, this.checkpointSM[this.nextCheckpointIndex]);
+      const activeGateProj = projectToTrack(this.track, activeGate.p);
+      this.renderer.drawCheckpointLine({
+        x: activeGate.p.x,
+        y: activeGate.p.y,
+        headingRad: activeGate.headingRad,
+        widthM: activeGateProj.widthM
+      });
+    }
     this.renderer.drawCar({
       x: this.state.car.xM,
       y: this.state.car.yM,
@@ -601,7 +609,7 @@ export class Game {
           .toFixed(2)}`,
         `handbrake: ${this.input.axis("handbrake").toFixed(2)}  gear: ${this.gear}`,
         `yawRate: ${this.state.car.yawRateRadS.toFixed(2)} rad/s`,
-        `next gate: ${gateLabel(this.nextCheckpointIndex)}`,
+        `next gate: ${gateLabel(this.nextCheckpointIndex, this.checkpointSM.length)}`,
         `surface: ${this.lastSurface.name}  (μ=${this.lastSurface.frictionMu.toFixed(2)})`,
         `damage: ${(this.damage01 * 100).toFixed(0)}%`
       ]
@@ -628,8 +636,7 @@ export class Game {
         `A/D or ←/→ steer`,
         `Space  handbrake`,
         `R      reset`,
-        `N      new loop track`,
-        `M      new point-to-point`,
+        `N      new route`,
         `C      camera: ${this.cameraMode}`,
         `E      editor`,
         `F      force arrows: ${this.showForceArrows ? "ON" : "OFF"}`
@@ -654,8 +661,14 @@ export class Game {
       anchorY: "bottom"
     });
 
-    const lapTime = this.lapActive ? this.state.timeSeconds - this.lapStartTimeSeconds : 0;
-    const stageLine = this.lapActive ? `running` : `not started`;
+    const raceTime = this.raceActive && !this.raceFinished 
+      ? this.state.timeSeconds - this.raceStartTimeSeconds 
+      : this.finishTimeSeconds ?? 0;
+    const stageLine = this.raceFinished 
+      ? `finished: ${this.finishTimeSeconds?.toFixed(2)}s` 
+      : this.raceActive 
+        ? `running` 
+        : `not started`;
     this.renderer.drawPanel({
       x: width - 12,
       y: height - 12,
@@ -663,9 +676,8 @@ export class Game {
       anchorY: "bottom",
       title: "Rally",
       lines: [
-        `lap: ${this.lapCount}`,
-        `time: ${lapTime.toFixed(2)}s`,
-        `best: ${this.bestLapTimeSeconds ? `${this.bestLapTimeSeconds.toFixed(2)}s` : "--"}`,
+        `checkpoint: ${this.nextCheckpointIndex}/${this.checkpointSM.length}`,
+        `time: ${raceTime.toFixed(2)}s`,
         `s: ${this.lastTrackS.toFixed(1)}m`,
         stageLine
       ]
@@ -872,7 +884,9 @@ export class Game {
   }
 
   private reset(): void {
-    const spawn = pointOnTrack(this.track, this.track.totalLengthM - 6);
+    // Spawn in the starting city (behind the start line)
+    // Start line is at 50m, so spawn at 20m to be in the middle of the city
+    const spawn = pointOnTrack(this.track, 20);
     this.state.car = {
       ...createCarState(),
       xM: spawn.p.x,
@@ -881,8 +895,10 @@ export class Game {
     };
     this.nextCheckpointIndex = 0;
     this.insideActiveGate = false;
-    this.lapActive = false;
-    this.lapStartTimeSeconds = this.state.timeSeconds;
+    this.raceActive = false;
+    this.raceStartTimeSeconds = this.state.timeSeconds;
+    this.raceFinished = false;
+    this.finishTimeSeconds = null;
     this.damage01 = 0;
     this.state.car.steerAngleRad = 0;
     this.visualRollOffsetM = 0;
@@ -894,7 +910,9 @@ export class Game {
     this.cameraRotationRad = this.cameraMode === "runner" ? -spawn.headingRad - Math.PI / 2 : 0;
   }
 
-  private updateCheckpointsAndLap(proj: TrackProjection): void {
+  private updateCheckpointsAndRace(proj: TrackProjection): void {
+    if (this.raceFinished) return; // Don't update if race is done
+    
     const speed = this.speedMS();
     if (speed < 1.5) {
       this.insideActiveGate = false;
@@ -903,26 +921,23 @@ export class Game {
 
     const gateSM = this.checkpointSM[this.nextCheckpointIndex];
     const insideGate =
-      circularDistance(proj.sM, gateSM, this.track.totalLengthM) < 3.5 &&
+      Math.abs(proj.sM - gateSM) < 3.5 &&
       proj.distanceToCenterlineM < proj.widthM * 0.6;
 
     if (insideGate && !this.insideActiveGate) {
       if (this.nextCheckpointIndex === 0) {
-        if (!this.lapActive) {
-          // Start the stage timer the first time we cross START.
-          this.lapActive = true;
-          this.lapStartTimeSeconds = this.state.timeSeconds;
-          this.nextCheckpointIndex = 1;
-        } else {
-          const lapTime = this.state.timeSeconds - this.lapStartTimeSeconds;
-          this.lapStartTimeSeconds = this.state.timeSeconds;
-          this.lapCount += 1;
-          this.bestLapTimeSeconds =
-            this.bestLapTimeSeconds === null ? lapTime : Math.min(this.bestLapTimeSeconds, lapTime);
-          this.nextCheckpointIndex = 1;
-        }
+        // Start the race timer when crossing the start line
+        this.raceActive = true;
+        this.raceStartTimeSeconds = this.state.timeSeconds;
+        this.nextCheckpointIndex = 1;
+      } else if (this.nextCheckpointIndex === this.checkpointSM.length - 1) {
+        // Finish line!
+        this.raceFinished = true;
+        this.finishTimeSeconds = this.state.timeSeconds - this.raceStartTimeSeconds;
+        this.nextCheckpointIndex = this.checkpointSM.length; // Move past last checkpoint
       } else {
-        this.nextCheckpointIndex = (this.nextCheckpointIndex + 1) % this.checkpointSM.length;
+        // Regular checkpoint
+        this.nextCheckpointIndex += 1;
       }
       this.insideActiveGate = true;
     } else if (!insideGate) {
@@ -1033,6 +1048,69 @@ export class Game {
     }
   }
 
+  private resolveBuildingCollisions(): void {
+    if (this.damage01 >= 1) return;
+
+    const carRadius = 0.85;
+    const cities = [this.track.startCity, this.track.endCity].filter(Boolean);
+    
+    for (const city of cities) {
+      if (!city) continue;
+      
+      for (const building of city.buildings) {
+        // Simplified collision: treat buildings as circles for now
+        const dx = this.state.car.xM - building.x;
+        const dy = this.state.car.yM - building.y;
+        const dist = Math.hypot(dx, dy);
+        const buildingRadius = Math.max(building.width, building.height) / 2;
+        const minDist = carRadius + buildingRadius;
+        
+        if (dist >= minDist || dist < 1e-6) continue;
+
+        const nx = dx / dist;
+        const ny = dy / dist;
+
+        // Push out
+        const penetration = minDist - dist;
+        this.state.car.xM += nx * penetration;
+        this.state.car.yM += ny * penetration;
+
+        // Reflect velocity (similar to tree collision but harder)
+        const cosH = Math.cos(this.state.car.headingRad);
+        const sinH = Math.sin(this.state.car.headingRad);
+        const vxW = this.state.car.vxMS * cosH - this.state.car.vyMS * sinH;
+        const vyW = this.state.car.vxMS * sinH + this.state.car.vyMS * cosH;
+
+        const vN = vxW * nx + vyW * ny;
+        const tx = -ny;
+        const ty = nx;
+        const vT = vxW * tx + vyW * ty;
+
+        const restitution = 0.15; // Less bouncy than trees
+        const tangentialDamping = 0.3; // More friction
+
+        const newVN = vN < 0 ? -vN * restitution : vN;
+        const newVT = vT * tangentialDamping;
+
+        const newVxW = newVN * nx + newVT * tx;
+        const newVyW = newVN * ny + newVT * ty;
+
+        this.state.car.vxMS = newVxW * cosH + newVyW * sinH;
+        this.state.car.vyMS = -newVxW * sinH + newVyW * cosH;
+        this.state.car.yawRateRadS *= 0.3;
+
+        const impact = vN < 0 ? Math.abs(vN) : 0;
+        if (impact > 1) {
+          this.damage01 = clamp(this.damage01 + impact * 0.12, 0, 1); // More damage than trees
+          const shakeIntensity = Math.min(impact * 0.35, 3.5);
+          this.cameraShakeX = (Math.random() - 0.5) * shakeIntensity;
+          this.cameraShakeY = (Math.random() - 0.5) * shakeIntensity;
+          this.collisionFlashAlpha = Math.min(impact * 0.15, 0.5);
+        }
+      }
+    }
+  }
+
   private updateFps(deltaMs: number): void {
     this.frameCounter += 1;
     this.fpsWindowMs += deltaMs;
@@ -1044,13 +1122,9 @@ export class Game {
   }
 }
 
-function circularDistance(a: number, b: number, period: number): number {
-  const d = Math.abs(a - b) % period;
-  return Math.min(d, period - d);
-}
-
-function gateLabel(index: number): string {
+function gateLabel(index: number, total: number): string {
   if (index === 0) return "START";
+  if (index === total - 1) return "FINISH";
   return `CP${index}`;
 }
 

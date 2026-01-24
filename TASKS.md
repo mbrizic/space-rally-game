@@ -55,7 +55,10 @@
 
 ## Future Ideas
 - [ ] Guns (as mentioned in README)
-- [ ] Multiplayer/ghost racing
 - [ ] More track variety (jumps, elevation)
+- [ ] Gravity simulation and dynamic changing of it
 - [ ] Weather effects
 - [ ] Car customization
+- [ ] Manual gearbox 
+- [ ] Mobile phone controls
+- [ ] Wheelspin on less grippy surface
