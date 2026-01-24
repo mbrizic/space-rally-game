@@ -19,6 +19,7 @@ import { ParticlePool, getParticleConfig } from "./particles";
 import { unlockAudio, suspendAudio, resumeAudio } from "../audio/audio-context";
 import { EngineAudio } from "../audio/audio-engine";
 import { SlideAudio } from "../audio/audio-slide";
+import { computePacenote } from "../sim/pacenotes";
 import type { TuningPanel } from "./tuning";
 
 type GameState = {
@@ -57,6 +58,7 @@ export class Game {
   private cameraShakeY = 0;
   private collisionFlashAlpha = 0;
   private cameraMode: "follow" | "runner" = "follow";
+  private pacenoteText = "";
   // Engine simulation
   private engineState: EngineState = createEngineState();
   private readonly engineParams = defaultEngineParams();
@@ -329,6 +331,7 @@ export class Game {
     const projectionFinal = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
     this.lastTrackS = projectionFinal.sM;
     this.updateCheckpointsAndLap(projectionFinal);
+    this.pacenoteText = computePacenote(this.track, this.lastTrackS, this.speedMS())?.label ?? "STRAIGHT";
 
     this.resolveTreeCollisions();
     if (this.damage01 >= 1) {
@@ -506,6 +509,9 @@ export class Game {
       redlineRpm: this.engineParams.redlineRpm,
       gear: this.engineState.gear
     });
+
+    // Pacenotes
+    this.renderer.drawPacenoteBanner({ text: this.pacenoteText });
 
     // Drift indicator
     this.renderer.drawDriftIndicator({

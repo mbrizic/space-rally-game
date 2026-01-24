@@ -446,6 +446,34 @@ export class Renderer2D {
     ctx.restore();
   }
 
+  drawPacenoteBanner(opts: { text: string }): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+
+    const w = this.viewportWidthCssPx || this.canvas.clientWidth;
+    const x = w / 2;
+    const y = 14;
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.font = "18px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+
+    const padX = 14;
+    const padY = 8;
+    const textW = ctx.measureText(opts.text).width;
+    const boxW = Math.ceil(textW + padX * 2);
+    const boxH = 30 + padY;
+
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(x - boxW / 2, y, boxW, boxH);
+
+    ctx.fillStyle = "rgba(255, 205, 105, 0.95)";
+    ctx.fillText(opts.text, x, y + padY);
+
+    ctx.restore();
+  }
+
   drawVectorPanel(opts: {
     x: number;
     y: number;
