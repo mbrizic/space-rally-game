@@ -444,6 +444,46 @@ export class Renderer2D {
     ctx.restore();
   }
 
+  drawEnemies(enemies: { x: number; y: number; radius: number; vx: number; vy: number }[]): void {
+    const ctx = this.ctx;
+    ctx.save();
+    
+    for (const enemy of enemies) {
+      ctx.save();
+      ctx.translate(enemy.x, enemy.y);
+      
+      // Zombie body - greenish gray humanoid
+      ctx.fillStyle = "rgba(80, 100, 70, 0.9)";
+      ctx.strokeStyle = "rgba(40, 50, 35, 0.95)";
+      ctx.lineWidth = 0.08;
+      
+      // Simple humanoid shape (circle with slight ellipse for body)
+      ctx.beginPath();
+      ctx.ellipse(0, 0, enemy.radius * 0.8, enemy.radius, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      
+      // Head (smaller circle on top)
+      ctx.fillStyle = "rgba(90, 110, 80, 0.95)";
+      ctx.beginPath();
+      ctx.arc(0, -enemy.radius * 0.6, enemy.radius * 0.35, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      
+      // Red eyes for zombie effect
+      const eyeY = -enemy.radius * 0.65;
+      ctx.fillStyle = "rgba(200, 50, 50, 0.9)";
+      ctx.beginPath();
+      ctx.arc(-enemy.radius * 0.15, eyeY, 0.08, 0, Math.PI * 2);
+      ctx.arc(enemy.radius * 0.15, eyeY, 0.08, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.restore();
+    }
+    
+    ctx.restore();
+  }
+
   drawWater(waterBodies: { x: number; y: number; radiusX: number; radiusY: number; rotation: number }[]): void {
     const ctx = this.ctx;
     ctx.save();
@@ -996,7 +1036,7 @@ export class Renderer2D {
     ctx.restore();
   }
 
-  drawMinimap(opts: { track: any; carX: number; carY: number; carHeading: number; waterBodies?: { x: number; y: number; radiusX: number; radiusY: number; rotation: number }[] }): void {
+  drawMinimap(opts: { track: any; carX: number; carY: number; carHeading: number; waterBodies?: { x: number; y: number; radiusX: number; radiusY: number; rotation: number }[]; enemies?: { x: number; y: number }[] }): void {
     const ctx = this.ctx;
     ctx.save();
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -1066,6 +1106,18 @@ export class Renderer2D {
         ctx.ellipse(0, 0, Math.max(2, rx), Math.max(2, ry), 0, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
+      }
+    }
+
+    // Draw enemies on minimap
+    if (opts.enemies) {
+      ctx.fillStyle = "rgba(180, 50, 50, 0.7)";
+      for (const enemy of opts.enemies) {
+        const ex = offsetX + enemy.x * scale;
+        const ey = offsetY + enemy.y * scale;
+        ctx.beginPath();
+        ctx.arc(ex, ey, 3, 0, Math.PI * 2);
+        ctx.fill();
       }
     }
 

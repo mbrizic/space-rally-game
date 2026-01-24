@@ -24,6 +24,7 @@ import { EffectsAudio } from "../audio/audio-effects";
 import { computePacenote } from "../sim/pacenotes";
 import type { TuningPanel } from "./tuning";
 import { ProjectilePool } from "../sim/projectile";
+import { EnemyPool, generateEnemies } from "../sim/enemy";
 
 type GameState = {
   timeSeconds: number;
@@ -87,11 +88,13 @@ export class Game {
   private totalDistanceM = 0; // Total distance driven across all sessions
   private lastSaveTime = 0; // For periodic localStorage saves
   private readonly projectilePool = new ProjectilePool();
+  private readonly enemyPool = new EnemyPool();
   private mouseX = 0; // Mouse position in CSS pixels
   private mouseY = 0;
   private mouseWorldX = 0; // Mouse position in world meters
   private mouseWorldY = 0;
   private lastShotTime = 0; // For rate limiting shots
+  private enemyKillCount = 0; // Track kills for scoring
 
   private lastFrameTimeMs = 0;
   private accumulatorMs = 0;
@@ -444,6 +447,8 @@ export class Game {
     const treeSeed = Math.floor(def.meta?.seed ?? 20260123);
     this.trees = generateTrees(this.track, { seed: treeSeed });
     this.waterBodies = generateWaterBodies(this.track, { seed: treeSeed + 777 });
+    const enemies = generateEnemies(this.track, { seed: treeSeed + 1337 });
+    this.enemyPool.setEnemies(enemies);
 
     // Reset stage-related state when swapping tracks.
     this.raceActive = false;
@@ -633,6 +638,7 @@ export class Game {
 
     this.particlePool.update(dtSeconds);
     this.projectilePool.update(dtSeconds);
+    this.enemyPool.update(dtSeconds);
     this.checkProjectileCollisions();
 
     // Decay camera shake
@@ -664,6 +670,7 @@ export class Game {
 
     this.resolveTreeCollisions();
     this.resolveBuildingCollisions();
+    this.resolveEnemyCollisions();
     this.checkWaterHazards(dtSeconds);
     if (this.damage01 >= 1) {
       this.damage01 = 1;
@@ -719,6 +726,7 @@ export class Game {
     }
     this.renderer.drawWater(this.waterBodies);
     this.renderer.drawTrees(this.trees);
+    this.renderer.drawEnemies(this.enemyPool.getActive());
     this.renderer.drawParticles(this.particlePool.getActiveParticles());
     // Draw start line at the first checkpoint position (edge of starting city)
     const start = pointOnTrack(this.track, this.checkpointSM[0]);
@@ -779,7 +787,8 @@ export class Game {
       title: `Rally - Checkpoint ${this.nextCheckpointIndex}/${this.checkpointSM.length}`,
       lines: [
         stageLine,
-        `Distance: ${this.lastTrackS.toFixed(0)}m`
+        `Distance: ${this.lastTrackS.toFixed(0)}m`,
+        `Kills: ${this.enemyKillCount}/${this.enemyPool.getAll().length}`
       ]
     });
 
@@ -928,7 +937,8 @@ export class Game {
         carX: this.state.car.xM,
         carY: this.state.car.yM,
         carHeading: this.state.car.headingRad,
-        waterBodies: this.waterBodies
+        waterBodies: this.waterBodies,
+        enemies: this.enemyPool.getActive()
       });
     }
 
@@ -1100,6 +1110,12 @@ export class Game {
     this.particlePool.reset();
     this.particleAccumulator = 0;
     this.cameraRotationRad = this.cameraMode === "runner" ? -spawn.headingRad - Math.PI / 2 : 0;
+    this.enemyKillCount = 0;
+    
+    // Respawn enemies when resetting (regenerate from track)
+    const treeSeed = Math.floor(this.trackDef.meta?.seed ?? 20260123);
+    const enemies = generateEnemies(this.track, { seed: treeSeed + 1337 });
+    this.enemyPool.setEnemies(enemies);
   }
 
   private updateCheckpointsAndRace(proj: TrackProjection): void {
@@ -1367,6 +1383,8 @@ export class Game {
     const projectilesToRemove: number[] = [];
     
     for (const proj of projectiles) {
+      let hit = false;
+      
       // Check collision with trees
       for (const tree of this.trees) {
         const dx = proj.x - tree.x;
@@ -1376,27 +1394,118 @@ export class Game {
         // Projectile hits if within tree trunk radius
         if (dist < tree.r * 0.4) { // Matches visual trunk scale
           projectilesToRemove.push(proj.id);
-          // TODO: Add impact effect/sound when we have enemies
+          hit = true;
           break;
         }
       }
       
-      // TODO: Check collision with enemies here when implemented
-      // for (const enemy of this.enemies) {
-      //   const dx = proj.x - enemy.x;
-      //   const dy = proj.y - enemy.y;
-      //   const dist = Math.hypot(dx, dy);
-      //   if (dist < enemy.radius) {
-      //     projectilesToRemove.push(proj.id);
-      //     // Damage enemy
-      //     break;
-      //   }
-      // }
+      if (hit) continue;
+      
+      // Check collision with enemies
+      for (const enemy of this.enemyPool.getActive()) {
+        const dx = proj.x - enemy.x;
+        const dy = proj.y - enemy.y;
+        const dist = Math.hypot(dx, dy);
+        
+        if (dist < enemy.radius) {
+          projectilesToRemove.push(proj.id);
+          
+          // Kill enemy
+          this.enemyPool.damage(enemy.id, 1.0);
+          this.enemyKillCount++;
+          
+          // Create particle burst at enemy position
+          this.createEnemyDeathParticles(enemy.x, enemy.y);
+          
+          // Play impact sound
+          if (this.audioUnlocked) {
+            this.effectsAudio.playEffect("impact", 0.6);
+          }
+          
+          hit = true;
+          break;
+        }
+      }
     }
     
     // Remove hit projectiles
     for (const id of projectilesToRemove) {
       this.projectilePool.remove(id);
+    }
+  }
+
+  private createEnemyDeathParticles(x: number, y: number): void {
+    // Create burst of particles when enemy dies
+    const particleCount = 15 + Math.floor(Math.random() * 10);
+    
+    for (let i = 0; i < particleCount; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 2 + Math.random() * 4; // 2-6 m/s
+      
+      this.particlePool.emit({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        sizeM: 0.15 + Math.random() * 0.15, // 0.15-0.3m
+        lifetime: 0.8 + Math.random() * 0.4, // 0.8-1.2s
+        color: "rgba(180, 50, 50, 0.85)" // Dark red blood/gore particles
+      });
+    }
+  }
+  
+  private resolveEnemyCollisions(): void {
+    if (this.damage01 >= 1) return;
+    
+    const carRadius = 0.85;
+    for (const enemy of this.enemyPool.getActive()) {
+      const dx = this.state.car.xM - enemy.x;
+      const dy = this.state.car.yM - enemy.y;
+      const dist = Math.hypot(dx, dy);
+      const minDist = carRadius + enemy.radius;
+      
+      if (dist >= minDist || dist < 1e-6) continue;
+      
+      // Collision detected
+      const overlap = minDist - dist;
+      const impact = this.speedMS() * overlap;
+      
+      if (impact > 0.5) {
+        // Push car away
+        const nx = dx / dist;
+        const ny = dy / dist;
+        this.state.car.xM += nx * overlap * 0.3;
+        this.state.car.yM += ny * overlap * 0.3;
+        
+        // Reduce car velocity (running over zombie slows you down a bit)
+        this.state.car.vxMS *= 0.85;
+        this.state.car.vyMS *= 0.85;
+        
+        // Add yaw disturbance (car gets unstable)
+        const lateralImpact = (this.state.car.vyMS * nx - this.state.car.vxMS * ny) * 0.15;
+        this.state.car.yawRateRadS += lateralImpact;
+        
+        // Small damage
+        this.damage01 = clamp(this.damage01 + impact * 0.03, 0, 1);
+        
+        // Camera shake
+        const shakeIntensity = Math.min(impact * 0.2, 1.5);
+        this.cameraShakeX = (Math.random() - 0.5) * shakeIntensity;
+        this.cameraShakeY = (Math.random() - 0.5) * shakeIntensity;
+        this.collisionFlashAlpha = Math.min(impact * 0.08, 0.3);
+        
+        // Kill enemy
+        this.enemyPool.damage(enemy.id, 1.0);
+        this.enemyKillCount++;
+        
+        // Create particle burst
+        this.createEnemyDeathParticles(enemy.x, enemy.y);
+        
+        // Play impact sound
+        if (this.audioUnlocked) {
+          this.effectsAudio.playEffect("impact", 0.7);
+        }
+      }
     }
   }
 }
