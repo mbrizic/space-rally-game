@@ -368,20 +368,20 @@ export class Game {
     
     this.lastShotTime = now;
     
-    // Spawn projectile from front of car (1.5m ahead) so it's visible
+    // Spawn projectile from car center
     const carX = this.state.car.xM;
     const carY = this.state.car.yM;
-    const carHeading = this.state.car.headingRad;
     
-    const spawnDistance = 1.5; // Spawn 1.5m ahead of car center
-    const spawnX = carX + Math.cos(carHeading) * spawnDistance;
-    const spawnY = carY + Math.sin(carHeading) * spawnDistance;
+    // Use slower speed for better visibility (200 m/s)
+    this.projectilePool.spawn(carX, carY, this.mouseWorldX, this.mouseWorldY, 200);
     
-    // Use slower speed for better visibility (200 m/s instead of 800 m/s)
-    this.projectilePool.spawn(spawnX, spawnY, this.mouseWorldX, this.mouseWorldY, 200);
-    
-    // Play gunshot sound
-    this.effectsAudio.playEffect("gunshot", 0.8);
+    // Play gunshot sound - only if audio is unlocked
+    if (this.audioUnlocked) {
+      this.effectsAudio.playEffect("gunshot", 0.8);
+      console.log("Playing gunshot sound"); // Debug log
+    } else {
+      console.log("Audio not unlocked yet"); // Debug log
+    }
   }
 
   private updateMouseWorldPosition(): void {
@@ -636,6 +636,7 @@ export class Game {
 
     this.particlePool.update(dtSeconds);
     this.projectilePool.update(dtSeconds);
+    this.checkProjectileCollisions();
 
     // Decay camera shake
     this.cameraShakeX *= 0.85;
@@ -1361,6 +1362,44 @@ export class Game {
       this.state.car.vxMS *= Math.pow(waterDrag, dtSeconds * 60);
       this.state.car.vyMS *= Math.pow(waterDrag, dtSeconds * 60);
       this.state.car.yawRateRadS *= Math.pow(waterAngularDrag, dtSeconds * 60);
+    }
+  }
+
+  private checkProjectileCollisions(): void {
+    const projectiles = this.projectilePool.getActive();
+    const projectilesToRemove: number[] = [];
+    
+    for (const proj of projectiles) {
+      // Check collision with trees
+      for (const tree of this.trees) {
+        const dx = proj.x - tree.x;
+        const dy = proj.y - tree.y;
+        const dist = Math.hypot(dx, dy);
+        
+        // Projectile hits if within tree trunk radius
+        if (dist < tree.r * 0.4) { // Matches visual trunk scale
+          projectilesToRemove.push(proj.id);
+          // TODO: Add impact effect/sound when we have enemies
+          break;
+        }
+      }
+      
+      // TODO: Check collision with enemies here when implemented
+      // for (const enemy of this.enemies) {
+      //   const dx = proj.x - enemy.x;
+      //   const dy = proj.y - enemy.y;
+      //   const dist = Math.hypot(dx, dy);
+      //   if (dist < enemy.radius) {
+      //     projectilesToRemove.push(proj.id);
+      //     // Damage enemy
+      //     break;
+      //   }
+      // }
+    }
+    
+    // Remove hit projectiles
+    for (const id of projectilesToRemove) {
+      this.projectilePool.remove(id);
     }
   }
 }

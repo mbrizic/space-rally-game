@@ -92,4 +92,8 @@ export class ProjectilePool {
   getCount(): number {
     return this.projectiles.length;
   }
+  
+  remove(id: number): void {
+    this.projectiles = this.projectiles.filter(p => p.id !== id);
+  }
 }
