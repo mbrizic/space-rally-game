@@ -39,7 +39,8 @@ export function defaultEngineParams(): EngineParams {
             [5500, 1.0],    // peak power
             [6500, 0.92],   // high - starting to drop
             [7200, 0.78],   // redline - falling off
-            [7500, 0.65],   // over-rev - significant drop
+            [7400, 0.25],   // rev limiter kicking in
+            [7500, 0.05],   // rev limiter - almost no power
         ],
         gearRatios: [3.5, 2.3, 1.7, 1.3, 1.0, 0.85], // 6 gears
         finalDriveRatio: 3.8,
@@ -177,14 +178,14 @@ export function stepEngine(
     const manualMode = inputs.manualTransmission ?? false;
     
     if (!manualMode) {
-        // Automatic shifting - shift earlier for realistic automatic behavior
-        if (newRpm > params.redlineRpm * 0.80 && newGear < params.gearRatios.length) {
+        // Automatic shifting - shift at high RPM for racing performance
+        if (newRpm > params.redlineRpm * 0.95 && newGear < params.gearRatios.length) {
             newGear++;
-        } else if (newRpm < params.idleRpm * 2.2 && newGear > 1 && speedMS > 2) {
+        } else if (newRpm < params.idleRpm * 2.5 && newGear > 1 && speedMS > 2) {
             // Check if downshifting wouldn't over-rev
             const lowerGearRatio = params.gearRatios[newGear - 2];
             const lowerGearRpm = engineRpmFromWheelRpm(wheelRpm, lowerGearRatio, params.finalDriveRatio);
-            if (lowerGearRpm < params.redlineRpm * 0.85) {
+            if (lowerGearRpm < params.redlineRpm * 0.8) {
                 newGear--;
             }
         }
