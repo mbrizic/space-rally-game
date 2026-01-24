@@ -142,60 +142,76 @@ export class Renderer2D {
 
     ctx.save();
     ctx.lineJoin = "round";
-    ctx.lineCap = "butt"; // Changed from "round" to prevent visible circles at segment endpoints
+    ctx.lineCap = "round";
 
     // Road fill - draw each segment with its own width if available
     const fillStyles = track.segmentFillStyles;
     const shoulderStyles = track.segmentShoulderStyles;
     const segmentWidths = track.segmentWidthsM;
 
-    // For point-to-point tracks, don't draw wraparound segment
-    const numSegments = track.points.length - 1;
-
-    // Shoulder / terrain edge hint and road fill
-    for (let i = 0; i < numSegments; i++) {
-      const a = track.points[i];
-      const b = track.points[i + 1];
-      const widthM = segmentWidths ? segmentWidths[i] : track.widthM;
-
-      // Shoulder - use surface-specific color if available
-      if (shoulderStyles && shoulderStyles.length === track.points.length) {
-        ctx.strokeStyle = shoulderStyles[i];
-      } else {
-        ctx.strokeStyle = "rgba(90, 120, 95, 0.16)";
-      }
-      ctx.lineWidth = widthM * 1.40; // Slightly wider for better visibility
+    // Helper to draw continuous path sections with same style
+    const drawPathSection = (startIdx: number, endIdx: number, style: string, width: number) => {
+      ctx.strokeStyle = style;
+      ctx.lineWidth = width;
       ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
-
-      // Road fill
-      ctx.lineWidth = widthM;
-      if (fillStyles && fillStyles.length === track.points.length) {
-        ctx.strokeStyle = fillStyles[i];
-      } else {
-        ctx.strokeStyle = "rgba(210, 220, 235, 0.10)";
+      ctx.moveTo(track.points[startIdx].x, track.points[startIdx].y);
+      for (let i = startIdx + 1; i <= endIdx; i++) {
+        ctx.lineTo(track.points[i].x, track.points[i].y);
       }
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
       ctx.stroke();
+    };
+
+    // Draw shoulders - batch consecutive segments with same style
+    if (shoulderStyles && shoulderStyles.length === track.points.length) {
+      let sectionStart = 0;
+      let currentStyle = shoulderStyles[0];
+      let currentWidth = segmentWidths ? segmentWidths[0] : track.widthM;
+      
+      for (let i = 1; i < track.points.length; i++) {
+        const newStyle = shoulderStyles[i];
+        const newWidth = segmentWidths ? segmentWidths[i] : track.widthM;
+        
+        if (newStyle !== currentStyle || Math.abs(newWidth - currentWidth) > 0.01) {
+          drawPathSection(sectionStart, i, currentStyle, currentWidth * 1.40);
+          sectionStart = i;
+          currentStyle = newStyle;
+          currentWidth = newWidth;
+        }
+      }
+      drawPathSection(sectionStart, track.points.length - 1, currentStyle, currentWidth * 1.40);
+    } else {
+      // Single style for all - draw as one path
+      const width = track.widthM;
+      drawPathSection(0, track.points.length - 1, "rgba(90, 120, 95, 0.16)", width * 1.40);
     }
 
-    // Road border - draw each segment with more visible edges
-    for (let i = 0; i < numSegments; i++) {
-      const a = track.points[i];
-      const b = track.points[i + 1];
-      const widthM = segmentWidths ? segmentWidths[i] : track.widthM;
-
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.15)"; // Lighter, more visible border
-      ctx.lineWidth = Math.max(0.2, widthM * 0.08); // Slightly thicker
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
+    // Draw road fill - batch consecutive segments with same style
+    if (fillStyles && fillStyles.length === track.points.length) {
+      let sectionStart = 0;
+      let currentStyle = fillStyles[0];
+      let currentWidth = segmentWidths ? segmentWidths[0] : track.widthM;
+      
+      for (let i = 1; i < track.points.length; i++) {
+        const newStyle = fillStyles[i];
+        const newWidth = segmentWidths ? segmentWidths[i] : track.widthM;
+        
+        if (newStyle !== currentStyle || Math.abs(newWidth - currentWidth) > 0.01) {
+          drawPathSection(sectionStart, i, currentStyle, currentWidth);
+          sectionStart = i;
+          currentStyle = newStyle;
+          currentWidth = newWidth;
+        }
+      }
+      drawPathSection(sectionStart, track.points.length - 1, currentStyle, currentWidth);
+    } else {
+      // Single style for all - draw as one path
+      const width = track.widthM;
+      drawPathSection(0, track.points.length - 1, "rgba(210, 220, 235, 0.10)", width);
     }
+
+    // Road border - draw as continuous path
+    const borderWidth = segmentWidths ? segmentWidths[0] : track.widthM;
+    drawPathSection(0, track.points.length - 1, "rgba(255, 255, 255, 0.15)", Math.max(0.2, borderWidth * 0.08));
 
     // Centerline (no closePath for point-to-point)
     ctx.strokeStyle = "rgba(255, 255, 255, 0.20)"; // More visible
