@@ -105,37 +105,37 @@ export function getParticleConfig(surface: Surface): {
     switch (surface.name) {
         case "tarmac":
             return {
-                color: "rgba(180, 185, 195, 0.4)", // Light gray smoke
-                sizeM: 0.18,
-                lifetime: 0.6,
+                color: "rgba(200, 205, 215, 0.75)", // BRIGHT gray smoke
+                sizeM: 0.30, // BIGGER
+                lifetime: 0.8, // Linger longer
                 spawnRate: 35 // Moderate smoke
             };
         case "gravel":
             return {
-                color: "rgba(210, 190, 140, 0.6)", // Tan/beige dust - more opaque
-                sizeM: 0.28,
-                lifetime: 1.2,
+                color: "rgba(230, 210, 160, 0.85)", // BRIGHT tan/beige dust
+                sizeM: 0.42, // MUCH BIGGER
+                lifetime: 1.5, // Linger longer
                 spawnRate: 120 // MASSIVE dust clouds
             };
         case "dirt":
             return {
-                color: "rgba(165, 125, 90, 0.6)", // Brown dust - more opaque
-                sizeM: 0.25,
-                lifetime: 1.0,
+                color: "rgba(185, 145, 110, 0.80)", // BRIGHT brown dust
+                sizeM: 0.38, // BIGGER
+                lifetime: 1.3, // Linger longer
                 spawnRate: 100 // Big dust plumes
             };
         case "ice":
             return {
-                color: "rgba(200, 230, 255, 0.4)", // Light blue ice crystals
-                sizeM: 0.18,
-                lifetime: 0.6,
+                color: "rgba(220, 240, 255, 0.70)", // BRIGHT ice crystals
+                sizeM: 0.28, // BIGGER
+                lifetime: 0.8, // Linger longer
                 spawnRate: 80 // Lots of ice spray
             };
         case "offtrack":
             return {
-                color: "rgba(140, 165, 130, 0.5)", // Green-gray dust
-                sizeM: 0.22,
-                lifetime: 0.8,
+                color: "rgba(160, 185, 150, 0.70)", // BRIGHT green-gray dust
+                sizeM: 0.32, // BIGGER
+                lifetime: 1.0, // Linger longer
                 spawnRate: 60 // Decent grass/dirt kick-up
             };
     }

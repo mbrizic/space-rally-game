@@ -393,6 +393,11 @@ export class Renderer2D {
   drawParticles(particles: { x: number; y: number; sizeM: number; color: string; lifetime: number; maxLifetime: number }[]): void {
     const ctx = this.ctx;
     ctx.save();
+    
+    // Add subtle glow effect to make particles pop
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = "rgba(255, 255, 255, 0.3)";
+    
     for (const p of particles) {
       // Fade alpha based on remaining lifetime
       const fade = Math.min(1, p.lifetime / Math.max(0.1, p.maxLifetime));
