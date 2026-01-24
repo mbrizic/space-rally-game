@@ -439,13 +439,13 @@ export class Renderer2D {
     ctx.save();
     for (const t of trees) {
       // Brown tree trunk (narrower)
-      ctx.fillStyle = "rgba(90, 60, 40, 0.95)";
+      ctx.fillStyle = "rgba(90, 60, 40, 1.0)";
       ctx.beginPath();
       ctx.arc(t.x, t.y, t.r * 0.4, 0, Math.PI * 2);
       ctx.fill();
 
       // Trunk outline
-      ctx.strokeStyle = "rgba(50, 35, 20, 0.6)";
+      ctx.strokeStyle = "rgba(50, 35, 20, 1.0)";
       ctx.lineWidth = 0.08;
       ctx.beginPath();
       ctx.arc(t.x, t.y, t.r * 0.4, 0, Math.PI * 2);
@@ -1027,13 +1027,13 @@ export class Renderer2D {
 
       if (building.type === "store") {
         // Store buildings - more prominent
-        ctx.fillStyle = "rgba(180, 160, 140, 0.8)";
-        ctx.strokeStyle = "rgba(100, 80, 60, 0.9)";
+        ctx.fillStyle = "rgba(180, 160, 140, 1.0)";
+        ctx.strokeStyle = "rgba(100, 80, 60, 1.0)";
         ctx.lineWidth = 0.15;
       } else {
         // Decorative buildings
-        ctx.fillStyle = "rgba(140, 140, 150, 0.6)";
-        ctx.strokeStyle = "rgba(80, 80, 90, 0.7)";
+        ctx.fillStyle = "rgba(140, 140, 150, 1.0)";
+        ctx.strokeStyle = "rgba(80, 80, 90, 1.0)";
         ctx.lineWidth = 0.1;
       }
 
@@ -1062,12 +1062,12 @@ export class Renderer2D {
       ctx.rotate(spot.rotation);
 
       // Parking spot marker
-      ctx.strokeStyle = "rgba(255, 200, 100, 0.7)";
+      ctx.strokeStyle = "rgba(255, 200, 100, 1.0)";
       ctx.lineWidth = 0.15;
       ctx.strokeRect(-1.5, -1, 3, 2);
 
       // Arrow showing parking direction
-      ctx.fillStyle = "rgba(255, 200, 100, 0.5)";
+      ctx.fillStyle = "rgba(255, 200, 100, 1.0)";
       ctx.beginPath();
       ctx.moveTo(0, -0.5);
       ctx.lineTo(0.5, 0.5);
