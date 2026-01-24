@@ -229,8 +229,8 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
   const angle = rand() * Math.PI * 2;
   
   // Create control points for the MAIN ROUTE (between cities)
-  // Use MANY control points to preserve curvature after spline smoothing
-  const baseControlPoints = 36 + Math.floor(rand() * 16); // MANY control points for wavy rally stages
+  // Use more control points for detail, but distribute curves evenly
+  const baseControlPoints = 28 + Math.floor(rand() * 8); // 28-36 control points
   const controlPoints: Vec2[] = [];
   
   let currentX = 0;
@@ -239,31 +239,37 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
   const initialAngle = angle; // Store initial direction
   let totalAbsAngleChange = 0; // Track ABSOLUTE cumulative angle
   
+  // DISTRIBUTED APPROACH: Budget per segment instead of total exhaustion
+  const maxTotalAngle = Math.PI * 1.8; // ~320 degrees max total - wavy rally stages
+  const avgAnglePerSegment = maxTotalAngle / baseControlPoints; // Distribute evenly
+  
   for (let i = 0; i < baseControlPoints; i++) {
     controlPoints.push({ x: currentX, y: currentY });
     
     if (i === baseControlPoints - 1) break; // Last point, no more movement
     
-    // Decide if this should be a special corner
-    const cornerType = rand();
-    let angleChange = 0;
     const segmentLength = distance / (baseControlPoints - 1);
-    
-    // BALANCED LIMITS: Allow proper hairpins and tight turns, but prevent extreme looping
-    // With longer tracks (800-1400m), we can afford more turning while keeping cities apart
-    const maxTotalAngle = Math.PI * 2.0; // ~360 degrees max total turning - allow for VERY wavy rally stages
+    const remainingSegments = baseControlPoints - 1 - i;
     const remainingAngleBudget = maxTotalAngle - totalAbsAngleChange;
     
-    if (i > 2 && i < baseControlPoints - 3 && remainingAngleBudget > Math.PI / 6) {
-      // Only add special corners in the middle section, and only if we have budget
+    // Calculate max angle for THIS segment (with generous flexibility for variety)
+    const segmentAngleBudget = Math.min(
+      avgAnglePerSegment * 3.5, // Allow up to 3.5x average for big turns
+      remainingAngleBudget * 0.7 // But never use more than 70% of remaining
+    );
+    
+    // Decide corner type
+    const cornerType = rand();
+    let angleChange = 0;
+    
+    if (i > 2 && i < baseControlPoints - 3 && remainingSegments > 5) {
+      // Only add special corners in the middle section
       
-      if (cornerType < 0.12 && remainingAngleBudget > Math.PI * 0.75) {
-        // REAL HAIRPIN (only if we have >135 degrees budget remaining)
+      if (cornerType < 0.10 && segmentAngleBudget > Math.PI * 0.7) {
+        // HAIRPIN - rare and only if we have budget
         const turnDir = rand() > 0.5 ? 1 : -1;
-        
-        // True hairpin: 85-90 degrees each turn (total ~170-180 degrees)
-        const turn1 = (Math.PI * 0.47) * turnDir * (0.95 + rand() * 0.1); // ~85-90 degrees
-        const turn2 = (Math.PI * 0.47) * turnDir * (0.95 + rand() * 0.1); // ~85-90 degrees
+        const turn1 = Math.min((Math.PI * 0.45) * turnDir * (0.95 + rand() * 0.1), segmentAngleBudget * 0.48);
+        const turn2 = Math.min((Math.PI * 0.45) * turnDir * (0.95 + rand() * 0.1), segmentAngleBudget * 0.48);
         
         currentAngle += turn1;
         totalAbsAngleChange += Math.abs(turn1);
@@ -276,37 +282,35 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
         currentX += Math.cos(currentAngle) * (segmentLength * 0.3);
         currentY += Math.sin(currentAngle) * (segmentLength * 0.3);
         continue;
-      } else if (cornerType < 0.30 && remainingAngleBudget > Math.PI / 3) {
-        // Sharp 90-degree corner
+      } else if (cornerType < 0.30) {
+        // Sharp corner: 55-85 degrees
         const turnDir = rand() > 0.5 ? 1 : -1;
-        angleChange = (Math.PI / 2) * turnDir * (0.85 + rand() * 0.2); // 77-99 degrees
-      } else if (cornerType < 0.65 && remainingAngleBudget > Math.PI / 6) {
-        // Medium corner: 45-68 degrees - COMMON for rally feel
+        angleChange = (Math.PI / 3) * turnDir * (0.95 + rand() * 0.5); // 55-85 degrees
+      } else if (cornerType < 0.70) {
+        // Medium corner: 30-55 degrees - VERY COMMON
         const turnDir = rand() > 0.5 ? 1 : -1;
-        angleChange = (Math.PI / 4) * turnDir * (1 + rand() * 0.5); // 45-68 degrees
+        angleChange = (Math.PI / 6) * turnDir * (1 + rand() * 0.9); // 30-55 degrees
       } else {
-        // Sweeping curve: 15-35 degrees - rally stages are NEVER straight!
+        // Gentle curve: 15-30 degrees - constant waviness
         const turnDir = rand() > 0.5 ? 1 : -1;
-        angleChange = (Math.PI / 12) * turnDir * (1 + rand() * 1.3); // 15-35 degrees
+        angleChange = (Math.PI / 12) * turnDir * (1 + rand() * 1.0); // 15-30 degrees
       }
+    } else {
+      // Start/end sections: still wavy but gentler
+      angleChange = (rand() - 0.5) * 0.8; // ±23 degrees
     }
     
-    // Default meandering - much more aggressive for rally feel
-    if (angleChange === 0) {
-      angleChange = (rand() - 0.5) * 1.2; // Aggressive meandering (~35 degrees)
-    }
-    
-    // HARD LIMIT: No turn can exceed remaining budget
-    if (Math.abs(angleChange) > remainingAngleBudget) {
-      angleChange = remainingAngleBudget * 0.5 * Math.sign(angleChange);
+    // Clamp to segment budget
+    if (Math.abs(angleChange) > segmentAngleBudget) {
+      angleChange = segmentAngleBudget * Math.sign(angleChange);
     }
     
     // VERIFY: After this turn, are we still making forward progress?
     const testAngle = currentAngle + angleChange;
     const angleDiffFromInitial = Math.abs(((testAngle - initialAngle + Math.PI) % (Math.PI * 2)) - Math.PI);
-    if (angleDiffFromInitial > Math.PI * 0.85) { // Never face more than ~150 degrees away from initial
-      // This turn would make us face too far backward, reduce it gently
-      angleChange *= 0.5; // Less aggressive dampening
+    if (angleDiffFromInitial > Math.PI * 0.75) { // Never face more than 135 degrees away
+      // This turn would make us face too far backward, reduce it
+      angleChange *= 0.4;
     }
     
     currentAngle += angleChange;
@@ -326,8 +330,8 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
     }
   }
   
-  // Sample the main route - fewer samples between control points to preserve angles
-  const routePoints = sampleOpenCatmullRom(filteredControlPoints, 2);
+  // Sample the main route - fewer samples to preserve angles better
+  const routePoints = sampleOpenCatmullRom(filteredControlPoints, 3);
   
   // Calculate direction at start and end of route
   const startDir = { 
