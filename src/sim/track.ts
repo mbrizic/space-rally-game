@@ -223,97 +223,107 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
   // end-50m to end: Ending city
   
   const cityLength = 50; // Length of road through each city
-  const distance = 300 + rand() * 200; // Distance for the main route
+  const minDistance = 400; // MINIMUM route distance (increased from 300)
+  const maxDistance = 600; // MAXIMUM route distance (increased from 500)
+  const distance = minDistance + rand() * (maxDistance - minDistance);
   const angle = rand() * Math.PI * 2;
   
   // Create control points for the MAIN ROUTE (between cities)
   // Use a simpler approach that works well with Catmull-Rom splines
-  const baseControlPoints = 10 + Math.floor(rand() * 5);
+  const baseControlPoints = 12 + Math.floor(rand() * 6);
   const controlPoints: Vec2[] = [];
   
   let currentX = 0;
   let currentY = 0;
   let currentAngle = angle;
-  let totalAngleChange = 0; // Track cumulative angle to prevent extreme loops
+  const initialAngle = angle; // Store initial direction
+  let totalAbsAngleChange = 0; // Track ABSOLUTE cumulative angle
   
   for (let i = 0; i < baseControlPoints; i++) {
+    controlPoints.push({ x: currentX, y: currentY });
+    
+    if (i === baseControlPoints - 1) break; // Last point, no more movement
+    
     // Decide if this should be a special corner
     const cornerType = rand();
     let angleChange = 0;
-    let segmentLength = distance / (baseControlPoints - 1);
+    const segmentLength = distance / (baseControlPoints - 1);
     
-    if (i > 2 && i < baseControlPoints - 3) {
-      // Only add special corners in the middle section
-      // Check if we can afford this turn without looping back too much
-      const absTotal = Math.abs(totalAngleChange);
+    // STRICT LIMITS: Total absolute angle change must stay under 110 degrees
+    // Being conservative since Catmull-Rom splines add smoothing curvature
+    const maxTotalAngle = Math.PI * 0.60; // 108 degrees max total turning
+    const remainingAngleBudget = maxTotalAngle - totalAbsAngleChange;
+    
+    if (i > 2 && i < baseControlPoints - 3 && remainingAngleBudget > Math.PI / 6) {
+      // Only add special corners in the middle section, and only if we have budget
       
-      if (cornerType < 0.15 && absTotal < Math.PI * 0.8) { // Limit hairpins if we've turned too much
-        // Hairpin! Add multiple tight control points
+      if (cornerType < 0.12 && remainingAngleBudget > Math.PI * 0.5) {
+        // Hairpin (only if we have >90 degrees budget remaining)
         const turnDir = rand() > 0.5 ? 1 : -1;
-        const hairpinRadius = 25 + rand() * 15;
         
-        // Entry
+        // CONSERVATIVE hairpin: only 70-80 degrees each turn (total 140-160, not 180)
+        const turn1 = (Math.PI * 0.4) * turnDir; // ~72 degrees
+        const turn2 = (Math.PI * 0.4) * turnDir; // ~72 degrees
+        
+        currentAngle += turn1;
+        totalAbsAngleChange += Math.abs(turn1);
+        currentX += Math.cos(currentAngle) * (segmentLength * 0.4);
+        currentY += Math.sin(currentAngle) * (segmentLength * 0.4);
         controlPoints.push({ x: currentX, y: currentY });
-        currentX += Math.cos(currentAngle) * (segmentLength * 0.3);
-        currentY += Math.sin(currentAngle) * (segmentLength * 0.3);
         
-        // Apex (turn 90 degrees)
-        const hairpinTurn1 = (Math.PI / 2) * turnDir;
-        currentAngle += hairpinTurn1;
-        totalAngleChange += hairpinTurn1;
-        controlPoints.push({
-          x: currentX + Math.cos(currentAngle + Math.PI / 2 * turnDir) * hairpinRadius * 0.5,
-          y: currentY + Math.sin(currentAngle + Math.PI / 2 * turnDir) * hairpinRadius * 0.5
-        });
-        currentX += Math.cos(currentAngle) * 5;
-        currentY += Math.sin(currentAngle) * 5;
-        
-        // Second apex (complete the hairpin, another 90 degrees)
-        const hairpinTurn2 = (Math.PI / 2) * turnDir;
-        currentAngle += hairpinTurn2;
-        totalAngleChange += hairpinTurn2;
-        controlPoints.push({
-          x: currentX + Math.cos(currentAngle + Math.PI / 2 * turnDir) * hairpinRadius * 0.5,
-          y: currentY + Math.sin(currentAngle + Math.PI / 2 * turnDir) * hairpinRadius * 0.5
-        });
-        
-        // Exit
-        currentX += Math.cos(currentAngle) * (segmentLength * 0.3);
-        currentY += Math.sin(currentAngle) * (segmentLength * 0.3);
+        currentAngle += turn2;
+        totalAbsAngleChange += Math.abs(turn2);
+        currentX += Math.cos(currentAngle) * (segmentLength * 0.4);
+        currentY += Math.sin(currentAngle) * (segmentLength * 0.4);
         continue;
-      } else if (cornerType < 0.30 && absTotal < Math.PI) { // Limit 90s if we've turned too much
-        // Sharp 90-degree corner
+      } else if (cornerType < 0.30 && remainingAngleBudget > Math.PI / 4) {
+        // Sharp corner: max 60-70 degrees (NOT 90)
         const turnDir = rand() > 0.5 ? 1 : -1;
-        angleChange = (Math.PI / 2) * turnDir * (0.85 + rand() * 0.15);
-      } else if (cornerType < 0.50 && absTotal < Math.PI * 1.2) {
-        // Medium corner (45-60 degrees)
+        angleChange = (Math.PI / 3) * turnDir * (0.9 + rand() * 0.2); // 54-72 degrees
+      } else if (cornerType < 0.55 && remainingAngleBudget > Math.PI / 8) {
+        // Medium corner: 30-45 degrees
         const turnDir = rand() > 0.5 ? 1 : -1;
-        angleChange = (Math.PI / 4) * turnDir * (1 + rand() * 0.5);
+        angleChange = (Math.PI / 6) * turnDir * (1 + rand() * 0.5); // 30-45 degrees
       }
     }
     
     // Normal point or gentle curve
     if (angleChange === 0) {
-      angleChange = (rand() - 0.5) * 0.4; // Gentle meandering
+      angleChange = (rand() - 0.5) * 0.3; // Very gentle meandering
     }
     
-    // Dampen turns that would make us loop back too much
-    const newTotal = totalAngleChange + angleChange;
-    if (Math.abs(newTotal) > Math.PI * 1.5) {
-      // We're turning back too much, dampen or reverse the turn
-      angleChange *= 0.3;
+    // HARD LIMIT: No turn can exceed remaining budget
+    if (Math.abs(angleChange) > remainingAngleBudget) {
+      angleChange = remainingAngleBudget * 0.5 * Math.sign(angleChange);
+    }
+    
+    // VERIFY: After this turn, are we still making forward progress?
+    const testAngle = currentAngle + angleChange;
+    const angleDiffFromInitial = Math.abs(((testAngle - initialAngle + Math.PI) % (Math.PI * 2)) - Math.PI);
+    if (angleDiffFromInitial > Math.PI * 0.55) { // Never face more than 99 degrees away from initial
+      // This turn would make us face too far backward, reduce it aggressively
+      angleChange *= 0.05;
     }
     
     currentAngle += angleChange;
-    totalAngleChange += angleChange;
+    totalAbsAngleChange += Math.abs(angleChange);
     currentX += Math.cos(currentAngle) * segmentLength;
     currentY += Math.sin(currentAngle) * segmentLength;
-    
-    controlPoints.push({ x: currentX, y: currentY });
+  }
+  
+  // Remove any control points that are too close together (can happen with aggressive angle dampening)
+  const filteredControlPoints: Vec2[] = [controlPoints[0]];
+  for (let i = 1; i < controlPoints.length; i++) {
+    const prev = filteredControlPoints[filteredControlPoints.length - 1];
+    const curr = controlPoints[i];
+    const dist = Math.hypot(curr.x - prev.x, curr.y - prev.y);
+    if (dist > 5) { // Minimum 5m between control points
+      filteredControlPoints.push(curr);
+    }
   }
   
   // Sample the main route
-  const routePoints = sampleOpenCatmullRom(controlPoints, 10);
+  const routePoints = sampleOpenCatmullRom(filteredControlPoints, 10);
   
   // Calculate direction at start and end of route
   const startDir = { 
@@ -366,9 +376,9 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
   const endCityX = routePoints[routePoints.length - 1].x + endDirNorm.x * (cityLength / 2);
   const endCityY = routePoints[routePoints.length - 1].y + endDirNorm.y * (cityLength / 2);
   
-  // Ensure cities are far enough apart (at least 200m)
+  // Ensure cities are FAR apart (minimum 350m straight-line distance)
   const cityDistance = Math.hypot(endCityX - startCityX, endCityY - startCityY);
-  const minCityDistance = 200;
+  const minCityDistance = 350; // MUCH stricter minimum
   
   if (cityDistance < minCityDistance) {
     // Cities are too close! Push the end city away

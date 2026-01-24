@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createDefaultTrackDefinition,
   createProceduralTrackDefinition,
+  createPointToPointTrackDefinition,
   createTrackFromDefinition,
   projectToTrack,
   pointOnTrack,
@@ -90,23 +91,20 @@ describe("track generation", () => {
     expect(projection.distanceToCenterlineM).toBeGreaterThan(0);
   });
 
-  it("handles wrap-around at track end", () => {
-    const def = createDefaultTrackDefinition();
+  it("handles point-to-point track endpoints correctly", () => {
+    const def = createPointToPointTrackDefinition(123);
     const track = createTrackFromDefinition(def);
 
-    // Test at various positions including beyond total length
-    const point1 = pointOnTrack(track, 0);
-    const point2 = pointOnTrack(track, track.totalLengthM);
-    const point3 = pointOnTrack(track, track.totalLengthM * 2);
+    const startPoint = pointOnTrack(track, 0);
+    const endPoint = pointOnTrack(track, track.totalLengthM);
 
-    // All should return valid points (wrapping)
-    expect(Number.isFinite(point1.p.x)).toBe(true);
-    expect(Number.isFinite(point2.p.x)).toBe(true);
-    expect(Number.isFinite(point3.p.x)).toBe(true);
+    // Both should return valid points
+    expect(Number.isFinite(startPoint.p.x)).toBe(true);
+    expect(Number.isFinite(endPoint.p.x)).toBe(true);
 
-    // Point at totalLength should be close to point at 0 (it's a loop)
-    const distance = Math.hypot(point1.p.x - point2.p.x, point1.p.y - point2.p.y);
-    expect(distance).toBeLessThan(10); // Should be close due to wrapping
+    // Start and end should be far apart (it's point-to-point, not a loop)
+    const distance = Math.hypot(startPoint.p.x - endPoint.p.x, startPoint.p.y - endPoint.p.y);
+    expect(distance).toBeGreaterThan(100); // Should be well separated
   });
 
   it("does not produce NaN coordinates", () => {
@@ -123,12 +121,15 @@ describe("track generation", () => {
     }
   });
 
-  it("track segments have positive lengths", () => {
-    const def = createDefaultTrackDefinition();
+  it("track segments have positive lengths (except last)", () => {
+    const def = createPointToPointTrackDefinition(456);
     const track = createTrackFromDefinition(def);
 
-    for (const segLen of track.segmentLengthsM) {
-      expect(segLen).toBeGreaterThan(0);
+    expect(track.segmentLengthsM.length).toBeGreaterThan(0);
+    // All segments except the last should have positive length
+    // (last segment is 0 as there's no segment after the final point)
+    for (let i = 0; i < track.segmentLengthsM.length - 1; i++) {
+      expect(track.segmentLengthsM[i]).toBeGreaterThan(0);
     }
   });
 
