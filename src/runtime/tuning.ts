@@ -17,7 +17,7 @@ export class TuningPanel {
       engineForceN: initial?.engineForceN ?? 28500,
       maxSteerDeg: initial?.maxSteerDeg ?? 57, // matched to 1.0 rad default
       driveBiasFront01: initial?.driveBiasFront01 ?? 0.30,
-      showArrows: initial?.showArrows ?? true
+      showArrows: initial?.showArrows ?? false
     };
 
     this.root = document.createElement("div");
