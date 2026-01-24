@@ -2,7 +2,8 @@ export type Vec2 = { x: number; y: number };
 
 export type Track = {
   points: Vec2[]; // loop; last point implicitly connects to first
-  widthM: number;
+  widthM: number; // default/base width
+  segmentWidthsM?: number[]; // optional per-segment widths (same length as points)
   segmentLengthsM: number[];
   cumulativeLengthsM: number[]; // same length as points; cumulative at each point
   totalLengthM: number;
@@ -16,6 +17,7 @@ export type TrackProjection = {
   t: number; // [0..1] along segment
   lateralOffsetM: number; // signed distance from centerline (approx)
   distanceToCenterlineM: number;
+  widthM: number; // width at this segment
 };
 
 export function createDefaultTrack(): Track {
@@ -24,30 +26,59 @@ export function createDefaultTrack(): Track {
     { x: 0, y: 0 },
     { x: 42, y: 0 },
     { x: 65, y: 12 },
+    // Add chicane swerve
+    { x: 72, y: 22 },
     { x: 78, y: 34 },
     { x: 70, y: 58 },
     { x: 48, y: 72 },
     { x: 22, y: 66 },
+    // Tighter swerve section
+    { x: 12, y: 54 },
     { x: 8, y: 46 },
     { x: -6, y: 30 },
     { x: -28, y: 22 },
     { x: -48, y: 30 },
+    // Chicane
+    { x: -58, y: 42 },
     { x: -62, y: 52 },
     { x: -50, y: 78 },
     { x: -20, y: 88 },
     { x: 10, y: 82 },
     { x: 34, y: 64 },
     { x: 44, y: 40 },
+    // Final chicane before start
+    { x: 38, y: 28 },
     { x: 30, y: 18 }
   ];
-  const widthM = 10;
+  const baseWidthM = 10;
 
   // Denser sampling makes the track smoother while keeping projection/collision simple.
   const points = sampleClosedCatmullRom(controlPoints, 10);
-  return buildTrack(points, widthM);
+
+  // Create width variance: narr ow chicanes at specific sections, wider straights
+  const segmentWidths: number[] = [];
+  for (let i = 0; i < points.length; i++) {
+    const s = i / points.length; // normalized position [0..1]
+
+    // Define narrow sections (chicanes) and wide sections
+    let widthMultiplier = 1.0;
+
+    // Narrow sections at ~20-25%, ~45-50%, ~70-75%
+    if ((s > 0.20 && s < 0.25) || (s > 0.45 && s < 0.50) || (s > 0.70 && s < 0.75)) {
+      widthMultiplier = 0.65; // 35% narrower
+    }
+    // Wide sections at ~10-15%, ~35-40%, ~85-90%
+    else if ((s > 0.10 && s < 0.15) || (s > 0.35 && s < 0.40) || (s > 0.85 && s < 0.90)) {
+      widthMultiplier = 1.4; // 40% wider
+    }
+
+    segmentWidths.push(baseWidthM * widthMultiplier);
+  }
+
+  return buildTrack(points, baseWidthM, segmentWidths);
 }
 
-function buildTrack(points: Vec2[], widthM: number): Track {
+function buildTrack(points: Vec2[], widthM: number, segmentWidthsM?: number[]): Track {
   const segmentLengthsM: number[] = [];
   const cumulativeLengthsM: number[] = [];
   let total = 0;
@@ -65,6 +96,7 @@ function buildTrack(points: Vec2[], widthM: number): Track {
   return {
     points,
     widthM,
+    segmentWidthsM,
     segmentLengthsM,
     cumulativeLengthsM,
     totalLengthM: total
@@ -141,6 +173,9 @@ export function projectToTrack(track: Track, p: Vec2): TrackProjection {
     const ny = abx / segLenSafe;
     const lateral = dx * nx + dy * ny;
 
+    // Get width for this segment
+    const widthM = track.segmentWidthsM ? track.segmentWidthsM[i] : track.widthM;
+
     bestDist2 = dist2;
     best = {
       sM,
@@ -149,7 +184,8 @@ export function projectToTrack(track: Track, p: Vec2): TrackProjection {
       segmentIndex: i,
       t,
       lateralOffsetM: lateral,
-      distanceToCenterlineM: Math.sqrt(dist2)
+      distanceToCenterlineM: Math.sqrt(dist2),
+      widthM
     };
   }
 
@@ -161,7 +197,8 @@ export function projectToTrack(track: Track, p: Vec2): TrackProjection {
       segmentIndex: 0,
       t: 0,
       lateralOffsetM: 0,
-      distanceToCenterlineM: 0
+      distanceToCenterlineM: 0,
+      widthM: track.widthM
     };
   }
 

@@ -111,7 +111,7 @@ export class Renderer2D {
     ctx.stroke();
   }
 
-  drawTrack(track: { points: { x: number; y: number }[]; widthM: number; segmentFillStyles?: string[] }): void {
+  drawTrack(track: { points: { x: number; y: number }[]; widthM: number; segmentWidthsM?: number[]; segmentFillStyles?: string[] }): void {
     const ctx = this.ctx;
     if (track.points.length < 2) return;
 
@@ -119,45 +119,50 @@ export class Renderer2D {
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
 
-    // Shoulder / terrain edge hint.
-    ctx.strokeStyle = "rgba(90, 120, 95, 0.16)";
-    ctx.lineWidth = track.widthM * 1.32;
-    ctx.beginPath();
-    ctx.moveTo(track.points[0].x, track.points[0].y);
-    for (let i = 1; i < track.points.length; i++) ctx.lineTo(track.points[i].x, track.points[i].y);
-    ctx.closePath();
-    ctx.stroke();
-
-    // Road fill.
-    ctx.lineWidth = track.widthM;
+    // Road fill - draw each segment with its own width if available
     const fillStyles = track.segmentFillStyles;
-    if (fillStyles && fillStyles.length === track.points.length) {
-      for (let i = 0; i < track.points.length; i++) {
-        const a = track.points[i];
-        const b = track.points[(i + 1) % track.points.length];
-        ctx.strokeStyle = fillStyles[i];
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
-        ctx.stroke();
-      }
-    } else {
-      ctx.strokeStyle = "rgba(210, 220, 235, 0.10)";
+    const segmentWidths = track.segmentWidthsM;
+
+    // Shoulder / terrain edge hint and road fill
+    for (let i = 0; i < track.points.length; i++) {
+      const a = track.points[i];
+      const b = track.points[(i + 1) % track.points.length];
+      const widthM = segmentWidths ? segmentWidths[i] : track.widthM;
+
+      // Shoulder
+      ctx.strokeStyle = "rgba(90, 120, 95, 0.16)";
+      ctx.lineWidth = widthM * 1.32;
       ctx.beginPath();
-      ctx.moveTo(track.points[0].x, track.points[0].y);
-      for (let i = 1; i < track.points.length; i++) ctx.lineTo(track.points[i].x, track.points[i].y);
-      ctx.closePath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+
+      // Road fill
+      ctx.lineWidth = widthM;
+      if (fillStyles && fillStyles.length === track.points.length) {
+        ctx.strokeStyle = fillStyles[i];
+      } else {
+        ctx.strokeStyle = "rgba(210, 220, 235, 0.10)";
+      }
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
       ctx.stroke();
     }
 
-    // Road border.
-    ctx.strokeStyle = "rgba(210, 220, 235, 0.26)";
-    ctx.lineWidth = Math.max(0.15, track.widthM * 0.06);
-    ctx.beginPath();
-    ctx.moveTo(track.points[0].x, track.points[0].y);
-    for (let i = 1; i < track.points.length; i++) ctx.lineTo(track.points[i].x, track.points[i].y);
-    ctx.closePath();
-    ctx.stroke();
+    // Road border - draw each segment
+    for (let i = 0; i < track.points.length; i++) {
+      const a = track.points[i];
+      const b = track.points[(i + 1) % track.points.length];
+      const widthM = segmentWidths ? segmentWidths[i] : track.widthM;
+
+      ctx.strokeStyle = "rgba(210, 220, 235, 0.26)";
+      ctx.lineWidth = Math.max(0.15, widthM * 0.06);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
 
     // Centerline.
     ctx.strokeStyle = "rgba(255, 255, 255, 0.10)";
@@ -306,23 +311,40 @@ export class Renderer2D {
     const ctx = this.ctx;
     ctx.save();
     for (const t of trees) {
-      // Trunk.
-      ctx.fillStyle = "rgba(110, 80, 55, 0.95)";
+      // Brown tree trunk (narrower)
+      ctx.fillStyle = "rgba(90, 60, 40, 0.95)";
       ctx.beginPath();
-      ctx.arc(t.x, t.y, t.r * 0.45, 0, Math.PI * 2);
+      ctx.arc(t.x, t.y, t.r * 0.4, 0, Math.PI * 2);
       ctx.fill();
 
-      // Canopy.
-      ctx.fillStyle = "rgba(80, 155, 95, 0.85)";
+      // Trunk outline
+      ctx.strokeStyle = "rgba(50, 35, 20, 0.6)";
+      ctx.lineWidth = 0.08;
       ctx.beginPath();
-      ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.strokeStyle = "rgba(20, 30, 25, 0.25)";
-      ctx.lineWidth = 0.12;
-      ctx.beginPath();
-      ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
+      ctx.arc(t.x, t.y, t.r * 0.4, 0, Math.PI * 2);
       ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  drawParticles(particles: { x: number; y: number; sizeM: number; color: string; lifetime: number; maxLifetime: number }[]): void {
+    const ctx = this.ctx;
+    ctx.save();
+    for (const p of particles) {
+      // Fade alpha based on remaining lifetime
+      const fade = Math.min(1, p.lifetime / Math.max(0.1, p.maxLifetime));
+      const colonIdx = p.color.lastIndexOf(",");
+      if (colonIdx !== -1) {
+        const baseColor = p.color.substring(0, colonIdx + 1);
+        const alpha = parseFloat(p.color.substring(colonIdx + 1).replace(")", "")) * fade;
+        ctx.fillStyle = baseColor + " " + alpha.toFixed(2) + ")";
+      } else {
+        ctx.fillStyle = p.color;
+      }
+
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.sizeM, 0, Math.PI * 2);
+      ctx.fill();
     }
     ctx.restore();
   }
@@ -475,6 +497,76 @@ export class Renderer2D {
       ctx.fillText(`${v.label}: (${v.x.toFixed(2)}, ${v.y.toFixed(2)})`, x + padding + 16, ly);
       ly += linesH;
     }
+
+    ctx.restore();
+  }
+
+  drawDriftIndicator(opts: { intensity: number; score: number }): void {
+    if (opts.intensity < 0.01) return; // Don't show if not drifting
+
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+
+    const w = this.viewportWidthCssPx || this.canvas.clientWidth;
+
+    // Position in top-right corner
+    const x = w - 160;
+    const y = 20;
+    const width = 140;
+    const barHeight = 8;
+    const padding = 10;
+
+    // Intensity-based color (yellow → orange → red)
+    const hue = Math.max(0, 60 - opts.intensity * 60); // 60 (yellow) to 0 (red)
+    const sat = 95;
+    const light = 55;
+    const color = `hsl(${hue}, ${sat}%, ${light}%)`;
+
+    // Background
+    ctx.fillStyle = "rgba(0,0,0,0.65)";
+    ctx.fillRect(x, y, width, 60);
+
+    // "DRIFT!" text
+    ctx.font = "bold 20px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.fillStyle = color;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.fillText("DRIFT!", x + width / 2, y + padding);
+
+    // Intensity bar background
+    ctx.fillStyle = "rgba(255,255,255,0.15)";
+    ctx.fillRect(x + padding, y + padding + 26, width - padding * 2, barHeight);
+
+    // Intensity bar fill
+    ctx.fillStyle = color;
+    const barWidth = (width - padding * 2) * Math.min(opts.intensity, 1);
+    ctx.fillRect(x + padding, y + padding + 26, barWidth, barHeight);
+
+    // Score (small text)
+    ctx.font = "11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.fillStyle = "rgba(232,236,241,0.85)";
+    ctx.textAlign = "center";
+    ctx.fillText(`${Math.floor(opts.score)}`, x + width / 2, y + padding + 38);
+
+    ctx.restore();
+  }
+
+  drawDamageOverlay(opts: { damage01: number }): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+
+    const w = this.viewportWidthCssPx || this.canvas.clientWidth;
+    const h = this.viewportHeightCssPx || this.canvas.clientHeight;
+
+    // Red vignette that intensifies with damage
+    const alpha = Math.min(opts.damage01 * 0.4, 0.6);
+    const gradient = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.2, w / 2, h / 2, Math.max(w, h) * 0.8);
+    gradient.addColorStop(0, `rgba(255, 0, 0, 0)`);
+    gradient.addColorStop(1, `rgba(200, 0, 0, ${alpha})`);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, w, h);
 
     ctx.restore();
   }

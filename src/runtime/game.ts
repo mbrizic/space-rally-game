@@ -5,6 +5,8 @@ import { createCarState, defaultCarParams, stepCar, type CarTelemetry } from "..
 import { createDefaultTrack, pointOnTrack, projectToTrack, type TrackProjection } from "../sim/track";
 import { surfaceForTrackSM, type Surface } from "../sim/surface";
 import { generateTrees, type CircleObstacle } from "../sim/props";
+import { DriftDetector, DriftState, type DriftInfo } from "../sim/drift";
+import { ParticlePool, getParticleConfig } from "./particles";
 import type { TuningPanel } from "./tuning";
 
 type GameState = {
@@ -34,6 +36,13 @@ export class Game {
   private gear: "F" | "R" = "F";
   private visualRollOffsetM = 0;
   private visualRollVel = 0;
+  private readonly driftDetector = new DriftDetector();
+  private driftInfo: DriftInfo = { state: DriftState.NO_DRIFT, intensity: 0, duration: 0, score: 0 };
+  private readonly particlePool = new ParticlePool(500);
+  private particleAccumulator = 0;
+  private cameraShakeX = 0;
+  private cameraShakeY = 0;
+  private collisionFlashAlpha = 0;
   private running = false;
 
   private lastFrameTimeMs = 0;
@@ -158,7 +167,7 @@ export class Game {
     }
 
     const projectionBefore = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
-    const roadHalfWidthM = this.track.widthM * 0.5;
+    const roadHalfWidthM = projectionBefore.widthM * 0.5;
     const offTrack = projectionBefore.distanceToCenterlineM > roadHalfWidthM;
     this.lastSurface = surfaceForTrackSM(this.track.totalLengthM, projectionBefore.sM, offTrack);
 
@@ -171,7 +180,53 @@ export class Game {
     );
     this.state.car = stepped.state;
     this.state.carTelemetry = stepped.telemetry;
+    this.driftInfo = this.driftDetector.detect(stepped.telemetry, this.speedMS(), this.state.timeSeconds);
     this.updateVisualRoll(dtSeconds);
+
+    // Emit particles when drifting
+    if (this.driftInfo.intensity > 0.3) {
+      const particleConfig = getParticleConfig(this.lastSurface);
+      const particlesPerSecond = particleConfig.spawnRate * this.driftInfo.intensity;
+      this.particleAccumulator += particlesPerSecond * dtSeconds;
+
+      const particlesToEmit = Math.floor(this.particleAccumulator);
+      this.particleAccumulator -= particlesToEmit;
+
+      if (particlesToEmit > 0) {
+        // Emit from rear of car
+        const cosH = Math.cos(this.state.car.headingRad);
+        const sinH = Math.sin(this.state.car.headingRad);
+        const rearOffsetM = this.carParams.cgToRearAxleM;
+        const rearX = this.state.car.xM - cosH * rearOffsetM;
+        const rearY = this.state.car.yM - sinH * rearOffsetM;
+
+        // Add some spread
+        const spreadX = (Math.random() - 0.5) * 0.4;
+        const spreadY = (Math.random() - 0.5) * 0.4;
+
+        // Particle velocity is somewhat opposite of car velocity with randomness
+        const vxSpread = (Math.random() - 0.5) * 2;
+        const vySpread = (Math.random() - 0.5) * 2;
+
+        this.particlePool.emit({
+          x: rearX + spreadX,
+          y: rearY + spreadY,
+          vx: -this.state.car.vxMS * cosH * 0.3 + vxSpread,
+          vy: -this.state.car.vxMS * sinH * 0.3 + vySpread,
+          lifetime: particleConfig.lifetime,
+          sizeM: particleConfig.sizeM,
+          color: particleConfig.color,
+          count: particlesToEmit
+        });
+      }
+    }
+
+    this.particlePool.update(dtSeconds);
+
+    // Decay camera shake
+    this.cameraShakeX *= 0.85;
+    this.cameraShakeY *= 0.85;
+    this.collisionFlashAlpha *= 0.92;
 
     const projectionAfter = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
     this.resolveHardBoundary(projectionAfter);
@@ -199,27 +254,29 @@ export class Game {
     ctx.clearRect(0, 0, width, height);
 
     this.renderer.beginCamera({
-      centerX: this.state.car.xM,
-      centerY: this.state.car.yM,
+      centerX: this.state.car.xM + this.cameraShakeX,
+      centerY: this.state.car.yM + this.cameraShakeY,
       pixelsPerMeter: 36
     });
 
     this.renderer.drawGrid({ spacingMeters: 1, majorEvery: 5 });
     this.renderer.drawTrack({ ...this.track, segmentFillStyles: this.trackSegmentFillStyles });
     this.renderer.drawTrees(this.trees);
+    this.renderer.drawParticles(this.particlePool.getActiveParticles());
     const start = pointOnTrack(this.track, 0);
     this.renderer.drawStartLine({
       x: start.p.x,
       y: start.p.y,
       headingRad: start.headingRad + Math.PI / 2,
-      widthM: this.track.widthM
+      widthM: this.track.segmentWidthsM ? this.track.segmentWidthsM[0] : this.track.widthM
     });
     const activeGate = pointOnTrack(this.track, this.checkpointSM[this.nextCheckpointIndex]);
+    const activeGateProj = projectToTrack(this.track, activeGate.p);
     this.renderer.drawCheckpointLine({
       x: activeGate.p.x,
       y: activeGate.p.y,
       headingRad: activeGate.headingRad + Math.PI / 2,
-      widthM: this.track.widthM
+      widthM: activeGateProj.widthM
     });
     this.renderer.drawCar({
       x: this.state.car.xM,
@@ -338,6 +395,27 @@ export class Game {
           { label: "F (kN)", x: fxBody / 1000, y: fyBody / 1000, color: "rgba(255, 205, 105, 0.88)" }
         ]
       });
+    }
+
+    // Drift indicator
+    this.renderer.drawDriftIndicator({
+      intensity: this.driftInfo.intensity,
+      score: this.driftInfo.score
+    });
+
+    // Damage overlay (red vignette)
+    if (this.damage01 > 0.15) {
+      this.renderer.drawDamageOverlay({ damage01: this.damage01 });
+    }
+
+    // Collision flash
+    if (this.collisionFlashAlpha > 0.01) {
+      const ctx = this.renderer.ctx;
+      ctx.save();
+      ctx.setTransform(this.renderer["dpr"], 0, 0, this.renderer["dpr"], 0, 0);
+      ctx.fillStyle = `rgba(255, 100, 100, ${this.collisionFlashAlpha})`;
+      ctx.fillRect(0, 0, width, height);
+      ctx.restore();
     }
 
     if (this.damage01 >= 1) {
@@ -492,6 +570,9 @@ export class Game {
     this.state.car.steerAngleRad = 0;
     this.visualRollOffsetM = 0;
     this.visualRollVel = 0;
+    this.driftDetector.reset();
+    this.particlePool.reset();
+    this.particleAccumulator = 0;
   }
 
   private updateCheckpointsAndLap(proj: TrackProjection): void {
@@ -504,7 +585,7 @@ export class Game {
     const gateSM = this.checkpointSM[this.nextCheckpointIndex];
     const insideGate =
       circularDistance(proj.sM, gateSM, this.track.totalLengthM) < 3.5 &&
-      proj.distanceToCenterlineM < this.track.widthM * 0.6;
+      proj.distanceToCenterlineM < proj.widthM * 0.6;
 
     if (insideGate && !this.insideActiveGate) {
       if (this.nextCheckpointIndex === 0) {
@@ -531,7 +612,7 @@ export class Game {
   }
 
   private resolveHardBoundary(proj: TrackProjection): void {
-    const roadHalfWidthM = this.track.widthM * 0.5;
+    const roadHalfWidthM = proj.widthM * 0.5;
     const hardBoundaryHalfWidthM = roadHalfWidthM + 3.5;
     if (proj.distanceToCenterlineM <= hardBoundaryHalfWidthM) return;
 
@@ -569,13 +650,18 @@ export class Game {
     const impact = Math.max(0, vN);
     if (impact > 2) {
       this.damage01 = clamp(this.damage01 + impact * 0.02, 0, 1);
+      // Camera shake based on impact
+      const shakeIntensity = Math.min(impact * 0.15, 1.5);
+      this.cameraShakeX = (Math.random() - 0.5) * shakeIntensity;
+      this.cameraShakeY = (Math.random() - 0.5) * shakeIntensity;
+      this.collisionFlashAlpha = Math.min(impact * 0.08, 0.3);
     }
   }
 
   private resolveTreeCollisions(): void {
     if (this.damage01 >= 1) return;
 
-    const carRadius = 1.12;
+    const carRadius = 1.0; // Reduced for narrower tree trunks
     for (const tree of this.trees) {
       const dx = this.state.car.xM - tree.x;
       const dy = this.state.car.yM - tree.y;
@@ -617,6 +703,11 @@ export class Game {
       const impact = Math.max(0, vN);
       if (impact > 1) {
         this.damage01 = clamp(this.damage01 + impact * 0.09, 0, 1);
+        // Camera shake for tree collisions
+        const shakeIntensity = Math.min(impact * 0.2, 2);
+        this.cameraShakeX = (Math.random() - 0.5) * shakeIntensity;
+        this.cameraShakeY = (Math.random() - 0.5) * shakeIntensity;
+        this.collisionFlashAlpha = Math.min(impact * 0.12, 0.4);
       }
     }
   }
