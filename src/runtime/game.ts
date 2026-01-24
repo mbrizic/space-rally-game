@@ -49,7 +49,7 @@ export class Game {
   private damage01 = 0;
   private lastSurface: Surface = { name: "tarmac", frictionMu: 1, rollingResistanceN: 260 };
   private lastTrackS = 0;
-  private showForceArrows = true;
+  private showForceArrows = false;
   private gear: "F" | "R" = "F";
   private visualRollOffsetM = 0;
   private visualRollVel = 0;
@@ -61,6 +61,7 @@ export class Game {
   private cameraShakeY = 0;
   private collisionFlashAlpha = 0;
   private cameraMode: "follow" | "runner" = "follow";
+  private cameraRotationRad = 0;
   private pacenoteText = "";
   private editorMode = false;
   private editorDragIndex: number | null = null;
@@ -474,6 +475,20 @@ export class Game {
     this.cameraShakeY *= 0.85;
     this.collisionFlashAlpha *= 0.92;
 
+    // Smooth camera rotation for runner mode
+    if (this.cameraMode === "runner") {
+      const targetRot = -this.state.car.headingRad - Math.PI / 2;
+      // Normalize angle difference to [-PI, PI]
+      let angleDiff = targetRot - this.cameraRotationRad;
+      while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+      while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+      // Smooth interpolation: slower rotation for stability during rapid maneuvers
+      const rotationSpeed = 1.2; // rad/s - lower = more stable, less disorienting
+      this.cameraRotationRad += angleDiff * rotationSpeed * dtSeconds;
+    } else {
+      this.cameraRotationRad = 0;
+    }
+
     const projectionAfter = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
     this.resolveHardBoundary(projectionAfter);
 
@@ -500,13 +515,11 @@ export class Game {
 
     ctx.clearRect(0, 0, width, height);
 
-    const cameraRot =
-      this.cameraMode === "runner" ? -this.state.car.headingRad - Math.PI / 2 : 0;
     this.renderer.beginCamera({
       centerX: this.state.car.xM + this.cameraShakeX,
       centerY: this.state.car.yM + this.cameraShakeY,
       pixelsPerMeter: 36,
-      rotationRad: cameraRot
+      rotationRad: this.cameraRotationRad
     });
 
     this.renderer.drawGrid({ spacingMeters: 1, majorEvery: 5 });
@@ -856,6 +869,7 @@ export class Game {
     this.engineState = createEngineState();
     this.particlePool.reset();
     this.particleAccumulator = 0;
+    this.cameraRotationRad = this.cameraMode === "runner" ? -spawn.headingRad - Math.PI / 2 : 0;
   }
 
   private updateCheckpointsAndLap(proj: TrackProjection): void {
@@ -1026,6 +1040,8 @@ function surfaceFillStyle(surface: Surface): string {
       return "rgba(210, 190, 140, 0.14)";
     case "dirt":
       return "rgba(165, 125, 90, 0.14)";
+    case "ice":
+      return "rgba(200, 230, 255, 0.25)";
     case "offtrack":
       return "rgba(120, 170, 120, 0.10)";
   }

@@ -103,7 +103,7 @@ export function createDefaultTrackDefinition(): TrackDefinition {
     { x: 38, y: 28 },
     { x: 30, y: 18 }
   ];
-  const baseWidthM = 10;
+  const baseWidthM = 7.5;
 
   // Denser sampling makes the track smoother while keeping projection/collision simple.
   const points = sampleClosedCatmullRom(controlPoints, 10);
@@ -147,9 +147,9 @@ export function createProceduralTrackDefinition(seed: number, opts?: ProceduralT
   const rand = mulberry32(Math.floor(seed) || 1);
 
   const controlCount = Math.max(8, Math.floor(opts?.controlPoints ?? 18));
-  const baseRadiusM = Math.max(20, opts?.baseRadiusM ?? 78);
+  const baseRadiusM = Math.max(20, opts?.baseRadiusM ?? 60);
   const radiusJitterM = Math.max(0, opts?.radiusJitterM ?? 28);
-  const baseWidthM = Math.max(6, opts?.baseWidthM ?? 10);
+  const baseWidthM = Math.max(6, opts?.baseWidthM ?? 7.5);
   const samplesPerSegment = Math.max(6, Math.floor(opts?.samplesPerSegment ?? 9));
 
   const phase1 = rand() * Math.PI * 2;

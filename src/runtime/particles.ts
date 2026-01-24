@@ -124,6 +124,13 @@ export function getParticleConfig(surface: Surface): {
                 lifetime: 0.75,
                 spawnRate: 25 // increased
             };
+        case "ice":
+            return {
+                color: "rgba(200, 230, 255, 0.3)", // Light blue ice crystals
+                sizeM: 0.15,
+                lifetime: 0.4,
+                spawnRate: 35 // More particles for ice spray
+            };
         case "offtrack":
             return {
                 color: "rgba(140, 165, 130, 0.4)", // Green-gray dust
