@@ -377,10 +377,7 @@ export class Game {
     
     // Play gunshot sound - only if audio is unlocked
     if (this.audioUnlocked) {
-      this.effectsAudio.playEffect("gunshot", 0.8);
-      console.log("Playing gunshot sound"); // Debug log
-    } else {
-      console.log("Audio not unlocked yet"); // Debug log
+      this.effectsAudio.playEffect("gunshot", 1.0); // Full volume
     }
   }
 
