@@ -234,6 +234,7 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
   let currentX = 0;
   let currentY = 0;
   let currentAngle = angle;
+  let totalAngleChange = 0; // Track cumulative angle to prevent extreme loops
   
   for (let i = 0; i < baseControlPoints; i++) {
     // Decide if this should be a special corner
@@ -243,7 +244,10 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
     
     if (i > 2 && i < baseControlPoints - 3) {
       // Only add special corners in the middle section
-      if (cornerType < 0.15) {
+      // Check if we can afford this turn without looping back too much
+      const absTotal = Math.abs(totalAngleChange);
+      
+      if (cornerType < 0.15 && absTotal < Math.PI * 0.8) { // Limit hairpins if we've turned too much
         // Hairpin! Add multiple tight control points
         const turnDir = rand() > 0.5 ? 1 : -1;
         const hairpinRadius = 25 + rand() * 15;
@@ -254,7 +258,9 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
         currentY += Math.sin(currentAngle) * (segmentLength * 0.3);
         
         // Apex (turn 90 degrees)
-        currentAngle += (Math.PI / 2) * turnDir;
+        const hairpinTurn1 = (Math.PI / 2) * turnDir;
+        currentAngle += hairpinTurn1;
+        totalAngleChange += hairpinTurn1;
         controlPoints.push({
           x: currentX + Math.cos(currentAngle + Math.PI / 2 * turnDir) * hairpinRadius * 0.5,
           y: currentY + Math.sin(currentAngle + Math.PI / 2 * turnDir) * hairpinRadius * 0.5
@@ -263,7 +269,9 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
         currentY += Math.sin(currentAngle) * 5;
         
         // Second apex (complete the hairpin, another 90 degrees)
-        currentAngle += (Math.PI / 2) * turnDir;
+        const hairpinTurn2 = (Math.PI / 2) * turnDir;
+        currentAngle += hairpinTurn2;
+        totalAngleChange += hairpinTurn2;
         controlPoints.push({
           x: currentX + Math.cos(currentAngle + Math.PI / 2 * turnDir) * hairpinRadius * 0.5,
           y: currentY + Math.sin(currentAngle + Math.PI / 2 * turnDir) * hairpinRadius * 0.5
@@ -273,11 +281,11 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
         currentX += Math.cos(currentAngle) * (segmentLength * 0.3);
         currentY += Math.sin(currentAngle) * (segmentLength * 0.3);
         continue;
-      } else if (cornerType < 0.30) {
+      } else if (cornerType < 0.30 && absTotal < Math.PI) { // Limit 90s if we've turned too much
         // Sharp 90-degree corner
         const turnDir = rand() > 0.5 ? 1 : -1;
         angleChange = (Math.PI / 2) * turnDir * (0.85 + rand() * 0.15);
-      } else if (cornerType < 0.50) {
+      } else if (cornerType < 0.50 && absTotal < Math.PI * 1.2) {
         // Medium corner (45-60 degrees)
         const turnDir = rand() > 0.5 ? 1 : -1;
         angleChange = (Math.PI / 4) * turnDir * (1 + rand() * 0.5);
@@ -289,7 +297,15 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
       angleChange = (rand() - 0.5) * 0.4; // Gentle meandering
     }
     
+    // Dampen turns that would make us loop back too much
+    const newTotal = totalAngleChange + angleChange;
+    if (Math.abs(newTotal) > Math.PI * 1.5) {
+      // We're turning back too much, dampen or reverse the turn
+      angleChange *= 0.3;
+    }
+    
     currentAngle += angleChange;
+    totalAngleChange += angleChange;
     currentX += Math.cos(currentAngle) * segmentLength;
     currentY += Math.sin(currentAngle) * segmentLength;
     
@@ -349,6 +365,95 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
   const startCityY = routePoints[0].y - startDirNorm.y * (cityLength / 2);
   const endCityX = routePoints[routePoints.length - 1].x + endDirNorm.x * (cityLength / 2);
   const endCityY = routePoints[routePoints.length - 1].y + endDirNorm.y * (cityLength / 2);
+  
+  // Ensure cities are far enough apart (at least 200m)
+  const cityDistance = Math.hypot(endCityX - startCityX, endCityY - startCityY);
+  const minCityDistance = 200;
+  
+  if (cityDistance < minCityDistance) {
+    // Cities are too close! Push the end city away
+    const pushDirection = {
+      x: (endCityX - startCityX) / cityDistance,
+      y: (endCityY - startCityY) / cityDistance
+    };
+    const pushAmount = minCityDistance - cityDistance;
+    
+    // Move the end city and the end of the route
+    const adjustedEndCityX = endCityX + pushDirection.x * pushAmount;
+    const adjustedEndCityY = endCityY + pushDirection.y * pushAmount;
+    
+    // Adjust the last few route points to smooth the transition
+    const adjustPoints = Math.min(5, Math.floor(routePoints.length * 0.3));
+    for (let i = routePoints.length - adjustPoints; i < routePoints.length; i++) {
+      const t = (i - (routePoints.length - adjustPoints)) / adjustPoints;
+      const smoothT = t * t * (3 - 2 * t); // Smooth step
+      routePoints[i].x += pushDirection.x * pushAmount * smoothT;
+      routePoints[i].y += pushDirection.y * pushAmount * smoothT;
+    }
+    
+    // Update allPoints that were already added
+    const routeStartIdx = 5; // After the starting city section
+    for (let i = 0; i < routePoints.length; i++) {
+      allPoints[routeStartIdx + i] = routePoints[i];
+    }
+    
+    // Recalculate ending city section
+    const newEndDir = {
+      x: routePoints[routePoints.length - 1].x - routePoints[routePoints.length - 2].x,
+      y: routePoints[routePoints.length - 1].y - routePoints[routePoints.length - 2].y
+    };
+    const newEndLen = Math.hypot(newEndDir.x, newEndDir.y);
+    const newEndDirNorm = {
+      x: newEndDir.x / newEndLen,
+      y: newEndDir.y / newEndLen
+    };
+    
+    // Replace ending city section points
+    allPoints.length = routeStartIdx + routePoints.length; // Trim old ending city
+    for (let i = 1; i <= 5; i++) {
+      const dist = cityLength * i / 5;
+      allPoints.push({
+        x: routePoints[routePoints.length - 1].x + newEndDirNorm.x * dist,
+        y: routePoints[routePoints.length - 1].y + newEndDirNorm.y * dist
+      });
+    }
+    
+    // Use adjusted positions for cities
+    const startRoadAngle = Math.atan2(startDirNorm.y, startDirNorm.x);
+    const endRoadAngle = Math.atan2(newEndDirNorm.y, newEndDirNorm.x);
+  
+    // Generate cities with adjusted positions
+    const startCity = generateCity(startCityX, startCityY, seed, { 
+      numStores: 4, 
+      numDecorations: 6,
+      roadAngle: startRoadAngle 
+    });
+    const endCity = generateCity(adjustedEndCityX, adjustedEndCityY, seed + 1000, { 
+      numStores: 4, 
+      numDecorations: 6,
+      roadAngle: endRoadAngle 
+    });
+    
+    const baseWidthM = 7.5;
+    
+    // Width variance
+    const segmentWidthsM: number[] = [];
+    for (let i = 0; i < allPoints.length; i++) {
+      const t = i / allPoints.length;
+      let widthMult = 1 + 0.2 * Math.sin(t * Math.PI * 4) + (rand() - 0.5) * 0.1;
+      widthMult = clamp(widthMult, 0.7, 1.3);
+      segmentWidthsM.push(baseWidthM * widthMult);
+    }
+    
+    return {
+      points: allPoints,
+      baseWidthM,
+      segmentWidthsM,
+      startCity,
+      endCity,
+      meta: { name: `Route ${seed}`, seed, source: "point-to-point" }
+    };
+  }
   
   const startRoadAngle = Math.atan2(startDirNorm.y, startDirNorm.x);
   const endRoadAngle = Math.atan2(endDirNorm.y, endDirNorm.x);
