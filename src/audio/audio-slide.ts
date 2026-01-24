@@ -22,9 +22,9 @@ export function defaultSlideAudioParams(): SlideAudioParams {
     return {
         surfaces: {
             tarmac: {
-                filterFreq: 2500, // higher pitch screech
-                filterQ: 3,
-                gain: 0.6,
+                filterFreq: 3200, // higher pitch screech
+                filterQ: 5, // more resonant/sharp
+                gain: 0.65, // balanced for audibility without being harsh
                 noiseType: "white",
             },
             gravel: {
@@ -214,7 +214,7 @@ export class SlideAudio {
 
         // Volume based on intensity and surface gain
         // On dedicated environment channel, can be more prominent
-        const targetGain = this.currentIntensity * surfaceParams.gain * 0.7; // Increased from 0.4
+        const targetGain = this.currentIntensity * surfaceParams.gain * 1.0; // Increased from 0.7
         this.gainNode.gain.setTargetAtTime(targetGain, now, 0.03);
     }
 

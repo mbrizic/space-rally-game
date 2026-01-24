@@ -1,71 +1,51 @@
 # Space Rally - Development Tasks
 
-## Completed Core Features ✅
-- Physics simulation (bicycle model, slip angles, traction circle, weight transfer)
-- Drift detection and particle system (surface-specific smoke/dust)
-- Engine simulation with 6-speed transmission (auto/manual with J/K)
-- Audio system (engine and tire sounds)
-- Point-to-point racing with procedural cities
-- Pacenotes system (corner warnings)
-- Track editor (press T)
-- Deployment to production
+## Core Features ✅
+- Rally physics (bicycle model, drift detection, 6-speed manual/auto)
+- Procedural tracks with surfaces (tarmac/gravel/dirt/ice)
+- Multi-channel audio system (engine/tires/effects ready for guns)
+- Water hazards beside track (off-road penalty)
+- Minimap (toggle with M), pacenotes, checkpoints
 
-## Recent Work ✅
+## Known Issues
+**⚠️ Track Variety Problem** - Tracks are repetitive and safe
+- See `TRACK_VARIETY_NOTES.md` for full analysis
+- Root cause: Retry logic rejects interesting hairpins to avoid overlaps
+- Trade-off: 100% reliable generation vs. exciting variety
 
-### Visual Feedback & Surfaces
-- [x] Distinct surface colors (tarmac, gravel, dirt, ice) with 35-50% opacity
-- [x] Surface-specific shoulders and bright particles
-- [x] Randomized surface patterns per track (not fixed order)
+## What's Next - Plan
 
-### Transmission & Controls  
-- [x] 6-speed manual/automatic transmission (J/K to shift)
-- [x] Rev limiter (power drops to 5% at max RPM)
-- [x] Checkpoint notifications ("GO!", "Checkpoint 1/3", "FINISH!")
-- [x] Larger RPM meter and gear display (60px)
+### Phase 1: Shooting Mechanics (New Gameplay)
+**Goal**: Add weapons to make rally combat mode fun
+- [ ] Gun system (player shoots from car)
+  - Basic weapon (machine gun or similar)
+  - Ammo/reload mechanics
+  - Recoil/accuracy
+- [ ] Targets on track
+  - Aliens/zombies/obstacles to shoot
+  - Spawning logic (distance-based)
+  - Hit detection and destruction
+- [ ] Scoring system
+  - Points for targets hit
+  - Time bonuses
+  - Combo multipliers
 
-### Track Generation & Quality 
-- [x] Corner-based system: hairpin (~178°), sharp (~90°), medium, gentle, chicane
-- [x] Strict unit tests: zero self-intersections, no long straights (>100m)
-- [x] Retry logic: 15 attempts to find "good" track (see TRACK_VARIETY_NOTES.md)
-- [x] Collision avoidance: "turn away" strategy, 70m separation
-- [x] Trees/buildings check entire track (not just local segment)
-- [x] Pacenotes use corner metadata (not curvature detection)
-- [x] Minimap (toggle with 'M')
+### Phase 2: Combat Polish
+- [ ] Visual effects for shooting (muzzle flash, impacts)
+- [ ] Better audio effects (gunshots already synthesized in effects channel)
+- [ ] HUD improvements (ammo counter, score display)
+- [ ] Target variety (different types, speeds, values)
 
-**⚠️ KNOWN ISSUE**: Retry logic rejects interesting hairpins → tracks are samey
-- See TRACK_VARIETY_NOTES.md for full details of what we tried
-- Trade-off: 100% reliable vs. variety/excitement
-- Need: Smarter hairpin placement OR accept some visual overlaps
+### Phase 3: Track Variety (Revisit)
+- [ ] Fix track generation to allow more hairpins
+  - Try "zoned layout" approach from notes
+  - OR accept some visual overlaps with warnings
+- [ ] Add elevation changes / jumps
 
-## Recent Work ✅ (continued)
-
-### Visual Polish
-- [x] Fixed visible circles on track (switched to filled polygons instead of stroked lines)
-- [x] Fixed canvas clearing on retina displays
-- [x] Made buildings and trees fully opaque (no grid bleeding through)
-
-### Water Hazards
-- [x] Water bodies placed beside track (off-road penalty)
-- [x] Visible on minimap as blue ellipses
-- [x] Unit tests ensure zero overlap with road (500+ tracks tested)
-- [x] Strong slowdown effect when car enters water
-
-### Audio System Rework
-- [x] Multi-channel mixing architecture (engine/environment/effects)
-- [x] Engine and tire sounds now audible simultaneously
-- [x] Dedicated effects channel for weapons (prepared for future guns)
-- [x] Checkpoint sounds play on effects channel (priority over car sounds)
-- [x] Volume levels optimized: Engine 25%, Environment 35%, Effects 50%
-- [x] See `src/audio/README.md` for full architecture documentation
-
-## Next Priority
-- [ ] **FIX TRACK VARIETY** - See TRACK_VARIETY_NOTES.md for full context
-  - Current: Retry logic rejects interesting hairpins (safe but boring)
-  - Options: Zoned layout, outward spiral, accept visual overlaps, relaxed quality
-- [ ] More track variety (jumps, elevation changes)
+### Phase 4: Multiplayer
+- [ ] One drives, one shoots
+- [ ] Network sync basics
 
 ## Backlog
-- [ ] Weather effects
-- [ ] Mobile phone controls
-- [ ] Multiplayer (one drives, one shoots)
-- [ ] Shooting mechanics (aliens/zombies on track)
+- Weather effects
+- Mobile controls

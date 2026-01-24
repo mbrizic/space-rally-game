@@ -19,8 +19,8 @@ export function surfaceForTrackSM(totalLengthM: number, sM: number, offTrack: bo
   const seed = trackSeed ?? 1;
   
   // Generate random surface transitions based on track seed
-  // Create 6-10 surface segments with random order
-  const numSegments = 6 + Math.floor(surfaceRand(seed * 1.1) * 5);
+  // Create 8-12 surface segments with random order (more segments = shorter patches)
+  const numSegments = 8 + Math.floor(surfaceRand(seed * 1.1) * 5);
   const segmentSize = 1.0 / numSegments;
   
   // Determine which segment we're in
@@ -38,7 +38,15 @@ export function surfaceForTrackSM(totalLengthM: number, sM: number, offTrack: bo
   } else if (surfaceRandom < 0.85) {
     surfaceName = "dirt";
   } else {
-    surfaceName = "ice";
+    // Ice patches are shorter: if we're in an ice segment, further subdivide it
+    // and only make it ice for the first half of the subdivision
+    const iceSubRandom = surfaceRand(seed * 3.7 + segmentIdx * 11.3);
+    if (iceSubRandom < 0.5) {
+      surfaceName = "ice";
+    } else {
+      // Fallback to tarmac if the ice patch is "skipped" for brevity
+      surfaceName = "tarmac";
+    }
   }
   
   // Return surface with properties
