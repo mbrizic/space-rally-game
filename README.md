@@ -7,12 +7,13 @@
 ## Features
 
 - 🏎️ **Realistic physics** - Proper tire slip angles, weight transfer, and traction circles
+- ⚙️ **Manual gearbox** - 6-speed manual transmission (default) with Q/E shifting, or toggle to automatic
 - ❄️ **Multiple surfaces** - Tarmac, gravel, dirt, and ice with different friction characteristics
 - 🎮 **Two camera modes** - Fixed follow and stabilized runner mode (toggle with `C`)
 - 🎵 **Procedural audio** - Engine and tire sounds that react to your driving
 - 🏁 **Procedural tracks** - Generate infinite rally stages (press `N`)
 - 💨 **Drift scoring** - Show off your Scandinavian flicks
-- 🛠️ **Track editor** - Create custom stages (press `E`)
+- 🛠️ **Track editor** - Create custom stages (press `T`)
 
 ## Controls
 
@@ -20,10 +21,11 @@
 - `S / ↓` - Brake / Reverse
 - `A/D or ←/→` - Steer
 - `Space` - Handbrake
+- `Q / E` - Shift down / up (manual mode)
 - `R` - Reset
 - `N` - Generate new track
 - `C` - Toggle camera mode
-- `E` - Track editor
+- `T` - Track editor
 - `F` - Toggle force arrows
 
 ## Development
