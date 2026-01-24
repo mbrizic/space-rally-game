@@ -116,13 +116,13 @@
   - Zero failures - hairpins work perfectly without cities overlapping!
 
 ## Phase 8: Manual Gearbox ✅
-- [x] Manual transmission as DEFAULT mode
-- [x] Q/E keys for gear shifting (downshift/upshift)
-- [x] Toggle option in tuning panel to switch to automatic
+- [x] Automatic transmission as DEFAULT mode
+- [x] J/K keys for gear shifting (downshift/upshift)
+- [x] Toggle option in tuning panel to switch to manual
 - [x] Engine respects manual mode (no auto-shifting)
-- [x] PROMINENT gear display (48px bold, bright blue)
+- [x] PROMINENT gear display (60px bold, bright blue)
 - [x] Added "GEAR" label for clarity
-- [x] Updated controls: T for editor (was E), Q/E for shifting
+- [x] Updated controls: T for editor (was E), J/K for shifting
 - [x] Editor save/load changed to 1/2 keys
 
 ## Future Ideas

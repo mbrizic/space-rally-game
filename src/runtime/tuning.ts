@@ -19,7 +19,7 @@ export class TuningPanel {
       maxSteerDeg: initial?.maxSteerDeg ?? 57, // matched to 1.0 rad default
       driveBiasFront01: initial?.driveBiasFront01 ?? 0.30,
       showArrows: initial?.showArrows ?? false,
-      manualTransmission: initial?.manualTransmission ?? true // Manual is default
+      manualTransmission: initial?.manualTransmission ?? false // Automatic is default
     };
 
     this.root = document.createElement("div");
@@ -66,7 +66,7 @@ export class TuningPanel {
     manualRow.appendChild(manualCb);
 
     const manualTxt = document.createElement("span");
-    manualTxt.textContent = "Manual gearbox (Q/E)";
+    manualTxt.textContent = "Manual gearbox (J/K)";
     manualRow.appendChild(manualTxt);
     this.root.appendChild(manualRow);
 

@@ -680,7 +680,7 @@ export class Game {
         `S / ↓  brake / reverse`,
         `A/D or ←/→ steer`,
         `Space  handbrake`,
-        `Q / E  shift down / up`,
+        `J / K  shift down / up`,
         `R      reset`,
         `N      new route`,
         `C      camera: ${this.cameraMode}`,
