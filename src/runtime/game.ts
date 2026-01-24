@@ -54,7 +54,7 @@ export class Game {
   private damage01 = 0;
   private lastSurface: Surface = { name: "tarmac", frictionMu: 1, rollingResistanceN: 260 };
   private lastTrackS = 0;
-  private showForceArrows = false;
+  private showDebugMenu = false; // F to toggle debug/tires/tuning panels
   private showMinimap = true;
   private gear: "F" | "R" = "F";
   private visualRollOffsetM = 0;
@@ -131,8 +131,8 @@ export class Game {
       if (e.code === "Digit1" && this.editorMode) this.saveEditorTrack(); // Changed from S
       if (e.code === "Digit2" && this.editorMode) this.loadEditorTrack(); // Changed from L
       if (e.code === "KeyF") {
-        this.showForceArrows = !this.showForceArrows;
-        this.tuning?.setShowArrows(this.showForceArrows);
+        this.showDebugMenu = !this.showDebugMenu;
+        this.tuning?.setVisibility(this.showDebugMenu);
       }
       if (e.code === "KeyM") {
         this.showMinimap = !this.showMinimap;
@@ -577,8 +577,8 @@ export class Game {
     // Draw background
     this.renderer.drawBg();
 
-    // In runner mode, offset camera to show more ahead
-    const cameraOffsetY = this.cameraMode === "runner" ? 3 : 0; // 3m offset forward
+    // Offset camera to show more track ahead - car is lower on screen
+    const cameraOffsetY = this.cameraMode === "runner" ? 8 : 5; // Show 5-8m ahead
     const cosRot = Math.cos(this.state.car.headingRad);
     const sinRot = Math.sin(this.state.car.headingRad);
     const offsetX = cosRot * cameraOffsetY;
@@ -643,34 +643,57 @@ export class Game {
       rollOffsetM: this.visualRollOffsetM
     });
 
-    if (this.showForceArrows) {
+    if (this.showDebugMenu && this.tuning?.values.showArrows) {
       this.drawForceArrows();
     }
 
     this.renderer.endCamera();
 
-    const speedMS = this.speedMS();
-    const speedKmH = speedMS * 3.6;
+    // Rally info - prominent at top center
+    const raceTime = this.raceActive && !this.raceFinished 
+      ? this.state.timeSeconds - this.raceStartTimeSeconds 
+      : this.finishTimeSeconds ?? 0;
+    const stageLine = this.raceFinished 
+      ? `FINISHED: ${this.finishTimeSeconds?.toFixed(2)}s` 
+      : this.raceActive 
+        ? `${raceTime.toFixed(2)}s` 
+        : `NOT STARTED`;
     this.renderer.drawPanel({
-      x: 12,
+      x: width / 2,
       y: 12,
-      title: "Debug",
+      anchorX: "center",
+      title: `Rally - Checkpoint ${this.nextCheckpointIndex}/${this.checkpointSM.length}`,
       lines: [
-        `FPS: ${this.fps.toFixed(0)}`,
-        `t: ${this.state.timeSeconds.toFixed(2)}s`,
-        `track: ${this.trackDef.meta?.name ?? "Custom"}${this.trackDef.meta?.seed ? ` (seed ${this.trackDef.meta.seed})` : ""}`,
-        `camera: ${this.cameraMode}`,
-        `speed: ${speedMS.toFixed(2)} m/s (${speedKmH.toFixed(0)} km/h)`,
-        `steer: ${this.input.axis("steer").toFixed(2)}  throttle: ${this.input.axis("throttle").toFixed(2)}  brake/rev: ${this.input
-          .axis("brake")
-          .toFixed(2)}`,
-        `handbrake: ${this.input.axis("handbrake").toFixed(2)}  gear: ${this.gear}`,
-        `yawRate: ${this.state.car.yawRateRadS.toFixed(2)} rad/s`,
-        `next gate: ${gateLabel(this.nextCheckpointIndex, this.checkpointSM.length)}`,
-        `surface: ${this.lastSurface.name}  (μ=${this.lastSurface.frictionMu.toFixed(2)})${this.inWater ? " [WATER!]" : ""}`,
-        `damage: ${(this.damage01 * 100).toFixed(0)}%`
+        stageLine,
+        `Distance: ${this.lastTrackS.toFixed(0)}m`
       ]
     });
+
+    // Debug panels (F to toggle)
+    if (this.showDebugMenu) {
+      const speedMS = this.speedMS();
+      const speedKmH = speedMS * 3.6;
+      this.renderer.drawPanel({
+        x: 12,
+        y: 12,
+        title: "Debug",
+        lines: [
+          `FPS: ${this.fps.toFixed(0)}`,
+          `t: ${this.state.timeSeconds.toFixed(2)}s`,
+          `track: ${this.trackDef.meta?.name ?? "Custom"}${this.trackDef.meta?.seed ? ` (seed ${this.trackDef.meta.seed})` : ""}`,
+          `camera: ${this.cameraMode}`,
+          `speed: ${speedMS.toFixed(2)} m/s (${speedKmH.toFixed(0)} km/h)`,
+          `steer: ${this.input.axis("steer").toFixed(2)}  throttle: ${this.input.axis("throttle").toFixed(2)}  brake/rev: ${this.input
+            .axis("brake")
+            .toFixed(2)}`,
+          `handbrake: ${this.input.axis("handbrake").toFixed(2)}  gear: ${this.gear}`,
+          `yawRate: ${this.state.car.yawRateRadS.toFixed(2)} rad/s`,
+          `next gate: ${gateLabel(this.nextCheckpointIndex, this.checkpointSM.length)}`,
+          `surface: ${this.lastSurface.name}  (μ=${this.lastSurface.frictionMu.toFixed(2)})${this.inWater ? " [WATER!]" : ""}`,
+          `damage: ${(this.damage01 * 100).toFixed(0)}%`
+        ]
+      });
+    }
 
     this.renderer.drawPanel({
       x: width - 12,
@@ -698,80 +721,60 @@ export class Game {
         `C      camera: ${this.cameraMode}`,
         `M      minimap: ${this.showMinimap ? "ON" : "OFF"}`,
         `T      editor`,
-        `F      force arrows: ${this.showForceArrows ? "ON" : "OFF"}`
+        `F      debug menu: ${this.showDebugMenu ? "ON" : "OFF"}`
       ]
     });
 
-    const deg = (rad: number) => (rad * 180) / Math.PI;
-    this.renderer.drawPanel({
-      x: 12,
-      y: height - 12,
-      title: "Tires",
-      lines: [
-        `steerAngle: ${deg(this.state.carTelemetry.steerAngleRad).toFixed(1)}°`,
-        `alphaF: ${deg(this.state.carTelemetry.slipAngleFrontRad).toFixed(1)}° (inst ${deg(this.state.carTelemetry.slipAngleFrontInstantRad).toFixed(1)}°)`,
-        `alphaR: ${deg(this.state.carTelemetry.slipAngleRearRad).toFixed(1)}° (inst ${deg(this.state.carTelemetry.slipAngleRearInstantRad).toFixed(1)}°)`,
-        `FzF: ${this.state.carTelemetry.normalLoadFrontN.toFixed(0)} N  FxF: ${this.state.carTelemetry.longitudinalForceFrontN.toFixed(0)} N`,
-        `FzR: ${this.state.carTelemetry.normalLoadRearN.toFixed(0)} N  FxR: ${this.state.carTelemetry.longitudinalForceRearN.toFixed(0)} N`,
-        `FyF: ${this.state.carTelemetry.lateralForceFrontN.toFixed(0)} N`,
-        `FyR: ${this.state.carTelemetry.lateralForceRearN.toFixed(0)} N`
-      ],
-      anchorX: "left",
-      anchorY: "bottom"
-    });
-
-    const raceTime = this.raceActive && !this.raceFinished 
-      ? this.state.timeSeconds - this.raceStartTimeSeconds 
-      : this.finishTimeSeconds ?? 0;
-    const stageLine = this.raceFinished 
-      ? `finished: ${this.finishTimeSeconds?.toFixed(2)}s` 
-      : this.raceActive 
-        ? `running` 
-        : `not started`;
-    this.renderer.drawPanel({
-      x: width - 12,
-      y: height - 12,
-      anchorX: "right",
-      anchorY: "bottom",
-      title: "Rally",
-      lines: [
-        `checkpoint: ${this.nextCheckpointIndex}/${this.checkpointSM.length}`,
-        `time: ${raceTime.toFixed(2)}s`,
-        `s: ${this.lastTrackS.toFixed(1)}m`,
-        stageLine
-      ]
-    });
-
-    // Side visualization of vectors (body frame: +x forward, +y left).
-    if (this.showForceArrows) {
-      const t = this.state.carTelemetry;
-      const cosSteer = Math.cos(t.steerAngleRad);
-      const sinSteer = Math.sin(t.steerAngleRad);
-      const fxBody =
-        (t.longitudinalForceFrontN + t.longitudinalForceRearN) - t.lateralForceFrontN * sinSteer;
-      const fyBody = t.lateralForceRearN + t.lateralForceFrontN * cosSteer;
-
-      const vx = this.state.car.vxMS;
-      const vy = this.state.car.vyMS;
-
-      this.renderer.drawVectorPanel({
-        x: width - 12,
-        y: height * 0.5,
-        anchorX: "right",
-        anchorY: "top",
-        title: "Vectors (body frame)",
-        scale: 48,
-        vectors: [
-          { label: "v (m/s)", x: vx, y: vy, color: "rgba(232, 236, 241, 0.72)" },
-          {
-            label: "p (x0.01)",
-            x: vx * this.carParams.massKg * 0.01,
-            y: vy * this.carParams.massKg * 0.01,
-            color: "rgba(210, 210, 255, 0.55)"
-          },
-          { label: "F (kN)", x: fxBody / 1000, y: fyBody / 1000, color: "rgba(255, 205, 105, 0.88)" }
-        ]
+    if (this.showDebugMenu) {
+      const deg = (rad: number) => (rad * 180) / Math.PI;
+      this.renderer.drawPanel({
+        x: 12,
+        y: height - 12,
+        title: "Tires",
+        lines: [
+          `steerAngle: ${deg(this.state.carTelemetry.steerAngleRad).toFixed(1)}°`,
+          `alphaF: ${deg(this.state.carTelemetry.slipAngleFrontRad).toFixed(1)}° (inst ${deg(this.state.carTelemetry.slipAngleFrontInstantRad).toFixed(1)}°)`,
+          `alphaR: ${deg(this.state.carTelemetry.slipAngleRearRad).toFixed(1)}° (inst ${deg(this.state.carTelemetry.slipAngleRearInstantRad).toFixed(1)}°)`,
+          `FzF: ${this.state.carTelemetry.normalLoadFrontN.toFixed(0)} N  FxF: ${this.state.carTelemetry.longitudinalForceFrontN.toFixed(0)} N`,
+          `FzR: ${this.state.carTelemetry.normalLoadRearN.toFixed(0)} N  FxR: ${this.state.carTelemetry.longitudinalForceRearN.toFixed(0)} N`,
+          `FyF: ${this.state.carTelemetry.lateralForceFrontN.toFixed(0)} N`,
+          `FyR: ${this.state.carTelemetry.lateralForceRearN.toFixed(0)} N`
+        ],
+        anchorX: "left",
+        anchorY: "bottom"
       });
+
+      // Side visualization of vectors (body frame: +x forward, +y left).
+      if (this.tuning?.values.showArrows) {
+        const t = this.state.carTelemetry;
+        const cosSteer = Math.cos(t.steerAngleRad);
+        const sinSteer = Math.sin(t.steerAngleRad);
+        const fxBody =
+          (t.longitudinalForceFrontN + t.longitudinalForceRearN) - t.lateralForceFrontN * sinSteer;
+        const fyBody = t.lateralForceRearN + t.lateralForceFrontN * cosSteer;
+
+        const vx = this.state.car.vxMS;
+        const vy = this.state.car.vyMS;
+
+        this.renderer.drawVectorPanel({
+          x: width - 12,
+          y: height * 0.5,
+          anchorX: "right",
+          anchorY: "top",
+          title: "Vectors (body frame)",
+          scale: 48,
+          vectors: [
+            { label: "v (m/s)", x: vx, y: vy, color: "rgba(232, 236, 241, 0.72)" },
+            {
+              label: "p (x0.01)",
+              x: vx * this.carParams.massKg * 0.01,
+              y: vy * this.carParams.massKg * 0.01,
+              color: "rgba(210, 210, 255, 0.55)"
+            },
+            { label: "F (kN)", x: fxBody / 1000, y: fyBody / 1000, color: "rgba(255, 205, 105, 0.88)" }
+          ]
+        });
+      }
     }
 
     // RPM Meter
@@ -838,9 +841,6 @@ export class Game {
     this.carParams.engineForceN = clamp(t.engineForceN, 4000, 45000);
     this.carParams.maxSteerRad = clamp((t.maxSteerDeg * Math.PI) / 180, 0.15, 1.2);
     this.carParams.driveBiasFront = clamp(t.driveBiasFront01, 0, 1);
-
-    // UI can override arrows, but keep KeyF working by syncing.
-    this.showForceArrows = t.showArrows;
   }
 
   private updateVisualRoll(dtSeconds: number): void {

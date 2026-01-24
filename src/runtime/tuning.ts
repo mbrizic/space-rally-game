@@ -36,6 +36,7 @@ export class TuningPanel {
     this.root.style.fontSize = "12px";
     this.root.style.width = "300px";
     this.root.style.pointerEvents = "auto";
+    this.root.style.display = "none"; // Hidden by default, toggle with F
 
     this.root.appendChild(this.titleRow("Tuning"));
 
@@ -102,6 +103,10 @@ export class TuningPanel {
     this.values.showArrows = on;
     const input = this.root.querySelector("input[type=checkbox]");
     if (input instanceof HTMLInputElement) input.checked = on;
+  }
+
+  setVisibility(visible: boolean): void {
+    this.root.style.display = visible ? "block" : "none";
   }
 
   private titleRow(title: string): HTMLElement {

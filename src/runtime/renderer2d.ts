@@ -533,7 +533,7 @@ export class Renderer2D {
   drawPanel(opts: {
     x: number;
     y: number;
-    anchorX?: "left" | "right";
+    anchorX?: "left" | "right" | "center";
     anchorY?: "top" | "bottom";
     title?: string;
     lines: string[];
@@ -556,7 +556,13 @@ export class Renderer2D {
     const panelWidth = Math.ceil(width + paddingX * 2);
     const panelHeight = Math.ceil(textLines.length * lineHeight + paddingY * 2);
 
-    const x = (opts.anchorX ?? "left") === "right" ? Math.max(0, opts.x - panelWidth) : opts.x;
+    const anchorX = opts.anchorX ?? "left";
+    let x = opts.x;
+    if (anchorX === "right") {
+      x = Math.max(0, opts.x - panelWidth);
+    } else if (anchorX === "center") {
+      x = Math.max(0, opts.x - panelWidth / 2);
+    }
     const y = (opts.anchorY ?? "top") === "bottom" ? Math.max(0, opts.y - panelHeight) : opts.y;
 
     ctx.fillStyle = "rgba(0,0,0,0.55)";
