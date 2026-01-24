@@ -345,6 +345,37 @@ export class Renderer2D {
     ctx.restore();
   }
 
+  drawTrackEditorPoints(opts: { points: { x: number; y: number }[]; activeIndex?: number | null }): void {
+    const ctx = this.ctx;
+    ctx.save();
+
+    const r = 0.32;
+    for (let i = 0; i < opts.points.length; i++) {
+      const p = opts.points[i];
+      const active = opts.activeIndex === i;
+
+      ctx.fillStyle = active ? "rgba(255, 205, 105, 0.95)" : "rgba(170, 210, 255, 0.70)";
+      ctx.strokeStyle = active ? "rgba(0,0,0,0.65)" : "rgba(0,0,0,0.40)";
+      ctx.lineWidth = 0.08;
+
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      // Label every ~10 points to reduce clutter.
+      if (active || i % 10 === 0) {
+        ctx.fillStyle = "rgba(0,0,0,0.75)";
+        ctx.font = "0.55px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+        ctx.textBaseline = "middle";
+        ctx.textAlign = "center";
+        ctx.fillText(String(i), p.x, p.y - 0.7);
+      }
+    }
+
+    ctx.restore();
+  }
+
   drawParticles(particles: { x: number; y: number; sizeM: number; color: string; lifetime: number; maxLifetime: number }[]): void {
     const ctx = this.ctx;
     ctx.save();

@@ -6,8 +6,10 @@ import {
   createDefaultTrackDefinition,
   createProceduralTrackDefinition,
   createTrackFromDefinition,
+  parseTrackDefinition,
   pointOnTrack,
   projectToTrack,
+  serializeTrackDefinition,
   type TrackDefinition,
   type TrackProjection
 } from "../sim/track";
@@ -32,6 +34,7 @@ export class Game {
   private readonly renderer: Renderer2D;
   private readonly input: KeyboardInput;
   private readonly tuning?: TuningPanel;
+  private readonly canvas: HTMLCanvasElement;
   private trackDef: TrackDefinition = createDefaultTrackDefinition();
   private track = createTrackFromDefinition(this.trackDef);
   private trackSegmentFillStyles: string[] = [];
@@ -59,6 +62,10 @@ export class Game {
   private collisionFlashAlpha = 0;
   private cameraMode: "follow" | "runner" = "follow";
   private pacenoteText = "";
+  private editorMode = false;
+  private editorDragIndex: number | null = null;
+  private editorHoverIndex: number | null = null;
+  private editorPointerId: number | null = null;
   // Engine simulation
   private engineState: EngineState = createEngineState();
   private readonly engineParams = defaultEngineParams();
@@ -101,12 +108,16 @@ export class Game {
     this.renderer = new Renderer2D(canvas);
     this.input = new KeyboardInput(window);
     this.tuning = tuning;
+    this.canvas = canvas;
     this.setTrack(createDefaultTrackDefinition());
 
     window.addEventListener("keydown", (e) => {
       if (e.code === "KeyR") this.reset();
       if (e.code === "KeyN") this.randomizeTrack();
       if (e.code === "KeyC") this.toggleCameraMode();
+      if (e.code === "KeyE") this.toggleEditorMode();
+      if (e.code === "KeyS" && this.editorMode) this.saveEditorTrack();
+      if (e.code === "KeyL" && this.editorMode) this.loadEditorTrack();
       if (e.code === "KeyF") {
         this.showForceArrows = !this.showForceArrows;
         this.tuning?.setShowArrows(this.showForceArrows);
@@ -117,6 +128,14 @@ export class Game {
       }
     });
 
+    this.canvas.addEventListener("contextmenu", (e) => {
+      if (this.editorMode) e.preventDefault();
+    });
+    this.canvas.addEventListener("pointerdown", this.onPointerDown);
+    this.canvas.addEventListener("pointermove", this.onPointerMove);
+    this.canvas.addEventListener("pointerup", this.onPointerUp);
+    this.canvas.addEventListener("pointercancel", this.onPointerUp);
+
     // Handle tab visibility for audio
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) {
@@ -126,6 +145,135 @@ export class Game {
       }
     });
 
+    this.reset();
+  }
+
+  private toggleEditorMode(): void {
+    this.editorMode = !this.editorMode;
+    this.editorDragIndex = null;
+    this.editorHoverIndex = null;
+    this.editorPointerId = null;
+
+    // Editing and procedural generation go well together; pause driving feel by resetting timer state.
+    if (this.editorMode) {
+      this.lapActive = false;
+    }
+  }
+
+  private editorWorldPointFromEvent(e: PointerEvent): { x: number; y: number } {
+    const rect = this.canvas.getBoundingClientRect();
+    const xCss = e.clientX - rect.left;
+    const yCss = e.clientY - rect.top;
+    return this.renderer.screenToWorld(xCss, yCss);
+  }
+
+  private nearestEditorPointIndex(p: { x: number; y: number }, maxDistM: number): number | null {
+    const maxDist2 = maxDistM * maxDistM;
+    let bestI: number | null = null;
+    let bestD2 = maxDist2;
+    for (let i = 0; i < this.trackDef.points.length; i++) {
+      const q = this.trackDef.points[i];
+      const dx = q.x - p.x;
+      const dy = q.y - p.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 <= bestD2) {
+        bestD2 = d2;
+        bestI = i;
+      }
+    }
+    return bestI;
+  }
+
+  private applyEditorDef(next: TrackDefinition): void {
+    // Keep the editor track identifiable.
+    next.meta = { ...(next.meta ?? {}), name: next.meta?.name ?? "Custom", source: "editor" };
+    this.setTrack(next);
+  }
+
+  private onPointerDown = (e: PointerEvent): void => {
+    if (!this.editorMode) return;
+    e.preventDefault();
+
+    const p = this.editorWorldPointFromEvent(e);
+    const hit = this.nearestEditorPointIndex(p, 0.9);
+
+    // Right click deletes.
+    if (e.button === 2) {
+      if (hit === null) return;
+      if (this.trackDef.points.length <= 6) return; // keep a minimally sane loop
+
+      const points = this.trackDef.points.slice();
+      points.splice(hit, 1);
+
+      let segmentWidthsM = this.trackDef.segmentWidthsM ? this.trackDef.segmentWidthsM.slice() : undefined;
+      if (segmentWidthsM && segmentWidthsM.length === this.trackDef.points.length) {
+        segmentWidthsM.splice(hit, 1);
+      }
+
+      this.applyEditorDef({ ...this.trackDef, points, segmentWidthsM });
+      return;
+    }
+
+    // Left click selects/drags or adds.
+    if (hit !== null) {
+      this.editorDragIndex = hit;
+      this.editorPointerId = e.pointerId;
+      this.canvas.setPointerCapture(e.pointerId);
+      return;
+    }
+
+    const points = this.trackDef.points.concat([{ x: p.x, y: p.y }]);
+    const baseWidthM = this.trackDef.baseWidthM;
+    const segmentWidthsM = this.trackDef.segmentWidthsM
+      ? this.trackDef.segmentWidthsM.concat([this.trackDef.segmentWidthsM[this.trackDef.segmentWidthsM.length - 1] ?? baseWidthM])
+      : undefined;
+
+    this.applyEditorDef({ ...this.trackDef, points, segmentWidthsM });
+    this.editorDragIndex = points.length - 1;
+    this.editorPointerId = e.pointerId;
+    this.canvas.setPointerCapture(e.pointerId);
+  };
+
+  private onPointerMove = (e: PointerEvent): void => {
+    if (!this.editorMode) return;
+    const p = this.editorWorldPointFromEvent(e);
+
+    if (this.editorDragIndex !== null && this.editorPointerId === e.pointerId) {
+      const points = this.trackDef.points.slice();
+      points[this.editorDragIndex] = { x: p.x, y: p.y };
+      this.applyEditorDef({ ...this.trackDef, points });
+      return;
+    }
+
+    this.editorHoverIndex = this.nearestEditorPointIndex(p, 0.9);
+  };
+
+  private onPointerUp = (e: PointerEvent): void => {
+    if (!this.editorMode) return;
+    if (this.editorPointerId !== e.pointerId) return;
+    this.editorPointerId = null;
+    this.editorDragIndex = null;
+    try {
+      this.canvas.releasePointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+  };
+
+  private saveEditorTrack(): void {
+    const json = serializeTrackDefinition({
+      ...this.trackDef,
+      meta: { ...(this.trackDef.meta ?? {}), name: "Custom", source: "editor" }
+    });
+    localStorage.setItem("spaceRally.trackDef", json);
+  }
+
+  private loadEditorTrack(): void {
+    const json = localStorage.getItem("spaceRally.trackDef");
+    if (!json) return;
+    const def = parseTrackDefinition(json);
+    if (!def) return;
+    this.setTrack({ ...def, meta: { ...(def.meta ?? {}), name: def.meta?.name ?? "Custom", source: "editor" } });
     this.reset();
   }
 
@@ -216,6 +364,7 @@ export class Game {
   };
 
   private step(dtSeconds: number): void {
+    if (this.editorMode) return;
     this.state.timeSeconds += dtSeconds;
 
     this.applyTuning();
@@ -362,6 +511,12 @@ export class Game {
 
     this.renderer.drawGrid({ spacingMeters: 1, majorEvery: 5 });
     this.renderer.drawTrack({ ...this.track, segmentFillStyles: this.trackSegmentFillStyles });
+    if (this.editorMode) {
+      this.renderer.drawTrackEditorPoints({
+        points: this.trackDef.points,
+        activeIndex: this.editorDragIndex ?? this.editorHoverIndex
+      });
+    }
     this.renderer.drawTrees(this.trees);
     this.renderer.drawParticles(this.particlePool.getActiveParticles());
     const start = pointOnTrack(this.track, 0);
@@ -421,7 +576,17 @@ export class Game {
       y: 12,
       anchorX: "right",
       title: "Controls",
-      lines: [
+      lines: this.editorMode
+        ? [
+            `EDITOR MODE`,
+            `Left click/drag  move point`,
+            `Left click empty add point`,
+            `Right click      delete point`,
+            `S               save track`,
+            `L               load track`,
+            `E               exit editor`
+          ]
+        : [
         `W / ↑  throttle`,
         `S / ↓  brake / reverse`,
         `A/D or ←/→ steer`,
@@ -429,6 +594,7 @@ export class Game {
         `R      reset`,
         `N      new procedural track`,
         `C      camera: ${this.cameraMode}`,
+        `E      editor`,
         `F      force arrows: ${this.showForceArrows ? "ON" : "OFF"}`,
         `arrows: forces + velocity`,
         `cross START to begin timer`
