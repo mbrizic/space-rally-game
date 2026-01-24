@@ -53,6 +53,7 @@ export function generateCity(
     numDecorations?: number;
     radius?: number;
     roadAngle?: number; // angle of road passing through center
+    track?: { points: Array<{ x: number; y: number }>; widthM: number }; // Full track for collision checking
   }
 ): City {
   const rand = mulberry32(seed);
@@ -138,6 +139,9 @@ export function generateCity(
 
   // Add decorative/obstacle buildings OUTSIDE the main corridor area
   // These form the "city blocks" around the main street
+  const track = options?.track;
+  const minDistanceToAnyRoad = track ? track.widthM * 0.5 + 5.0 : 0; // 5m clearance from road edge (increased from 2m)
+  
   for (let i = 0; i < numDecorations; i++) {
     const side = rand() > 0.5 ? 1 : -1; // left or right of road
     
@@ -157,14 +161,32 @@ export function generateCity(
     // Always perpendicular to road (either facing toward or away)
     const rotation = side > 0 ? roadAngle + Math.PI : roadAngle;
     
-    buildings.push({
-      x,
-      y,
-      width,
-      height,
-      rotation,
-      type: "decoration"
-    });
+    // CHECK AGAINST ENTIRE TRACK: Ensure building isn't too close to any road segment
+    let tooCloseToRoad = false;
+    if (track) {
+      for (let j = 0; j < track.points.length - 1; j++) {
+        const a = track.points[j];
+        const b = track.points[j + 1];
+        const distToSegment = pointToSegmentDistance(x, y, a.x, a.y, b.x, b.y);
+        
+        if (distToSegment < minDistanceToAnyRoad) {
+          tooCloseToRoad = true;
+          break;
+        }
+      }
+    }
+    
+    // Only add building if it's safe (not overlapping any part of the track)
+    if (!tooCloseToRoad) {
+      buildings.push({
+        x,
+        y,
+        width,
+        height,
+        rotation,
+        type: "decoration"
+      });
+    }
   }
 
   return {
@@ -174,4 +196,35 @@ export function generateCity(
     parkingSpots,
     radius
   };
+}
+
+/**
+ * Calculate the shortest distance from a point (px, py) to a line segment (ax, ay) -> (bx, by)
+ */
+function pointToSegmentDistance(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lengthSq = dx * dx + dy * dy;
+  
+  // Degenerate case: segment is a point
+  if (lengthSq < 1e-10) {
+    return Math.hypot(px - ax, py - ay);
+  }
+  
+  // Calculate projection parameter t (clamped to [0, 1])
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSq));
+  
+  // Find closest point on segment
+  const closestX = ax + t * dx;
+  const closestY = ay + t * dy;
+  
+  // Return distance to closest point
+  return Math.hypot(px - closestX, py - closestY);
 }

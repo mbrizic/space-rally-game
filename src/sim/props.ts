@@ -18,12 +18,15 @@ export function generateTrees(track: Track, opts?: { seed?: number }): CircleObs
   const roadHalfWidthM = track.widthM * 0.5;
   const minOffsetM = roadHalfWidthM + 1.2;
   const maxOffsetM = roadHalfWidthM + 4.2;
+  
+  // Minimum distance from tree to ANY track segment (not just local one)
+  const minDistanceToAnyRoad = roadHalfWidthM + 3.0; // Increased from 1.5m to 3m
 
   let id = 1;
   for (let s = 0; s < track.totalLengthM; s += spacingM) {
     const { p, normal } = pointAndNormalOnTrack(track, s);
 
-    // Don’t place too close to start.
+    // Don't place too close to start.
     if (s < 18) continue;
 
     const sideCount = 2;
@@ -39,7 +42,23 @@ export function generateTrees(track: Track, opts?: { seed?: number }): CircleObs
       const y = p.y + normal.y * sign * offset + ty * jitterAlong;
       const r = 0.9 + rand() * 0.6;
 
-      trees.push({ id: id++, kind: "tree", x, y, r });
+      // CHECK AGAINST ENTIRE TRACK: Ensure tree isn't too close to any other road segment
+      let tooCloseToRoad = false;
+      for (let i = 0; i < track.points.length - 1; i++) {
+        const a = track.points[i];
+        const b = track.points[i + 1];
+        const distToSegment = pointToSegmentDistance(x, y, a.x, a.y, b.x, b.y);
+        
+        if (distToSegment < minDistanceToAnyRoad) {
+          tooCloseToRoad = true;
+          break;
+        }
+      }
+      
+      // Only add tree if it's safe (not overlapping any part of the track)
+      if (!tooCloseToRoad) {
+        trees.push({ id: id++, kind: "tree", x, y, r });
+      }
     }
   }
 
@@ -82,4 +101,35 @@ function wrapS(sM: number, totalLengthM: number): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * Calculate the shortest distance from a point (px, py) to a line segment (ax, ay) -> (bx, by)
+ */
+function pointToSegmentDistance(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lengthSq = dx * dx + dy * dy;
+  
+  // Degenerate case: segment is a point
+  if (lengthSq < 1e-10) {
+    return Math.hypot(px - ax, py - ay);
+  }
+  
+  // Calculate projection parameter t (clamped to [0, 1])
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSq));
+  
+  // Find closest point on segment
+  const closestX = ax + t * dx;
+  const closestY = ay + t * dy;
+  
+  // Return distance to closest point
+  return Math.hypot(px - closestX, py - closestY);
 }
