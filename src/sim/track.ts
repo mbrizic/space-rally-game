@@ -240,7 +240,7 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
   let totalAbsAngleChange = 0; // Track ABSOLUTE cumulative angle
   
   // DISTRIBUTED APPROACH: Budget per segment instead of total exhaustion
-  const maxTotalAngle = Math.PI * 3.5; // ~630 degrees max total - EXTREMELY wavy rally stages
+  const maxTotalAngle = Math.PI * 10.5; // ~1890 degrees max total - CONSTANT curves throughout entire track
   const avgAnglePerSegment = maxTotalAngle / baseControlPoints; // Distribute evenly
   
   for (let i = 0; i < baseControlPoints; i++) {

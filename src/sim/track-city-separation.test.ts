@@ -195,10 +195,10 @@ describe("Track City Separation", () => {
         maxSeed = seed;
       }
       
-      // Should be between 900m and 1600m total (including city sections)
-      // Route is 800-1400m + 100m for cities
-      expect(totalLength).toBeGreaterThan(880);
-      expect(totalLength).toBeLessThan(1600);
+      // Should be between 850m and 1700m total (including city sections)
+      // With extreme curvature (10.5π budget), tracks vary significantly in length
+      expect(totalLength).toBeGreaterThan(850);
+      expect(totalLength).toBeLessThan(1700);
     }
     
     console.log(`Track lengths over 200 tracks:`);

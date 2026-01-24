@@ -799,11 +799,11 @@ export class Renderer2D {
     const w = this.viewportWidthCssPx || this.canvas.clientWidth;
     const h = this.viewportHeightCssPx || this.canvas.clientHeight;
 
-    // Minimap in top-right corner
-    const minimapSize = Math.min(w, h) * 0.2; // 20% of screen
-    const padding = 20;
+    // Minimap positioned below the Controls panel (top-right)
+    const minimapSize = Math.min(w, h) * 0.18; // 18% of screen
+    const padding = 12;
     const minimapX = w - minimapSize - padding;
-    const minimapY = padding;
+    const minimapY = 280; // Below controls panel (which is ~260px tall)
 
     // Semi-transparent background
     ctx.fillStyle = "rgba(20, 25, 30, 0.7)";
