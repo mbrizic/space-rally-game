@@ -1,3 +1,6 @@
+import type { Game } from "../runtime/game";
+import { PlayerRole } from "../runtime/game";
+
 type NetState = {
   room: string;
   peer: string;
@@ -5,6 +8,7 @@ type NetState = {
   wsConnected: boolean;
   dcState: string;
   lastError: string | null;
+  mode: "offline" | "host" | "client";
 };
 
 type WelcomeMsg = {
@@ -89,7 +93,7 @@ function resolveSignalHealthUrl(): string {
   return "/api/health";
 }
 
-export function initNetSession(): void {
+export function initNetSession(game: Game): void {
   const roomInput = document.getElementById("net-room") as HTMLInputElement | null;
   const createBtn = document.getElementById("net-create") as HTMLButtonElement | null;
   const joinBtn = document.getElementById("net-join") as HTMLButtonElement | null;
@@ -103,7 +107,8 @@ export function initNetSession(): void {
     remotePeer: null,
     wsConnected: false,
     dcState: "closed",
-    lastError: null
+    lastError: null,
+    mode: "offline"
   };
 
   let ws: WebSocket | null = null;
@@ -112,9 +117,13 @@ export function initNetSession(): void {
   let pingTimer: number | null = null;
   let wsLastClose: string | null = null;
   let wsLastUrl: string | null = null;
+  let hostSendTimer: number | null = null;
+  let clientSendTimer: number | null = null;
+  let shootPulse = false;
 
   const render = (): void => {
     const lines = [
+      `mode: ${state.mode}`,
       `room: ${state.room || "-"}`,
       `peer: ${state.peer || "-"}`,
       `remote: ${state.remotePeer || "-"}`,
@@ -133,6 +142,11 @@ export function initNetSession(): void {
   };
 
   const resetP2p = (): void => {
+    if (hostSendTimer) window.clearInterval(hostSendTimer);
+    if (clientSendTimer) window.clearInterval(clientSendTimer);
+    hostSendTimer = null;
+    clientSendTimer = null;
+    game.setNetShootPulseHandler(null);
     try {
       dc?.close();
     } catch {
@@ -182,10 +196,55 @@ export function initNetSession(): void {
     dc.onopen = () => {
       state.dcState = dc?.readyState ?? "open";
       render();
-      try {
-        dc?.send(JSON.stringify({ type: "hello", peer: state.peer }));
-      } catch {
-        // ignore
+      if (!dc) return;
+
+      if (state.mode === "host") {
+        // Authoritative sim runs on host.
+        game.setNetMode("host");
+        game.setRoleExternal(PlayerRole.DRIVER);
+
+        try {
+          dc.send(JSON.stringify({ type: "init", trackDef: game.getSerializedTrackDef() }));
+        } catch {
+          // ignore
+        }
+
+        hostSendTimer = window.setInterval(() => {
+          if (!dc || dc.readyState !== "open") return;
+          try {
+            dc.send(JSON.stringify({ type: "state", ...game.getNetSnapshot() }));
+          } catch {
+            // ignore
+          }
+        }, 50);
+      }
+
+      if (state.mode === "client") {
+        // Client renders snapshots; sends navigator input to host.
+        game.setNetMode("client");
+        game.setRoleExternal(PlayerRole.NAVIGATOR);
+        game.setNetShootPulseHandler(() => {
+          shootPulse = true;
+        });
+
+        clientSendTimer = window.setInterval(() => {
+          if (!dc || dc.readyState !== "open") return;
+          const aim = game.getAimWorld();
+          const payload = {
+            type: "nav",
+            aimX: aim.x,
+            aimY: aim.y,
+            shootHeld: game.getNavigatorShootHeld(),
+            shootPulse,
+            weaponIndex: game.getCurrentWeaponIndex()
+          };
+          shootPulse = false;
+          try {
+            dc.send(JSON.stringify(payload));
+          } catch {
+            // ignore
+          }
+        }, 33);
       }
     };
     dc.onclose = () => {
@@ -196,8 +255,39 @@ export function initNetSession(): void {
       state.dcState = dc?.readyState ?? "error";
       render();
     };
-    dc.onmessage = () => {
-      // Intentionally no-op for now (handshake testing only).
+    dc.onmessage = (e) => {
+      if (typeof e.data !== "string") return;
+      let msg: any;
+      try {
+        msg = JSON.parse(e.data);
+      } catch {
+        return;
+      }
+
+      if (msg?.type === "init" && state.mode === "client") {
+        const ok = typeof msg.trackDef === "string" ? game.loadSerializedTrackDef(msg.trackDef) : false;
+        if (!ok) setError("bad trackDef");
+        return;
+      }
+
+      if (msg?.type === "state" && state.mode === "client") {
+        if (msg && typeof msg.t === "number" && msg.car) {
+          game.applyNetSnapshot(msg);
+        }
+        return;
+      }
+
+      if (msg?.type === "nav" && state.mode === "host") {
+        if (!msg) return;
+        game.applyRemoteNavigatorInput({
+          aimX: typeof msg.aimX === "number" ? msg.aimX : 0,
+          aimY: typeof msg.aimY === "number" ? msg.aimY : 0,
+          shootHeld: !!msg.shootHeld,
+          shootPulse: !!msg.shootPulse,
+          weaponIndex: typeof msg.weaponIndex === "number" ? msg.weaponIndex : 0
+        });
+        return;
+      }
     };
   };
 
@@ -389,8 +479,14 @@ export function initNetSession(): void {
     connect(cleanRoom);
   };
 
-  createBtn.addEventListener("click", () => startRoom(randId(4)));
-  joinBtn.addEventListener("click", () => startRoom(roomInput.value));
+  createBtn.addEventListener("click", () => {
+    state.mode = "host";
+    startRoom(randId(4));
+  });
+  joinBtn.addEventListener("click", () => {
+    state.mode = "client";
+    startRoom(roomInput.value);
+  });
   roomInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") startRoom(roomInput.value);
   });
@@ -409,6 +505,9 @@ export function initNetSession(): void {
 
   // Auto-join if URL has a room.
   const initialRoom = new URL(window.location.href).searchParams.get("room");
-  if (initialRoom) startRoom(initialRoom);
+  if (initialRoom) {
+    state.mode = "client";
+    startRoom(initialRoom);
+  }
   else render();
 }

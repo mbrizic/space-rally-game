@@ -46,6 +46,10 @@ export class Game {
   private readonly canvas: HTMLCanvasElement;
   private shootPointerId: number | null = null;
   private shootHeld = false;
+  private netMode: "solo" | "host" | "client" = "solo";
+  private netRemoteEnemies: { x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank"; health?: number; maxHealth?: number }[] | null = null;
+  private netRemoteNavigator: { aimX: number; aimY: number; shootHeld: boolean; shootPulse: boolean; weaponIndex: number } | null = null;
+  private netShootPulseHandler: (() => void) | null = null;
   private trackDef!: TrackDefinition; // Will be set in constructor
   private track!: ReturnType<typeof createTrackFromDefinition>; // Will be set in constructor
   private trackSegmentFillStyles: string[] = [];
@@ -196,7 +200,7 @@ export class Game {
         this.tryUnlockAudio();
       }
     });
-      // Ensure label matches initial state (without triggering a notification)
+    // Ensure label matches initial state (without triggering a notification)
     if (roleToggle) roleToggle.textContent = this.role === PlayerRole.DRIVER ? "Driver" : "Shooter";
 
     window.addEventListener("keydown", (e) => {
@@ -254,6 +258,76 @@ export class Game {
     });
 
     this.reset();
+  }
+
+  // --- Net (server-infra testing) ---
+  public setNetMode(mode: "solo" | "host" | "client"): void {
+    this.netMode = mode;
+    if (mode !== "client") {
+      this.netRemoteEnemies = null;
+    }
+    if (mode !== "host") {
+      this.netRemoteNavigator = null;
+    }
+  }
+
+  public setNetShootPulseHandler(handler: (() => void) | null): void {
+    this.netShootPulseHandler = handler;
+  }
+
+  public getSerializedTrackDef(): string {
+    return serializeTrackDefinition(this.trackDef);
+  }
+
+  public loadSerializedTrackDef(json: string): boolean {
+    const def = parseTrackDefinition(json);
+    if (!def) return false;
+    this.setTrack(def);
+    this.reset();
+    return true;
+  }
+
+  public applyNetSnapshot(snapshot: {
+    t: number;
+    car: { xM: number; yM: number; headingRad: number; vxMS: number; vyMS: number; yawRateRadS: number; steerAngleRad: number; alphaFrontRad: number; alphaRearRad: number };
+    enemies?: { x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank"; health?: number; maxHealth?: number }[];
+    raceActive?: boolean;
+    raceFinished?: boolean;
+    finishTimeSeconds?: number | null;
+    enemyKillCount?: number;
+  }): void {
+    // Overwrite only the parts we render.
+    this.state = {
+      ...this.state,
+      timeSeconds: snapshot.t,
+      car: { ...this.state.car, ...snapshot.car }
+    };
+    if (snapshot.enemies) this.netRemoteEnemies = snapshot.enemies;
+    if (typeof snapshot.raceActive === "boolean") this.raceActive = snapshot.raceActive;
+    if (typeof snapshot.raceFinished === "boolean") this.raceFinished = snapshot.raceFinished;
+    if (snapshot.finishTimeSeconds !== undefined) this.finishTimeSeconds = snapshot.finishTimeSeconds;
+    if (typeof snapshot.enemyKillCount === "number") this.enemyKillCount = snapshot.enemyKillCount;
+  }
+
+  public applyRemoteNavigatorInput(input: { aimX: number; aimY: number; shootHeld: boolean; shootPulse: boolean; weaponIndex: number }): void {
+    this.netRemoteNavigator = input;
+  }
+
+  public getAimWorld(): { x: number; y: number } {
+    return { x: this.mouseWorldX, y: this.mouseWorldY };
+  }
+
+  public getCurrentWeaponIndex(): number {
+    return this.currentWeaponIndex;
+  }
+
+  public getNavigatorShootHeld(): boolean {
+    // Touch uses shootHeld; keyboard uses lastInputState.shoot (KeyL).
+    return (this.role === PlayerRole.NAVIGATOR) && (this.shootHeld || !!this.lastInputState.shoot);
+  }
+
+  public setRoleExternal(role: PlayerRole): void {
+    this.setRole(role);
   }
 
   private setRole(role: PlayerRole): void {
@@ -446,6 +520,11 @@ export class Game {
     const isTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
     if (isTouch) return;
 
+    if (this.netMode === "client" && this.role === PlayerRole.NAVIGATOR) {
+      this.netShootPulseHandler?.();
+      return;
+    }
+
     // Unlock audio on first click
     if (!this.audioUnlocked) {
       this.tryUnlockAudio();
@@ -482,6 +561,7 @@ export class Game {
     if (!this.audioUnlocked) {
       this.tryUnlockAudio();
     }
+    if (this.netMode === "client") return;
     this.shoot();
   };
 
@@ -535,8 +615,38 @@ export class Game {
     }
   }
 
-  private shoot(): void {
-    const weapon = this.weapons[this.currentWeaponIndex];
+  public getNetSnapshot(): {
+    t: number;
+    car: { xM: number; yM: number; headingRad: number; vxMS: number; vyMS: number; yawRateRadS: number; steerAngleRad: number; alphaFrontRad: number; alphaRearRad: number };
+    enemies: { x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank"; health?: number; maxHealth?: number }[];
+    raceActive: boolean;
+    raceFinished: boolean;
+    finishTimeSeconds: number | null;
+    enemyKillCount: number;
+  } {
+    return {
+      t: this.state.timeSeconds,
+      car: { ...this.state.car },
+      enemies: this.enemyPool.getActive().map((e) => ({
+        x: e.x,
+        y: e.y,
+        radius: e.radius,
+        vx: e.vx,
+        vy: e.vy,
+        type: e.type,
+        health: e.health,
+        maxHealth: e.maxHealth
+      })),
+      raceActive: this.raceActive,
+      raceFinished: this.raceFinished,
+      finishTimeSeconds: this.finishTimeSeconds,
+      enemyKillCount: this.enemyKillCount
+    };
+  }
+
+  private shoot(opts?: { aimX?: number; aimY?: number; weaponIndex?: number }): void {
+    const weaponIndex = opts?.weaponIndex ?? this.currentWeaponIndex;
+    const weapon = this.weapons[weaponIndex];
     if (!weapon) return;
 
     // Check ammo
@@ -562,8 +672,10 @@ export class Game {
     const stats = weapon.stats;
 
     // Calculate base angle to target
-    const dx = this.mouseWorldX - carX;
-    const dy = this.mouseWorldY - carY;
+    const aimX = opts?.aimX ?? this.mouseWorldX;
+    const aimY = opts?.aimY ?? this.mouseWorldY;
+    const dx = aimX - carX;
+    const dy = aimY - carY;
     const baseAngle = Math.atan2(dy, dx);
 
     for (let i = 0; i < stats.projectileCount; i++) {
@@ -700,12 +812,18 @@ export class Game {
 
   private step(dtSeconds: number): void {
     if (this.editorMode) return;
+    // Always update inputs so net-clients can send them.
+    this.lastInputState = this.input.getState();
+
+    if (this.netMode === "client") {
+      return;
+    }
+
     this.state.timeSeconds += dtSeconds;
 
     this.applyTuning();
 
     const inputsEnabled = this.damage01 < 1;
-    this.lastInputState = this.input.getState();
     const rawInput = this.lastInputState;
 
     // Split input by role - although keyboard allows both for solo testing, 
@@ -720,11 +838,20 @@ export class Game {
     const handbrake = inputsEnabled && isDriver ? rawInput.handbrake : 0;
 
     // Navigator actions
-    // - Keyboard: rawInput.shoot (KeyL)
-    // - Touch/pen: hold-to-fire via shootHeld (pointerdown)
+    // - Local keyboard: rawInput.shoot (KeyL)
+    // - Local touch/pen: hold-to-fire via shootHeld
+    // - Remote navigator (net host): aim + shoot
     const heldTouchShoot = this.role === PlayerRole.NAVIGATOR && this.shootHeld;
     if (inputsEnabled && ((isNavigator && rawInput.shoot) || heldTouchShoot)) {
       this.shoot();
+    }
+    if (inputsEnabled && this.netMode === "host" && this.netRemoteNavigator) {
+      const n = this.netRemoteNavigator;
+      if (n.shootPulse || n.shootHeld) {
+        this.shoot({ aimX: n.aimX, aimY: n.aimY, weaponIndex: n.weaponIndex });
+      }
+      // Pulse is one-shot; held is continuous.
+      this.netRemoteNavigator = { ...n, shootPulse: false };
     }
 
     // Gear logic: holding brake from (near) standstill engages reverse.
@@ -948,7 +1075,8 @@ export class Game {
     }
     this.renderer.drawWater(this.waterBodies);
     this.renderer.drawTrees(this.trees);
-    this.renderer.drawEnemies(this.enemyPool.getActive());
+    const enemiesToDraw = this.netMode === "client" && this.netRemoteEnemies ? this.netRemoteEnemies : this.enemyPool.getActive();
+    this.renderer.drawEnemies(enemiesToDraw);
     this.renderer.drawParticles(this.particlePool.getActiveParticles());
     // Draw start line at the first checkpoint position (edge of starting city)
     const start = pointOnTrack(this.track, this.checkpointSM[0]);

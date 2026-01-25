@@ -12,4 +12,4 @@ const game = new Game(canvas, tuning);
 game.start();
 
 // Server-infra testing: pairing + WebRTC handshake panel.
-initNetSession();
+initNetSession(game);
