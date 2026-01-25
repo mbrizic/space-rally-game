@@ -84,7 +84,7 @@ export class Renderer2D {
 
     // Clear the ENTIRE canvas (in actual device pixels, not CSS pixels)
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    
+
     ctx.fillStyle = "rgba(15, 20, 25, 1)";
     // Fill the entire canvas (device pixels)
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
@@ -145,12 +145,13 @@ export class Renderer2D {
     ctx.stroke();
   }
 
-  drawTrack(track: { 
-    points: { x: number; y: number }[]; 
-    widthM: number; 
-    segmentWidthsM?: number[]; 
+  drawTrack(track: {
+    points: { x: number; y: number }[];
+    widthM: number;
+    segmentWidthsM?: number[];
     segmentFillStyles?: string[];
     segmentShoulderStyles?: string[];
+    segmentSurfaceNames?: ("tarmac" | "gravel" | "dirt" | "ice" | "offtrack")[];
   }): void {
     const ctx = this.ctx;
     if (track.points.length < 2) return;
@@ -185,7 +186,7 @@ export class Renderer2D {
     const drawFilledSection = (startIdx: number, endIdx: number, style: string, widthMultiplier: number) => {
       ctx.fillStyle = style;
       ctx.beginPath();
-      
+
       // Left edge (forward direction)
       for (let i = startIdx; i <= endIdx; i++) {
         const p = track.points[i];
@@ -199,7 +200,7 @@ export class Renderer2D {
           ctx.lineTo(x, y);
         }
       }
-      
+
       // Right edge (backward direction)
       for (let i = endIdx; i >= startIdx; i--) {
         const p = track.points[i];
@@ -209,7 +210,7 @@ export class Renderer2D {
         const y = p.y - n.ny * halfWidth;
         ctx.lineTo(x, y);
       }
-      
+
       ctx.closePath();
       ctx.fill();
     };
@@ -218,7 +219,7 @@ export class Renderer2D {
     if (shoulderStyles && shoulderStyles.length === track.points.length) {
       let sectionStart = 0;
       let currentShoulderStyle = shoulderStyles[0];
-      
+
       for (let i = 1; i < track.points.length; i++) {
         const newStyle = shoulderStyles[i];
         if (newStyle !== currentShoulderStyle) {
@@ -236,7 +237,7 @@ export class Renderer2D {
     if (fillStyles && fillStyles.length === track.points.length) {
       let sectionStart = 0;
       let currentFillStyle = fillStyles[0];
-      
+
       for (let i = 1; i < track.points.length; i++) {
         const newStyle = fillStyles[i];
         if (newStyle !== currentFillStyle) {
@@ -255,7 +256,7 @@ export class Renderer2D {
     ctx.lineWidth = 0.15;
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
-    
+
     // Left edge
     ctx.beginPath();
     for (let i = 0; i < track.points.length; i++) {
@@ -268,7 +269,7 @@ export class Renderer2D {
       else ctx.lineTo(x, y);
     }
     ctx.stroke();
-    
+
     // Right edge
     ctx.beginPath();
     for (let i = 0; i < track.points.length; i++) {
@@ -282,14 +283,20 @@ export class Renderer2D {
     }
     ctx.stroke();
 
-    // Centerline
+    // Centerline - only for tarmac and ice
     ctx.strokeStyle = "rgba(255, 255, 255, 0.20)";
     ctx.lineWidth = 0.20;
     ctx.setLineDash([1.2, 1.5]);
-    ctx.beginPath();
-    ctx.moveTo(track.points[0].x, track.points[0].y);
-    for (let i = 1; i < track.points.length; i++) ctx.lineTo(track.points[i].x, track.points[i].y);
-    ctx.stroke();
+
+    for (let i = 0; i < track.points.length - 1; i++) {
+      const surfaceName = track.segmentSurfaceNames ? track.segmentSurfaceNames[i] : "tarmac";
+      if (surfaceName === "tarmac" || surfaceName === "ice") {
+        ctx.beginPath();
+        ctx.moveTo(track.points[i].x, track.points[i].y);
+        ctx.lineTo(track.points[i + 1].x, track.points[i + 1].y);
+        ctx.stroke();
+      }
+    }
     ctx.setLineDash([]);
 
     ctx.restore();
@@ -444,75 +451,109 @@ export class Renderer2D {
     ctx.restore();
   }
 
-  drawEnemies(enemies: { x: number; y: number; radius: number; vx: number; vy: number }[]): void {
+  drawEnemies(enemies: { x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank"; health?: number; maxHealth?: number }[]): void {
     const ctx = this.ctx;
     ctx.save();
-    
+
     for (const enemy of enemies) {
       ctx.save();
       ctx.translate(enemy.x, enemy.y);
-      
-      // Zombie body - greenish gray humanoid
-      ctx.fillStyle = "rgba(80, 100, 70, 0.9)";
-      ctx.strokeStyle = "rgba(40, 50, 35, 0.95)";
-      ctx.lineWidth = 0.08;
-      
-      // Simple humanoid shape (circle with slight ellipse for body)
+
+      const isTank = enemy.type === "tank";
+
+      // Select base colors based on type
+      let bodyColor = "rgba(80, 100, 70, 0.9)"; // Greenish gray (Zombie)
+      let headColor = "rgba(90, 110, 80, 0.95)";
+      let outlineColor = "rgba(40, 50, 35, 0.95)";
+
+      if (isTank) {
+        bodyColor = "rgba(100, 80, 120, 0.9)"; // Purplish dark gray (Tank)
+        headColor = "rgba(110, 90, 130, 0.95)";
+        outlineColor = "rgba(50, 40, 60, 0.95)";
+      }
+
+      ctx.fillStyle = bodyColor;
+      ctx.strokeStyle = outlineColor;
+      ctx.lineWidth = isTank ? 0.12 : 0.08;
+
+      // Body shape
       ctx.beginPath();
-      ctx.ellipse(0, 0, enemy.radius * 0.8, enemy.radius, 0, 0, Math.PI * 2);
+      if (isTank) {
+        // Tanks are beefier (more elliptical/broad)
+        ctx.ellipse(0, 0, enemy.radius * 0.9, enemy.radius, 0, 0, Math.PI * 2);
+      } else {
+        ctx.ellipse(0, 0, enemy.radius * 0.8, enemy.radius, 0, 0, Math.PI * 2);
+      }
       ctx.fill();
       ctx.stroke();
-      
-      // Head (smaller circle on top)
-      ctx.fillStyle = "rgba(90, 110, 80, 0.95)";
+
+      // Head
+      ctx.fillStyle = headColor;
       ctx.beginPath();
-      ctx.arc(0, -enemy.radius * 0.6, enemy.radius * 0.35, 0, Math.PI * 2);
+      ctx.arc(0, -enemy.radius * 0.6, enemy.radius * (isTank ? 0.4 : 0.35), 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-      
-      // Red eyes for zombie effect
+
+      // Eyes - Red for both
       const eyeY = -enemy.radius * 0.65;
+      const eyeOffset = enemy.radius * (isTank ? 0.2 : 0.15);
+      const eyeSize = isTank ? 0.12 : 0.08;
+
       ctx.fillStyle = "rgba(200, 50, 50, 0.9)";
       ctx.beginPath();
-      ctx.arc(-enemy.radius * 0.15, eyeY, 0.08, 0, Math.PI * 2);
-      ctx.arc(enemy.radius * 0.15, eyeY, 0.08, 0, Math.PI * 2);
+      ctx.arc(-eyeOffset, eyeY, eyeSize, 0, Math.PI * 2);
+      ctx.arc(eyeOffset, eyeY, eyeSize, 0, Math.PI * 2);
       ctx.fill();
-      
+
+      // Health bar for Tanks or wounded enemies
+      if (enemy.health !== undefined && enemy.maxHealth !== undefined && (isTank || enemy.health < enemy.maxHealth)) {
+        const barWidth = enemy.radius * 1.5;
+        const barHeight = 0.15;
+        const barY = -enemy.radius * 1.4;
+
+        ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+        ctx.fillRect(-barWidth / 2, barY, barWidth, barHeight);
+
+        const healthPercent = Math.max(0, enemy.health / enemy.maxHealth);
+        ctx.fillStyle = healthPercent > 0.5 ? "rgba(100, 255, 100, 0.8)" : "rgba(255, 100, 100, 0.8)";
+        ctx.fillRect(-barWidth / 2, barY, barWidth * healthPercent, barHeight);
+      }
+
       ctx.restore();
     }
-    
+
     ctx.restore();
   }
 
   drawWater(waterBodies: { x: number; y: number; radiusX: number; radiusY: number; rotation: number }[]): void {
     const ctx = this.ctx;
     ctx.save();
-    
+
     for (const w of waterBodies) {
       ctx.save();
       ctx.translate(w.x, w.y);
       ctx.rotate(w.rotation);
-      
+
       // Water fill - semi-transparent blue
       ctx.fillStyle = "rgba(40, 90, 140, 0.7)";
       ctx.beginPath();
       ctx.ellipse(0, 0, w.radiusX, w.radiusY, 0, 0, Math.PI * 2);
       ctx.fill();
-      
+
       // Darker edge/shore
       ctx.strokeStyle = "rgba(30, 60, 100, 0.9)";
       ctx.lineWidth = 0.3;
       ctx.stroke();
-      
+
       // Inner highlight for depth effect
       ctx.fillStyle = "rgba(60, 120, 180, 0.4)";
       ctx.beginPath();
       ctx.ellipse(-w.radiusX * 0.2, -w.radiusY * 0.2, w.radiusX * 0.5, w.radiusY * 0.5, 0, 0, Math.PI * 2);
       ctx.fill();
-      
+
       ctx.restore();
     }
-    
+
     ctx.restore();
   }
 
@@ -550,7 +591,7 @@ export class Renderer2D {
   drawParticles(particles: { x: number; y: number; sizeM: number; color: string; lifetime: number; maxLifetime: number }[]): void {
     const ctx = this.ctx;
     ctx.save();
-    
+
     for (const p of particles) {
       // Fade alpha based on remaining lifetime
       const fade = Math.min(1, p.lifetime / Math.max(0.1, p.maxLifetime));
@@ -570,43 +611,53 @@ export class Renderer2D {
     ctx.restore();
   }
 
-  drawProjectiles(projectiles: { x: number; y: number; vx: number; vy: number; age: number }[]): void {
+  drawProjectiles(projectiles: { x: number; y: number; vx: number; vy: number; color?: string; size?: number }[]): void {
     const ctx = this.ctx;
     ctx.save();
-    
+
     for (const proj of projectiles) {
-      // Draw bullet as bright tracer line
-      const speed = Math.hypot(proj.vx, proj.vy);
-      const tracerLength = Math.min(speed * 0.02, 15); // 20ms trail, max 15m
-      
-      // Calculate tracer tail position
-      const dx = proj.vx / speed;
-      const dy = proj.vy / speed;
-      const tailX = proj.x - dx * tracerLength;
-      const tailY = proj.y - dy * tracerLength;
-      
-      // Bright tracer with glow
-      ctx.strokeStyle = "rgba(255, 220, 100, 0.95)";
-      ctx.lineWidth = 0.15; // 15cm tracer width
+      const v = Math.hypot(proj.vx, proj.vy);
+      if (v < 1) continue;
+
+      // Tracer line - elongated based on velocity
+      const tracerLen = 1.5; // High visibility length
+      const dx = proj.vx / v;
+      const dy = proj.vy / v;
+      const tailX = proj.x - dx * tracerLen;
+      const tailY = proj.y - dy * tracerLen;
+
+      const baseColor = proj.color || "rgba(255, 220, 100, 0.95)";
+      const sizeM = proj.size !== undefined ? proj.size : 0.2;
+
+      // LAYER 1: OUTER GLOW (Thick, blured color)
+      ctx.save();
+      ctx.strokeStyle = baseColor;
+      ctx.lineWidth = sizeM * 1.5; // Bolder glow
       ctx.lineCap = "round";
-      
-      // Add glow effect
-      ctx.shadowColor = "rgba(255, 200, 80, 0.8)";
-      ctx.shadowBlur = 0.3;
-      
+      ctx.shadowColor = baseColor;
+      ctx.shadowBlur = 1.2; // Significant glow
+
       ctx.beginPath();
       ctx.moveTo(tailX, tailY);
       ctx.lineTo(proj.x, proj.y);
       ctx.stroke();
-      
-      // Draw bright head
-      ctx.fillStyle = "rgba(255, 240, 150, 1)";
+      ctx.restore();
+
+      // LAYER 2: WHITE CORE (Thin, bright center)
+      ctx.save();
+      ctx.strokeStyle = "rgba(255, 255, 255, 1.0)";
+      ctx.lineWidth = sizeM * 0.4; // Sharp center line
+      ctx.lineCap = "round";
+      ctx.shadowColor = "#ffffff";
       ctx.shadowBlur = 0.4;
+
       ctx.beginPath();
-      ctx.arc(proj.x, proj.y, 0.1, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.moveTo(tailX, tailY);
+      ctx.lineTo(proj.x, proj.y);
+      ctx.stroke();
+      ctx.restore();
     }
-    
+
     ctx.restore();
   }
 
@@ -702,7 +753,7 @@ export class Renderer2D {
 
     const w = this.viewportWidthCssPx || this.canvas.clientWidth;
     const x = w / 2;
-    const y = 80; // Moved down to avoid overlapping with Rally info
+    const y = 120; // Moved down to avoid overlapping with Rally info
 
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
@@ -847,7 +898,7 @@ export class Renderer2D {
     ctx.restore();
   }
 
-  drawRpmMeter(opts: { rpm: number; maxRpm: number; redlineRpm: number; gear: number; totalDistanceKm?: number }): void {
+  drawRpmMeter(opts: { rpm: number; maxRpm: number; redlineRpm: number; gear: number | string; speedKmH: number; totalDistanceKm?: number }): void {
     const ctx = this.ctx;
     ctx.save();
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -869,61 +920,104 @@ export class Renderer2D {
     ctx.arc(centerX, centerY, radius, startAngle, endAngle);
     ctx.stroke();
 
-    // Color zones
+    // Color zones calculations
     const rpmFraction = opts.rpm / opts.maxRpm;
     const redlineFraction = opts.redlineRpm / opts.maxRpm;
     const sweepAngle = endAngle - startAngle;
 
-    // Green zone (0-70% of redline)
-    ctx.strokeStyle = "rgba(80, 200, 120, 0.7)";
+    // Background full arc (Dimmed and desaturated)
     ctx.lineWidth = 14;
+    ctx.lineCap = "round";
+
+    // Dimmed Green (0-70%)
+    ctx.strokeStyle = "rgba(40, 100, 60, 0.3)";
     ctx.beginPath();
     ctx.arc(centerX, centerY, radius, startAngle, startAngle + sweepAngle * redlineFraction * 0.7);
     ctx.stroke();
 
-    // Yellow zone (70-90% of redline)
-    ctx.strokeStyle = "rgba(255, 200, 60, 0.7)";
+    // Dimmed Yellow (70-90%)
+    ctx.strokeStyle = "rgba(120, 100, 30, 0.3)";
     ctx.beginPath();
     ctx.arc(centerX, centerY, radius, startAngle + sweepAngle * redlineFraction * 0.7, startAngle + sweepAngle * redlineFraction * 0.9);
     ctx.stroke();
 
-    // Red zone (90%+ of redline)
-    ctx.strokeStyle = "rgba(255, 80, 80, 0.7)";
+    // Dimmed Red (90-100%)
+    ctx.strokeStyle = "rgba(100, 40, 40, 0.3)";
     ctx.beginPath();
     ctx.arc(centerX, centerY, radius, startAngle + sweepAngle * redlineFraction * 0.9, endAngle);
     ctx.stroke();
 
-    // RPM needle
-    const needleAngle = startAngle + sweepAngle * Math.min(rpmFraction, 1);
-    const needleLength = radius - 10;
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(centerX, centerY);
-    ctx.lineTo(
-      centerX + Math.cos(needleAngle) * needleLength,
-      centerY + Math.sin(needleAngle) * needleLength
-    );
-    ctx.stroke();
+    // VIBRANT FOREGROUND ARC (Fills based on current RPM)
+    const activeSweep = sweepAngle * Math.min(rpmFraction, 1);
 
-    // Center dot
-    ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
-    ctx.beginPath();
-    ctx.arc(centerX, centerY, 6, 0, Math.PI * 2);
-    ctx.fill();
+    // We draw segment by segment to maintain color zones
+    const greenEnd = sweepAngle * redlineFraction * 0.7;
+    const yellowEnd = sweepAngle * redlineFraction * 0.9;
 
-    // RPM text
-    ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
-    ctx.font = "bold 18px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    // Vibrant Green
+    if (activeSweep > 0) {
+      ctx.strokeStyle = "rgba(80, 255, 120, 1.0)";
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, radius, startAngle, startAngle + Math.min(activeSweep, greenEnd));
+      ctx.stroke();
+    }
+
+    // Vibrant Yellow
+    if (activeSweep > greenEnd) {
+      ctx.strokeStyle = "rgba(255, 220, 60, 1.0)";
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, radius, startAngle + greenEnd, startAngle + Math.min(activeSweep, yellowEnd));
+      ctx.stroke();
+    }
+
+    // Vibrant Red
+    if (activeSweep > yellowEnd) {
+      ctx.strokeStyle = "rgba(255, 60, 60, 1.0)";
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, radius, startAngle + yellowEnd, startAngle + activeSweep);
+      ctx.stroke();
+    }
+
+    // Glow Effect for the active tip
+    if (activeSweep > 0) {
+      ctx.save();
+      const tipAngle = startAngle + activeSweep;
+      const tipX = centerX + Math.cos(tipAngle) * radius;
+      const tipY = centerY + Math.sin(tipAngle) * radius;
+
+      ctx.shadowColor = rpmFraction > redlineFraction * 0.9 ? "rgba(255, 60, 60, 1)" : "rgba(180, 220, 255, 0.8)";
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = "white";
+      ctx.beginPath();
+      ctx.arc(tipX, tipY, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // Speed text - BOLD and PROMINENT
+    ctx.fillStyle = "rgba(255, 255, 255, 0.98)";
+    ctx.font = "bold 32px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(`${Math.round(opts.rpm)}`, centerX, centerY + 28);
+    ctx.fillText(`${Math.round(opts.speedKmH)}`, centerX, centerY - 10);
+
+    // Speed unit
+    ctx.font = "bold 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.fillStyle = "rgba(180, 220, 255, 0.7)";
+    ctx.fillText("KM/H", centerX, centerY + 12);
+
+    // RPM text (smaller, below speed)
+    ctx.fillStyle = "rgba(180, 220, 255, 0.6)";
+    ctx.font = "bold 14px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`RPM: ${Math.round(opts.rpm)}`, centerX, centerY + 32);
 
     // Gear indicator - PROMINENT for manual shifting
     ctx.font = "bold 60px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
     ctx.fillStyle = rpmFraction > redlineFraction * 0.9 ? "rgba(255, 100, 100, 1)" : "rgba(180, 220, 255, 0.98)";
     ctx.fillText(`${opts.gear}`, centerX + radius + 50, centerY - 5);
-    
+
     // Gear label
     ctx.font = "bold 14px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
     ctx.fillStyle = "rgba(180, 220, 255, 0.7)";
@@ -966,12 +1060,12 @@ export class Renderer2D {
     ctx.font = "bold 48px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    
+
     // Black outline
     ctx.strokeStyle = `rgba(0, 0, 0, ${alpha * 0.8})`;
     ctx.lineWidth = 8;
     ctx.strokeText(text, centerX, centerY);
-    
+
     // White text
     ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
     ctx.fillText(text, centerX, centerY);
@@ -987,11 +1081,11 @@ export class Renderer2D {
     const w = this.viewportWidthCssPx || this.canvas.clientWidth;
     const h = this.viewportHeightCssPx || this.canvas.clientHeight;
 
-    // Red vignette that intensifies with damage
+    // Yellow/brown vignette that intensifies with damage
     const alpha = Math.min(opts.damage01 * 0.4, 0.6);
     const gradient = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.2, w / 2, h / 2, Math.max(w, h) * 0.8);
-    gradient.addColorStop(0, `rgba(255, 0, 0, 0)`);
-    gradient.addColorStop(1, `rgba(200, 0, 0, ${alpha})`);
+    gradient.addColorStop(0, `rgba(255, 230, 100, 0)`);
+    gradient.addColorStop(1, `rgba(120, 70, 20, ${alpha})`);
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, w, h);
 
@@ -1036,7 +1130,39 @@ export class Renderer2D {
     ctx.restore();
   }
 
-  drawMinimap(opts: { track: any; carX: number; carY: number; carHeading: number; waterBodies?: { x: number; y: number; radiusX: number; radiusY: number; rotation: number }[]; enemies?: { x: number; y: number }[] }): void {
+  drawWeaponHUD(currentWeapon: { name: string; ammo: number; capacity: number }, screenWidth: number, screenHeight: number): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+
+    const padding = 16;
+    const x = screenWidth - padding;
+    const y = screenHeight - padding;
+
+    ctx.textAlign = "right";
+    ctx.textBaseline = "bottom";
+
+    // Weapon Name
+    ctx.font = "bold 24px 'Space Mono', monospace";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+    ctx.fillText(currentWeapon.name.toUpperCase(), x, y - 30);
+
+    // Ammo
+    ctx.font = "bold 36px 'Space Mono', monospace";
+    const ammoText = currentWeapon.capacity === -1 ? "INF" : `${currentWeapon.ammo}/${currentWeapon.capacity}`;
+
+    // Color ammo red if low
+    if (currentWeapon.capacity !== -1 && currentWeapon.ammo <= currentWeapon.capacity * 0.2) {
+      ctx.fillStyle = "rgba(255, 80, 80, 0.9)";
+    } else {
+      ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+    }
+    ctx.fillText(ammoText, x, y);
+
+    ctx.restore();
+  }
+
+  drawMinimap(opts: { track: any; carX: number; carY: number; carHeading: number; waterBodies?: { x: number; y: number; radiusX: number; radiusY: number; rotation: number }[]; enemies?: { x: number; y: number; type?: string }[] }): void {
     const ctx = this.ctx;
     ctx.save();
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -1098,7 +1224,7 @@ export class Renderer2D {
         const wy = offsetY + water.y * scale;
         const rx = water.radiusX * scale;
         const ry = water.radiusY * scale;
-        
+
         ctx.save();
         ctx.translate(wx, wy);
         ctx.rotate(water.rotation);
@@ -1142,11 +1268,11 @@ export class Renderer2D {
     // Draw car
     const carX = offsetX + opts.carX * scale;
     const carY = offsetY + opts.carY * scale;
-    
+
     ctx.save();
     ctx.translate(carX, carY);
     ctx.rotate(opts.carHeading);
-    
+
     // Car triangle
     ctx.fillStyle = "rgba(255, 100, 100, 0.9)";
     ctx.beginPath();
@@ -1155,12 +1281,12 @@ export class Renderer2D {
     ctx.lineTo(-4, 3);
     ctx.closePath();
     ctx.fill();
-    
+
     // Car outline
     ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
     ctx.lineWidth = 1;
     ctx.stroke();
-    
+
     ctx.restore();
 
     ctx.restore();

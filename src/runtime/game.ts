@@ -23,8 +23,10 @@ import { SlideAudio } from "../audio/audio-slide";
 import { EffectsAudio } from "../audio/audio-effects";
 import { computePacenote } from "../sim/pacenotes";
 import type { TuningPanel } from "./tuning";
-import { ProjectilePool } from "../sim/projectile";
-import { EnemyPool, generateEnemies } from "../sim/enemy";
+import { createProjectile, ProjectilePool } from "../sim/projectile";
+import { createEnemy, EnemyPool, EnemyType, generateEnemies } from "../sim/enemy";
+import { createWeaponState, WeaponState, WeaponType } from "../sim/weapons";
+import { mulberry32 } from "../sim/rng";
 
 type GameState = {
   timeSeconds: number;
@@ -41,6 +43,7 @@ export class Game {
   private track!: ReturnType<typeof createTrackFromDefinition>; // Will be set in constructor
   private trackSegmentFillStyles: string[] = [];
   private trackSegmentShoulderStyles: string[] = [];
+  private trackSegmentSurfaceNames: ("tarmac" | "gravel" | "dirt" | "ice" | "offtrack")[] = [];
   private trees: CircleObstacle[] = [];
   private waterBodies: WaterBody[] = [];
   private inWater = false;
@@ -63,7 +66,7 @@ export class Game {
   private visualRollVel = 0;
   private readonly driftDetector = new DriftDetector();
   private driftInfo: DriftInfo = { state: DriftState.NO_DRIFT, intensity: 0, duration: 0, score: 0 };
-  private readonly particlePool = new ParticlePool(2000);
+  private readonly particlePool = new ParticlePool(10000);
   private particleAccumulator = 0;
   private cameraShakeX = 0;
   private cameraShakeY = 0;
@@ -93,7 +96,8 @@ export class Game {
   private mouseY = 0;
   private mouseWorldX = 0; // Mouse position in world meters
   private mouseWorldY = 0;
-  private lastShotTime = 0; // For rate limiting shots
+  private weapons: WeaponState[] = [];
+  private currentWeaponIndex = 0;
   private enemyKillCount = 0; // Track kills for scoring
 
   private lastFrameTimeMs = 0;
@@ -130,17 +134,27 @@ export class Game {
     this.input = new KeyboardInput(window);
     this.tuning = tuning;
     this.canvas = canvas;
-    
+
     // Load total distance from localStorage
     const savedDistance = localStorage.getItem('space-rally-total-distance');
     if (savedDistance) {
       this.totalDistanceM = parseFloat(savedDistance) || 0;
     }
-    
+
     // Track mouse position
     canvas.addEventListener('mousemove', this.onMouseMove);
     canvas.addEventListener('click', this.onMouseClick);
     canvas.style.cursor = 'none'; // Hide default cursor, we'll draw crosshair
+
+    // Initialize weapons
+    this.weapons = [
+      createWeaponState(WeaponType.HANDGUN),
+      createWeaponState(WeaponType.RIFLE),
+      createWeaponState(WeaponType.AK47),
+      createWeaponState(WeaponType.SHOTGUN)
+    ];
+    this.currentWeaponIndex = 0; // Default to Handgun
+
     // Start with a point-to-point track
     this.setTrack(createPointToPointTrackDefinition(this.proceduralSeed));
 
@@ -151,6 +165,10 @@ export class Game {
       if (e.code === "KeyT") this.toggleEditorMode(); // Changed from E to T
       if (e.code === "KeyJ") this.shiftDown(); // Manual downshift
       if (e.code === "KeyK") this.shiftUp(); // Manual upshift
+      if (e.code === "Digit1" && !this.editorMode) this.switchWeapon(0);
+      if (e.code === "Digit2" && !this.editorMode) this.switchWeapon(1);
+      if (e.code === "Digit3" && !this.editorMode) this.switchWeapon(2);
+      if (e.code === "Digit4" && !this.editorMode) this.switchWeapon(3);
       if (e.code === "Digit1" && this.editorMode) this.saveEditorTrack(); // Changed from S
       if (e.code === "Digit2" && this.editorMode) this.loadEditorTrack(); // Changed from L
       if (e.code === "KeyF") {
@@ -159,9 +177,6 @@ export class Game {
       }
       if (e.code === "KeyM") {
         this.showMinimap = !this.showMinimap;
-      }
-      if (e.code === "KeyL") {
-        this.shoot();
       }
       // Unlock audio on first key press
       if (!this.audioUnlocked) {
@@ -362,23 +377,76 @@ export class Game {
     this.shoot();
   };
 
+  private switchWeapon(index: number): void {
+    if (index >= 0 && index < this.weapons.length) {
+      this.currentWeaponIndex = index;
+    }
+  }
+
   private shoot(): void {
-    // Rate limit: max 5 shots per second (0.2s cooldown)
+    const weapon = this.weapons[this.currentWeaponIndex];
+    if (!weapon) return;
+
+    // Check ammo
+    if (weapon.ammo === 0) {
+      if (this.audioUnlocked) {
+        // Click sound for empty
+      }
+      return;
+    }
+
+    // Rate limit
     const now = this.state.timeSeconds;
-    if (now - this.lastShotTime < 0.2) return;
-    
-    this.lastShotTime = now;
-    
-    // Spawn projectile from car center
+    if (now - weapon.lastFireTime < weapon.stats.fireInterval) return;
+
+    weapon.lastFireTime = now;
+    if (weapon.ammo > 0) {
+      weapon.ammo--;
+    }
+
+    // Spawn projectile(s) from car center
     const carX = this.state.car.xM;
     const carY = this.state.car.yM;
-    
-    // Use slower speed for better visibility (200 m/s)
-    this.projectilePool.spawn(carX, carY, this.mouseWorldX, this.mouseWorldY, 200);
-    
+    const stats = weapon.stats;
+
+    // Calculate base angle to target
+    const dx = this.mouseWorldX - carX;
+    const dy = this.mouseWorldY - carY;
+    const baseAngle = Math.atan2(dy, dx);
+
+    for (let i = 0; i < stats.projectileCount; i++) {
+      // Apply spread
+      const spread = (Math.random() - 0.5) * stats.spread;
+      const angle = baseAngle + spread;
+
+      // Calculate target from angle
+      const dist = 10; // Arbitrary distance to define direction
+      const targetX = carX + Math.cos(angle) * dist;
+      const targetY = carY + Math.sin(angle) * dist;
+
+      this.projectilePool.spawn(
+        carX,
+        carY,
+        targetX,
+        targetY,
+        stats.projectileSpeed,
+        stats.damage,
+        stats.projectileColor,
+        stats.projectileSize
+      );
+    }
+
     // Play gunshot sound - only if audio is unlocked
     if (this.audioUnlocked) {
-      this.effectsAudio.playEffect("gunshot", 1.0); // Full volume
+      // Use weapon specific sound if we had more, for now vary pitch/vol
+      let vol = 1.0;
+      let pitch = 1.0;
+
+      if (stats.type === WeaponType.RIFLE) { vol = 0.9; pitch = 0.75; }
+      else if (stats.type === WeaponType.AK47) { vol = 0.7; pitch = 1.2; }
+      else if (stats.type === WeaponType.SHOTGUN) { vol = 1.1; pitch = 0.6; } // Deep boom
+
+      this.effectsAudio.playEffect("gunshot", vol, pitch);
     }
   }
 
@@ -396,11 +464,13 @@ export class Game {
     const trackSeed = def.meta?.seed ?? 1;
     this.trackSegmentFillStyles = [];
     this.trackSegmentShoulderStyles = [];
+    this.trackSegmentSurfaceNames = [];
     for (let i = 0; i < this.track.points.length; i++) {
       const midSM = this.track.cumulativeLengthsM[i] + this.track.segmentLengthsM[i] * 0.5;
       const surface = surfaceForTrackSM(this.track.totalLengthM, midSM, false, trackSeed);
       this.trackSegmentFillStyles.push(surfaceFillStyle(surface));
       this.trackSegmentShoulderStyles.push(surfaceShoulderStyle(surface));
+      this.trackSegmentSurfaceNames.push(surface.name);
     }
 
     // Track layout: 0-50m city, 50m START, route, end-50m FINISH, last 50m city
@@ -408,7 +478,7 @@ export class Game {
     const startLinePos = cityLength; // Exit of starting city
     const finishLinePos = this.track.totalLengthM - cityLength; // Entrance to ending city
     const raceDistance = finishLinePos - startLinePos;
-    
+
     this.checkpointSM = [
       startLinePos, // START LINE at exit of starting city
       startLinePos + raceDistance * 0.33,
@@ -488,6 +558,11 @@ export class Game {
     const brakeOrReverse = inputsEnabled ? this.input.axis("brake") : 0; // [0..1]
     const handbrake = inputsEnabled ? this.input.axis("handbrake") : 0; // [0..1]
 
+    // Shooting: holding 'L' fires continuously
+    if (inputsEnabled && this.input.isDown("KeyL")) {
+      this.shoot();
+    }
+
     // Gear logic: holding brake from (near) standstill engages reverse.
     // In reverse gear, the brake key becomes reverse throttle; press W to go back to forward.
     if (throttleForward > 0.05) this.gear = "F";
@@ -515,8 +590,8 @@ export class Game {
     const engineResult = stepEngine(
       this.engineState,
       this.engineParams,
-      { 
-        throttle: Math.abs(throttle), 
+      {
+        throttle: Math.abs(throttle),
         speedMS: this.speedMS(),
         manualTransmission: this.tuning?.values.manualTransmission ?? true
       },
@@ -561,15 +636,15 @@ export class Game {
     const speedMS = this.speedMS();
     const driftIntensity = Math.max(this.driftInfo.intensity, handbrake * Math.min(speedMS / 15, 1));
     const rawWheelspinIntensity = this.state.carTelemetry.wheelspinIntensity;
-    
+
     // Scale wheelspin by surface - much less on tarmac, more on low-grip surfaces
     const surfaceFriction = this.lastSurface.frictionMu;
     const wheelspinSurfaceScale = Math.max(0.1, 1.5 - surfaceFriction); // 0.5 on tarmac, 1.0+ on gravel/dirt
     const wheelspinIntensity = rawWheelspinIntensity * wheelspinSurfaceScale;
-    
+
     // Combine drift and wheelspin - wheelspin is most visible at lower speeds
     const totalIntensity = Math.max(driftIntensity, wheelspinIntensity * (1 - Math.min(speedMS / 30, 1)));
-    
+
     if (totalIntensity > 0.2) {
       const particleConfig = getParticleConfig(this.lastSurface);
       const particlesPerSecond = particleConfig.spawnRate * totalIntensity;
@@ -674,12 +749,12 @@ export class Game {
       pixelsPerMeter: 36,
       rotationRad: this.cameraRotationRad
     });
-    
+
     // Update mouse world position now that camera is set
     this.updateMouseWorldPosition();
 
     this.renderer.drawGrid({ spacingMeters: 1, majorEvery: 5 });
-    
+
     // Draw cities BEFORE track so road appears on top
     if (this.track.startCity) {
       this.renderer.drawCity(this.track.startCity);
@@ -687,11 +762,12 @@ export class Game {
     if (this.track.endCity) {
       this.renderer.drawCity(this.track.endCity);
     }
-    
-    this.renderer.drawTrack({ 
-      ...this.track, 
+
+    this.renderer.drawTrack({
+      ...this.track,
       segmentFillStyles: this.trackSegmentFillStyles,
-      segmentShoulderStyles: this.trackSegmentShoulderStyles
+      segmentShoulderStyles: this.trackSegmentShoulderStyles,
+      segmentSurfaceNames: this.trackSegmentSurfaceNames
     });
     if (this.editorMode) {
       this.renderer.drawTrackEditorPoints({
@@ -730,7 +806,7 @@ export class Game {
       speed: this.speedMS(),
       rollOffsetM: this.visualRollOffsetM
     });
-    
+
     // Draw projectiles (bullets)
     this.renderer.drawProjectiles(this.projectilePool.getActive());
 
@@ -739,18 +815,18 @@ export class Game {
     }
 
     this.renderer.endCamera();
-    
+
     // Draw crosshair at mouse position (screen space)
     this.renderer.drawCrosshair(this.mouseX, this.mouseY);
 
     // Rally info - prominent at top center
-    const raceTime = this.raceActive && !this.raceFinished 
-      ? this.state.timeSeconds - this.raceStartTimeSeconds 
+    const raceTime = this.raceActive && !this.raceFinished
+      ? this.state.timeSeconds - this.raceStartTimeSeconds
       : this.finishTimeSeconds ?? 0;
-    const stageLine = this.raceFinished 
-      ? `FINISHED: ${this.finishTimeSeconds?.toFixed(2)}s` 
-      : this.raceActive 
-        ? `${raceTime.toFixed(2)}s` 
+    const stageLine = this.raceFinished
+      ? `FINISHED: ${this.finishTimeSeconds?.toFixed(2)}s`
+      : this.raceActive
+        ? `${raceTime.toFixed(2)}s`
         : `NOT STARTED`;
     this.renderer.drawPanel({
       x: width / 2,
@@ -783,11 +859,18 @@ export class Game {
             .toFixed(2)}`,
           `handbrake: ${this.input.axis("handbrake").toFixed(2)}  gear: ${this.gear}`,
           `yawRate: ${this.state.car.yawRateRadS.toFixed(2)} rad/s`,
-          `next gate: ${gateLabel(this.nextCheckpointIndex, this.checkpointSM.length)}`,
-          `surface: ${this.lastSurface.name}  (μ=${this.lastSurface.frictionMu.toFixed(2)})${this.inWater ? " [WATER!]" : ""}`,
-          `damage: ${(this.damage01 * 100).toFixed(0)}%`
         ]
       });
+    }
+
+    // Draw Weapon HUD
+    if (this.weapons.length > 0) {
+      const currentWeapon = this.weapons[this.currentWeaponIndex];
+      this.renderer.drawWeaponHUD({
+        name: currentWeapon.stats.name,
+        ammo: currentWeapon.ammo,
+        capacity: currentWeapon.stats.ammoCapacity
+      }, width, height);
     }
 
     this.renderer.drawPanel({
@@ -797,28 +880,28 @@ export class Game {
       title: "Controls",
       lines: this.editorMode
         ? [
-            `EDITOR MODE`,
-            `Left click/drag  move point`,
-            `Left click empty add point`,
-            `Right click      delete point`,
-            `1               save track`,
-            `2               load track`,
-            `T               exit editor`
-          ]
+          `EDITOR MODE`,
+          `Left click/drag  move point`,
+          `Left click empty add point`,
+          `Right click      delete point`,
+          `1               save track`,
+          `2               load track`,
+          `T               exit editor`
+        ]
         : [
-        `W / ↑  throttle`,
-        `S / ↓  brake / reverse`,
-        `A/D or ←/→ steer`,
-        `Space  handbrake`,
-        `J / K  shift down / up`,
-        `L / Click  shoot`,
-        `R      reset`,
-        `N      new route`,
-        `C      camera: ${this.cameraMode}`,
-        `M      minimap: ${this.showMinimap ? "ON" : "OFF"}`,
-        `T      editor`,
-        `F      debug menu: ${this.showDebugMenu ? "ON" : "OFF"}`
-      ]
+          `W / ↑  throttle`,
+          `S / ↓  brake / reverse`,
+          `A/D or ←/→ steer`,
+          `Space  handbrake`,
+          `J / K  shift down / up`,
+          `L / Click  shoot`,
+          `R      reset`,
+          `N      new route`,
+          `C      camera: ${this.cameraMode}`,
+          `M      minimap: ${this.showMinimap ? "ON" : "OFF"}`,
+          `T      editor`,
+          `F      debug menu: ${this.showDebugMenu ? "ON" : "OFF"}`
+        ]
     });
 
     if (this.showDebugMenu) {
@@ -826,7 +909,7 @@ export class Game {
       // Tires panel - positioned below Tuning panel (which is at ~280px and ~200px tall)
       this.renderer.drawPanel({
         x: 12,
-        y: 490, // Below Debug (~270px) + Tuning (~200px) + 20px gap
+        y: 510, // Below Debug (~270px) + Tuning (~200px) + 40px gap
         title: "Tires",
         lines: [
           `steerAngle: ${deg(this.state.carTelemetry.steerAngleRad).toFixed(1)}°`,
@@ -879,6 +962,7 @@ export class Game {
       maxRpm: this.engineParams.maxRpm,
       redlineRpm: this.engineParams.redlineRpm,
       gear: this.engineState.gear,
+      speedKmH: this.speedMS() * 3.6,
       totalDistanceKm: this.totalDistanceM / 1000
     });
 
@@ -919,7 +1003,7 @@ export class Game {
       const ctx = this.renderer.ctx;
       ctx.save();
       ctx.setTransform(this.renderer["dpr"], 0, 0, this.renderer["dpr"], 0, 0);
-      ctx.fillStyle = `rgba(255, 100, 100, ${this.collisionFlashAlpha})`;
+      ctx.fillStyle = `rgba(255, 230, 100, ${this.collisionFlashAlpha})`; // Yellow-brown flash
       ctx.fillRect(0, 0, width, height);
       ctx.restore();
     }
@@ -1083,7 +1167,7 @@ export class Game {
     this.particleAccumulator = 0;
     this.cameraRotationRad = this.cameraMode === "runner" ? -spawn.headingRad - Math.PI / 2 : 0;
     this.enemyKillCount = 0;
-    
+
     // Respawn enemies when resetting (regenerate from track)
     const treeSeed = Math.floor(this.trackDef.meta?.seed ?? 20260123);
     const enemies = generateEnemies(this.track, { seed: treeSeed + 1337 });
@@ -1092,7 +1176,7 @@ export class Game {
 
   private updateCheckpointsAndRace(proj: TrackProjection): void {
     if (this.raceFinished) return; // Don't update if race is done
-    
+
     const speed = this.speedMS();
     if (speed < 1.5) {
       this.insideActiveGate = false;
@@ -1242,10 +1326,10 @@ export class Game {
 
     const carRadius = 0.85;
     const cities = [this.track.startCity, this.track.endCity].filter(Boolean);
-    
+
     for (const city of cities) {
       if (!city) continue;
-      
+
       for (const building of city.buildings) {
         // Simplified collision: treat buildings as circles for now
         const dx = this.state.car.xM - building.x;
@@ -1253,7 +1337,7 @@ export class Game {
         const dist = Math.hypot(dx, dy);
         const buildingRadius = Math.max(building.width, building.height) / 2;
         const minDist = carRadius + buildingRadius;
-        
+
         if (dist >= minDist || dist < 1e-6) continue;
 
         const nx = dx / dist;
@@ -1313,37 +1397,37 @@ export class Game {
   private checkWaterHazards(dtSeconds: number): void {
     const carX = this.state.car.xM;
     const carY = this.state.car.yM;
-    
+
     let inAnyWater = false;
-    
+
     for (const water of this.waterBodies) {
       // Transform car position to water's local coordinate system
       const dx = carX - water.x;
       const dy = carY - water.y;
-      
+
       // Rotate to align with ellipse axes
       const cos = Math.cos(-water.rotation);
       const sin = Math.sin(-water.rotation);
       const localX = dx * cos - dy * sin;
       const localY = dx * sin + dy * cos;
-      
+
       // Check if inside ellipse: (x/a)^2 + (y/b)^2 <= 1
-      const normalizedDist = (localX * localX) / (water.radiusX * water.radiusX) 
-                           + (localY * localY) / (water.radiusY * water.radiusY);
-      
+      const normalizedDist = (localX * localX) / (water.radiusX * water.radiusX)
+        + (localY * localY) / (water.radiusY * water.radiusY);
+
       if (normalizedDist <= 1) {
         inAnyWater = true;
         break;
       }
     }
-    
+
     this.inWater = inAnyWater;
-    
+
     if (inAnyWater) {
       // Strong drag effect - water slows the car significantly
       const waterDrag = 0.85; // Lose 15% velocity per frame when in water
       const waterAngularDrag = 0.7; // Even more yaw damping
-      
+
       this.state.car.vxMS *= Math.pow(waterDrag, dtSeconds * 60);
       this.state.car.vyMS *= Math.pow(waterDrag, dtSeconds * 60);
       this.state.car.yawRateRadS *= Math.pow(waterAngularDrag, dtSeconds * 60);
@@ -1353,16 +1437,16 @@ export class Game {
   private checkProjectileCollisions(): void {
     const projectiles = this.projectilePool.getActive();
     const projectilesToRemove: number[] = [];
-    
+
     for (const proj of projectiles) {
       let hit = false;
-      
+
       // Check collision with trees
       for (const tree of this.trees) {
         const dx = proj.x - tree.x;
         const dy = proj.y - tree.y;
         const dist = Math.hypot(dx, dy);
-        
+
         // Projectile hits if within tree trunk radius
         if (dist < tree.r * 0.4) { // Matches visual trunk scale
           projectilesToRemove.push(proj.id);
@@ -1370,50 +1454,125 @@ export class Game {
           break;
         }
       }
-      
+
       if (hit) continue;
-      
-      // Check collision with enemies
+
+      // Check collision with enemies (RAYCAST to prevent tunneling)
       for (const enemy of this.enemyPool.getActive()) {
         const dx = proj.x - enemy.x;
         const dy = proj.y - enemy.y;
-        const dist = Math.hypot(dx, dy);
-        
-        if (dist < enemy.radius) {
-          projectilesToRemove.push(proj.id);
-          
-          // Kill enemy
-          this.enemyPool.damage(enemy.id, 1.0);
-          this.enemyKillCount++;
-          
-          // Create particle burst at enemy position
-          this.createEnemyDeathParticles(enemy.x, enemy.y);
-          
-          // Play impact sound
-          if (this.audioUnlocked) {
-            this.effectsAudio.playEffect("impact", 0.6);
+        const distSq = dx * dx + dy * dy;
+        const radiusSq = enemy.radius * enemy.radius;
+
+        // Simple distance check first
+        let collision = distSq < radiusSq;
+
+        // Raycast check if not hit directly but moving fast
+        if (!collision) {
+          // Previous position (approximate based on velocity)
+          // We can use a simpler approach: distance from point (enemy center) to line segment (proj path)
+          // Segment from (proj.x - proj.vx*dt, proj.y - proj.vy*dt) to (proj.x, proj.y)
+          // Actually, since we update position then check collisions, the segment is P_prev -> P_curr
+
+          // We need access to dt here ideally, but game loop step doesn't pass it easily to this method
+          // However, since we just moved the projectile in stepProjectile, we can infer P_prev
+          // Let's assume we check over the last step's movement.
+          // Projectile speed is ~200m/s. At 60fps (16ms), it moves ~3.3m
+          // Enemy radius is ~0.6m. Tunneling happens if step > 1.2m
+
+          // Let's use a normalized direction and project enemy onto the line
+          const speed = Math.hypot(proj.vx, proj.vy);
+          if (speed > 1) {
+            const stepDist = speed * 0.016; // Approx 1 frame at 60hz
+            const vx = proj.vx / speed;
+            const vy = proj.vy / speed;
+
+            // Vector from enemy to current projectile pos
+            const ex = enemy.x - proj.x;
+            const ey = enemy.y - proj.y;
+
+            // Project enemy onto line: t = dot(e, v)
+            // But we are looking backwards from current pos. So direction is -v
+            // Vector from P_curr to P_prev is -v * stepDist
+            const t = -(ex * vx + ey * vy); // distance BACK along the path
+
+            if (t > 0 && t < stepDist) {
+              // Enemy is "behind" us within one frame's distance. Check perpendicular distance
+              const closestX = proj.x - vx * t;
+              const closestY = proj.y - vy * t;
+              const distToLineSq = (closestX - enemy.x) ** 2 + (closestY - enemy.y) ** 2;
+
+              if (distToLineSq < radiusSq) {
+                collision = true;
+              }
+            }
           }
-          
+        }
+
+        if (collision) {
+          projectilesToRemove.push(proj.id);
+
+          // Damage enemy
+          const damage = proj.damage || 1.0; // Use projectile damage
+          const damagedEnemy = this.enemyPool.damage(enemy.id, damage);
+
+          if (damagedEnemy && damagedEnemy.health <= 0) {
+            this.enemyKillCount++;
+            // Create massive particle burst on death
+            this.createEnemyDeathParticles(enemy.x, enemy.y, enemy.type === "tank");
+          } else {
+            // Smaller visual feedback for hits that don't kill
+            this.particlePool.emit({
+              x: proj.x,
+              y: proj.y,
+              vx: (Math.random() - 0.5) * 4,
+              vy: (Math.random() - 0.5) * 4,
+              sizeM: 0.1,
+              lifetime: 0.3,
+              color: "rgba(200, 50, 50, 0.8)",
+              count: 5
+            });
+          }
+
+          // Play impact sound (slightly quieter for hits)
+          if (this.audioUnlocked) {
+            const volume = (damagedEnemy && damagedEnemy.health <= 0) ? 0.7 : 0.4;
+            this.effectsAudio.playEffect("impact", volume);
+          }
+
           hit = true;
           break;
         }
       }
     }
-    
+
     // Remove hit projectiles
     for (const id of projectilesToRemove) {
       this.projectilePool.remove(id);
     }
   }
 
-  private createEnemyDeathParticles(x: number, y: number): void {
-    // Create massive burst of particles when enemy dies
-    const particleCount = 40 + Math.floor(Math.random() * 25); // 40-65 particles
-    
+  private createEnemyDeathParticles(x: number, y: number, isTank: boolean = false): void {
+    let particleCount: number;
+    let speedMin: number;
+    let speedRange: number;
+
+    if (isTank) {
+      // MASSIVE explosion for tanks
+      particleCount = 200 + Math.floor(Math.random() * 100); // 200-300 particles
+      speedMin = 4;
+      speedRange = 8; // 4-12 m/s
+    } else {
+      // High density for zombies
+      particleCount = 80 + Math.floor(Math.random() * 50); // 80-130 particles
+      speedMin = 2;
+      speedRange = 5; // 2-7 m/s
+    }
+
     for (let i = 0; i < particleCount; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const speed = 2 + Math.random() * 5; // 2-7 m/s
-      
+      const speed = speedMin + Math.random() * speedRange;
+
       // Vary particle colors for more visual interest
       const colorVariant = Math.random();
       let color;
@@ -1424,69 +1583,72 @@ export class Game {
       } else {
         color = "rgba(120, 30, 30, 0.9)"; // Very dark red/brown
       }
-      
+
       this.particlePool.emit({
         x,
         y,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
         sizeM: 0.12 + Math.random() * 0.25, // 0.12-0.37m (varied sizes)
-        lifetime: 0.7 + Math.random() * 0.6, // 0.7-1.3s
+        lifetime: 0.7 + Math.random() * 0.6, // Short-lived (was 600s persistent)
         color
       });
     }
   }
-  
+
   private resolveEnemyCollisions(): void {
     if (this.damage01 >= 1) return;
-    
+
     const carRadius = 0.85;
     for (const enemy of this.enemyPool.getActive()) {
       const dx = this.state.car.xM - enemy.x;
       const dy = this.state.car.yM - enemy.y;
       const dist = Math.hypot(dx, dy);
       const minDist = carRadius + enemy.radius;
-      
+
       if (dist >= minDist || dist < 1e-6) continue;
-      
+
       // Collision detected
       const overlap = minDist - dist;
       const impact = this.speedMS() * overlap;
-      
-      if (impact > 0.5) {
+
+      if (impact > 0.2) {
         // Push car away
         const nx = dx / dist;
         const ny = dy / dist;
         this.state.car.xM += nx * overlap * 0.4;
         this.state.car.yM += ny * overlap * 0.4;
-        
-        // Reduce car velocity significantly (zombies are HEAVY)
-        this.state.car.vxMS *= 0.70; // 30% speed reduction (was 15%)
-        this.state.car.vyMS *= 0.70;
-        
-        // Add strong yaw disturbance (car gets very unstable)
-        const lateralImpact = (this.state.car.vyMS * nx - this.state.car.vxMS * ny) * 0.4; // 0.4 (was 0.15)
+
+        // Type-specific physics
+        const isTank = enemy.type === "tank";
+        const speedReduction = isTank ? 0.60 : 0.90; // 40% loss for tanks, 10% for zombies (was 18%)
+        const distortionMultiplier = isTank ? 0.5 : 0.10; // More yaw for tanks (was 0.25)
+        const damageRate = isTank ? 0.08 : 0.015; // More damage from tanks (was 0.02)
+
+        this.state.car.vxMS *= speedReduction;
+        this.state.car.vyMS *= speedReduction;
+
+        const lateralImpact = (this.state.car.vyMS * nx - this.state.car.vxMS * ny) * distortionMultiplier;
         this.state.car.yawRateRadS += lateralImpact;
-        
-        // More damage
-        this.damage01 = clamp(this.damage01 + impact * 0.05, 0, 1); // 0.05 (was 0.03)
-        
-        // Bigger camera shake
-        const shakeIntensity = Math.min(impact * 0.35, 2.0); // 0.35 and 2.0 (was 0.2 and 1.5)
+
+        this.damage01 = clamp(this.damage01 + impact * damageRate, 0, 1);
+
+        // Camera shake
+        const shakeIntensity = Math.min(impact * (isTank ? 0.5 : 0.25), 2.5);
         this.cameraShakeX = (Math.random() - 0.5) * shakeIntensity;
         this.cameraShakeY = (Math.random() - 0.5) * shakeIntensity;
-        this.collisionFlashAlpha = Math.min(impact * 0.12, 0.4); // 0.12 and 0.4 (was 0.08 and 0.3)
-        
-        // Kill enemy
-        this.enemyPool.damage(enemy.id, 1.0);
-        this.enemyKillCount++;
-        
-        // Create particle burst
-        this.createEnemyDeathParticles(enemy.x, enemy.y);
-        
+        this.collisionFlashAlpha = Math.min(impact * (isTank ? 0.15 : 0.08), 0.5);
+
+        // Kill/Damage enemy on impact (usually kills zombies immediately)
+        const damaged = this.enemyPool.damage(enemy.id, isTank ? 1.0 : 1.0);
+        if (damaged && damaged.health <= 0) {
+          this.enemyKillCount++;
+          this.createEnemyDeathParticles(enemy.x, enemy.y, isTank);
+        }
+
         // Play impact sound
         if (this.audioUnlocked) {
-          this.effectsAudio.playEffect("impact", 0.7);
+          this.effectsAudio.playEffect("impact", isTank ? 0.9 : 0.6);
         }
       }
     }

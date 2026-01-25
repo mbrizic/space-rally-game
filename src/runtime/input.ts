@@ -37,5 +37,9 @@ export class KeyboardInput {
 
     return positive ? 1 : 0;
   }
+
+  isDown(code: string): boolean {
+    return this.down.has(code);
+  }
 }
 

@@ -16,7 +16,7 @@ export class ParticlePool {
     private readonly particles: Particle[];
     private readonly poolSize: number;
 
-    constructor(poolSize = 2000) {
+    constructor(poolSize = 10000) {
         this.poolSize = poolSize;
         this.particles = [];
         for (let i = 0; i < poolSize; i++) {

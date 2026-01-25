@@ -99,7 +99,7 @@ export function defaultCarParams(): CarParams {
     brakeForceN: 42000,
     handbrakeForceN: 16000,
     handbrakeRearGripScale: 0.55,
-    driveBiasFront: 0.30, // 30% front, 70% rear (mostly RWD)
+    driveBiasFront: 0.35, // 35% front (default)
     brakeBiasFront: 0.65,
     // Shorter relaxation => less "springy" snap, still enough transient for flicks.
     relaxationLengthFrontM: 0.7,
@@ -346,12 +346,12 @@ export function stepCar(
   const availableGripRear = maxFRear;
   const rearSpinRatio = availableGripRear > 0 ? driveForceRequestedRear / availableGripRear : 0;
   const rearExcess = Math.max(0, rearSpinRatio - 0.92); // Start showing wheelspin at 92% grip usage (higher threshold)
-  
+
   const driveForceRequestedFront = Math.max(0, fxFrontRequestN);
   const availableGripFront = fxLimitFront;
   const frontSpinRatio = availableGripFront > 0 ? driveForceRequestedFront / availableGripFront : 0;
   const frontExcess = Math.max(0, frontSpinRatio - 0.92);
-  
+
   // Weight rear more heavily since we're RWD-biased, reduced multiplier for subtler effect
   const wheelspinIntensity = clamp((rearExcess * 0.7 + frontExcess * 0.3) * 8, 0, 1);
 

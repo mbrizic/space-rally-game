@@ -10,6 +10,9 @@ export type Projectile = {
   vy: number; // Velocity Y (m/s)
   age: number; // Time since creation (seconds)
   maxAge: number; // Time before despawn (seconds)
+  damage: number;
+  color: string;
+  size: number;
 };
 
 let nextProjectileId = 1;
@@ -22,17 +25,20 @@ export function createProjectile(
   y: number,
   targetX: number,
   targetY: number,
-  speed: number = 200 // Game-friendly speed: 200 m/s (more visible, still fast)
+  speed: number = 200,
+  damage: number = 1,
+  color: string = "#ffffaa",
+  size: number = 0.2
 ): Projectile {
   // Calculate direction vector
   const dx = targetX - x;
   const dy = targetY - y;
   const distance = Math.hypot(dx, dy);
-  
+
   // Normalize and apply speed
   const vx = (dx / distance) * speed;
   const vy = (dy / distance) * speed;
-  
+
   return {
     id: nextProjectileId++,
     x,
@@ -40,7 +46,10 @@ export function createProjectile(
     vx,
     vy,
     age: 0,
-    maxAge: 5.0 // Despawn after 5 seconds (1km travel at 200m/s)
+    maxAge: 5.0, // Despawn after 5 seconds
+    damage,
+    color,
+    size
   };
 }
 
@@ -68,31 +77,31 @@ export function shouldRemoveProjectile(projectile: Projectile): boolean {
  */
 export class ProjectilePool {
   private projectiles: Projectile[] = [];
-  
-  spawn(x: number, y: number, targetX: number, targetY: number, speed?: number): void {
-    this.projectiles.push(createProjectile(x, y, targetX, targetY, speed));
+
+  spawn(x: number, y: number, targetX: number, targetY: number, speed?: number, damage?: number, color?: string, size?: number): void {
+    this.projectiles.push(createProjectile(x, y, targetX, targetY, speed, damage, color, size));
   }
-  
+
   update(dtSeconds: number): void {
     // Update all projectiles
     this.projectiles = this.projectiles.map(p => stepProjectile(p, dtSeconds));
-    
+
     // Remove expired projectiles
     this.projectiles = this.projectiles.filter(p => !shouldRemoveProjectile(p));
   }
-  
+
   getActive(): Projectile[] {
     return this.projectiles;
   }
-  
+
   clear(): void {
     this.projectiles = [];
   }
-  
+
   getCount(): number {
     return this.projectiles.length;
   }
-  
+
   remove(id: number): void {
     this.projectiles = this.projectiles.filter(p => p.id !== id);
   }
