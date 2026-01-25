@@ -23,10 +23,9 @@ import { SlideAudio } from "../audio/audio-slide";
 import { EffectsAudio } from "../audio/audio-effects";
 import { computePacenote } from "../sim/pacenotes";
 import type { TuningPanel } from "./tuning";
-import { createProjectile, ProjectilePool } from "../sim/projectile";
-import { createEnemy, EnemyPool, EnemyType, generateEnemies } from "../sim/enemy";
+import { ProjectilePool } from "../sim/projectile";
+import { EnemyPool, generateEnemies } from "../sim/enemy";
 import { createWeaponState, WeaponState, WeaponType } from "../sim/weapons";
-import { mulberry32 } from "../sim/rng";
 
 type GameState = {
   timeSeconds: number;
@@ -46,7 +45,6 @@ export class Game {
   private trackSegmentSurfaceNames: ("tarmac" | "gravel" | "dirt" | "ice" | "offtrack")[] = [];
   private trees: CircleObstacle[] = [];
   private waterBodies: WaterBody[] = [];
-  private inWater = false;
   private checkpointSM: number[] = [];
   private nextCheckpointIndex = 0;
   private insideActiveGate = false;
@@ -1070,7 +1068,7 @@ export class Game {
     const frontX = car.xM + forwardX * a;
     const frontY = car.yM + forwardY * a;
     const rearX = car.xM - forwardX * b;
-    const rearY = car.yM - forwardY * b;
+    const rearY = car.yM - sinH * b;
 
     const cosSteer = Math.cos(t.steerAngleRad);
     const sinSteer = Math.sin(t.steerAngleRad);
@@ -1421,8 +1419,6 @@ export class Game {
       }
     }
 
-    this.inWater = inAnyWater;
-
     if (inAnyWater) {
       // Strong drag effect - water slows the car significantly
       const waterDrag = 0.85; // Lose 15% velocity per frame when in water
@@ -1653,12 +1649,6 @@ export class Game {
       }
     }
   }
-}
-
-function gateLabel(index: number, total: number): string {
-  if (index === 0) return "START";
-  if (index === total - 1) return "FINISH";
-  return `CP${index}`;
 }
 
 function surfaceFillStyle(surface: Surface): string {
