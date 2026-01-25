@@ -15,18 +15,14 @@
 - 💨 **Drift scoring** - Show off your Scandinavian flicks
 - 🛠️ **Track editor** - Create custom stages (press `T`)
 
-## Controls
 
-- `W / ↑` - Throttle
-- `S / ↓` - Brake / Reverse
-- `A/D or ←/→` - Steer
-- `Space` - Handbrake
-- `J / K` - Shift down / up (manual mode)
-- `R` - Reset
-- `N` - Generate new track
-- `C` - Toggle camera mode
-- `T` - Track editor
-- `F` - Toggle force arrows
+## The "Blind Rally" Vision (Coming Soon)
+
+We are pivoting to a high-stakes asymmetric multiplayer experience:
+
+- **The Driver** is effectively blind (heavy fog/interference), seeing only 50m ahead.
+- **The Navigator** has a full tactical satellite view but cannot drive.
+- **The Loop**: The Navigator must call out hazards (ice! turning left!) and man the turret to clear enemies, while the Driver relies on pure reflex and trust. Ideally played in the same room with shouting.
 
 ## Development
 
