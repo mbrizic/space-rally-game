@@ -69,6 +69,8 @@ export function initNetSession(): void {
   let pc: RTCPeerConnection | null = null;
   let dc: RTCDataChannel | null = null;
   let pingTimer: number | null = null;
+  let wsLastClose: string | null = null;
+  let wsLastUrl: string | null = null;
 
   const render = (): void => {
     const lines = [
@@ -76,6 +78,8 @@ export function initNetSession(): void {
       `peer: ${state.peer || "-"}`,
       `remote: ${state.remotePeer || "-"}`,
       `ws: ${state.wsConnected ? "up" : "down"}`,
+      wsLastUrl ? `wsUrl: ${wsLastUrl}` : "",
+      wsLastClose ? `wsClose: ${wsLastClose}` : "",
       `p2p: ${state.dcState}`,
       state.lastError ? `err: ${state.lastError}` : ""
     ].filter(Boolean);
@@ -185,6 +189,7 @@ export function initNetSession(): void {
     if (!cleanRoom) return;
 
     setError(null);
+    wsLastClose = null;
     state.room = cleanRoom;
     state.remotePeer = null;
     resetP2p();
@@ -201,10 +206,22 @@ export function initNetSession(): void {
     }
 
     const url = wsUrl(state.room, state.peer);
+    wsLastUrl = url;
     ws = new WebSocket(url);
+
+    // Quick connectivity hint (useful when nginx proxy isn't wired yet).
+    fetch("/api/health")
+      .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`${r.status}`))))
+      .then(() => {
+        // ok
+      })
+      .catch(() => {
+        setError("no /api/health (nginx proxy?)");
+      });
 
     ws.onopen = () => {
       state.wsConnected = true;
+      setError(null);
       render();
       if (pingTimer) window.clearInterval(pingTimer);
       pingTimer = window.setInterval(() => {
@@ -216,8 +233,9 @@ export function initNetSession(): void {
       }, 10_000);
     };
 
-    ws.onclose = () => {
+    ws.onclose = (e) => {
       state.wsConnected = false;
+      wsLastClose = `${e.code}${e.reason ? ` ${e.reason}` : ""}`;
       render();
       if (pingTimer) window.clearInterval(pingTimer);
       pingTimer = null;
@@ -349,4 +367,3 @@ export function initNetSession(): void {
   if (initialRoom) startRoom(initialRoom);
   else render();
 }
-
