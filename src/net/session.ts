@@ -41,11 +41,29 @@ function setQuery(params: Record<string, string | null>): void {
   history.replaceState({}, "", url.toString());
 }
 
-function wsUrl(room: string, peer: string): string {
+function resolveSignalWsEndpoint(): string {
+  const url = new URL(window.location.href);
+  const override = url.searchParams.get("signal") ?? url.searchParams.get("signalWs");
+  if (override) {
+    // Accept either full ws(s) endpoint, or an http(s) base (we append /ws).
+    if (override.startsWith("ws://") || override.startsWith("wss://")) return override;
+    if (override.startsWith("http://") || override.startsWith("https://")) {
+      const u = new URL(override);
+      if (!u.pathname.endsWith("/ws") && !u.pathname.endsWith("/api/ws")) u.pathname = "/ws";
+      return u.toString().replace(/^http/, "ws");
+    }
+  }
+
+  // Default: behind nginx (prod) or Vite dev proxy (local).
   const u = new URL("/api/ws", window.location.origin);
+  return u.toString().replace(/^http/, "ws");
+}
+
+function wsUrl(room: string, peer: string): string {
+  const u = new URL(resolveSignalWsEndpoint());
   u.searchParams.set("room", room);
   u.searchParams.set("peer", peer);
-  return u.toString().replace(/^http/, "ws");
+  return u.toString();
 }
 
 export function initNetSession(): void {
@@ -211,12 +229,14 @@ export function initNetSession(): void {
 
     // Quick connectivity hint (useful when nginx proxy isn't wired yet).
     fetch("/api/health")
-      .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`${r.status}`))))
-      .then(() => {
-        // ok
+      .then((r) => {
+        const ct = r.headers.get("content-type") ?? "";
+        if (ct.includes("text/html")) return r.text().then(() => Promise.reject(new Error("html")));
+        return r.ok ? r.text() : Promise.reject(new Error(`${r.status}`));
       })
+      .then(() => {})
       .catch(() => {
-        setError("no /api/health (nginx proxy?)");
+        setError("no /api proxy; try ?signal=ws://127.0.0.1:8787/ws");
       });
 
     ws.onopen = () => {
