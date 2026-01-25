@@ -24,6 +24,12 @@ if (!Number.isFinite(ROOM_TTL_MS)) throw new Error("Invalid ROOM_TTL_MS");
 
 const rooms = new Map<string, Map<string, Client>>();
 
+const corsHeaders: Record<string, string> = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, OPTIONS",
+  "access-control-allow-headers": "content-type"
+};
+
 function nowMs(): number {
   return Date.now();
 }
@@ -86,8 +92,12 @@ const server = Bun.serve<WsData>({
     const url = new URL(req.url);
     const path = url.pathname;
 
+    if (req.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: corsHeaders });
+    }
+
     if (path === "/health" || path === "/api/health") {
-      return new Response("ok\n", { headers: { "content-type": "text/plain; charset=utf-8" } });
+      return new Response("ok\n", { headers: { ...corsHeaders, "content-type": "text/plain; charset=utf-8" } });
     }
 
     const isWsPath = path === "/ws" || path === "/api/ws";
@@ -100,7 +110,7 @@ const server = Bun.serve<WsData>({
       return ok ? undefined : new Response("upgrade failed\n", { status: 400 });
     }
 
-    return new Response("not found\n", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });
+    return new Response("not found\n", { status: 404, headers: { ...corsHeaders, "content-type": "text/plain; charset=utf-8" } });
   },
   websocket: {
     open(ws) {
@@ -180,4 +190,3 @@ const server = Bun.serve<WsData>({
 });
 
 console.log(`signaling listening on http://${server.hostname}:${server.port}`);
-
