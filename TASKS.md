@@ -1,11 +1,15 @@
 # Space Rally - Development Tasks
 
+## Current Focus
+- (Next) **SERVER INFRA** work (separate branch)
+
 ## Core Features ✅
 - Rally physics (bicycle model, drift detection, 6-speed manual/auto)
 - Procedural tracks with surfaces (tarmac/gravel/dirt/ice)
-- Multi-channel audio system (engine/tires/effects ready for guns)
+- Multi-channel audio system (engine/tires/effects)
 - Water hazards beside track (off-road penalty)
-- Minimap (toggle with M), pacenotes, checkpoints
+- Minimap (toggle with `M`) with surface colors, START/FINISH, enemies
+- Shooter mode: weapons + mobile weapon buttons + touch hold-to-fire
 
 ## Known Issues
 **⚠️ Track Variety Problem** - Tracks are repetitive and safe
@@ -13,7 +17,7 @@
 - Root cause: Retry logic rejects interesting hairpins to avoid overlaps
 - Trade-off: 100% reliable generation vs. exciting variety
 
-**⚠️ Pacenotes Bug** - Hidden as they are not working correctly. Logic needs review or removal.
+**⚠️ Pacenotes Bug** - Hidden as they are not working correctly; logic needs review or removal.
 
 ## What's Next - Plan: "Blind Driver" Co-Op
 

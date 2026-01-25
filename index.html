@@ -31,6 +31,41 @@
       display: block;
     }
 
+    /* Desktop Role Toggle (Driver/Shooter) */
+    #role-toggle {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+      pointer-events: auto;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.05);
+      color: rgba(255, 255, 255, 0.35);
+      font: 600 11px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      opacity: 0.35; /* very dim */
+      transition: opacity 120ms ease, background 120ms ease, border-color 120ms ease, color 120ms ease;
+      user-select: none;
+    }
+
+    #role-toggle:hover {
+      opacity: 0.55;
+      background: rgba(255, 255, 255, 0.07);
+      border-color: rgba(255, 255, 255, 0.18);
+      color: rgba(255, 255, 255, 0.55);
+    }
+
+    #role-toggle:active {
+      opacity: 0.75;
+      background: rgba(255, 255, 255, 0.10);
+      border-color: rgba(255, 255, 255, 0.25);
+      color: rgba(255, 255, 255, 0.75);
+    }
+
     /* Mobile Overlay */
     #mobile-overlay {
       position: absolute;
@@ -149,6 +184,23 @@
       gap: 20px;
     }
 
+    /* Shooter weapon buttons (mobile) */
+    #weapon-zone {
+      position: absolute;
+      right: 3%;
+      top: 20%;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      pointer-events: auto;
+    }
+
+    .mobile-button.weapon.active {
+      background: rgba(255, 255, 255, 0.18);
+      border-color: rgba(255, 255, 255, 0.35);
+      color: rgba(255, 255, 255, 0.95);
+    }
+
     .mobile-button {
       width: 60px;
       height: 60px;
@@ -177,16 +229,13 @@
       border-color: rgba(255, 100, 100, 0.3);
     }
 
-    #role-toggle:active {
-      background: #007bff;
-      border-color: #00a2ff;
-    }
   </style>
 </head>
 
 <body>
   <div id="app">
     <canvas id="game"></canvas>
+    <button id="role-toggle" type="button">Driver</button>
     <div id="mobile-overlay">
       <!-- Role toggle moved to 'I' key -->
 
@@ -212,6 +261,12 @@
       <!-- Navigator Controls -->
       <div id="navigator-group" class="control-group">
         <!-- Text removed as requested -->
+        <div id="weapon-zone">
+          <div class="mobile-button weapon" data-weapon-index="0">HG</div>
+          <div class="mobile-button weapon" data-weapon-index="1">RIF</div>
+          <div class="mobile-button weapon" data-weapon-index="2">AK</div>
+          <div class="mobile-button weapon" data-weapon-index="3">SHT</div>
+        </div>
       </div>
     </div>
   </div>

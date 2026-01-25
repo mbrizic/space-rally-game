@@ -44,6 +44,8 @@ export class Game {
   private lastInputState: InputState = { steer: 0, throttle: 0, brake: 0, handbrake: 0, shoot: false, fromKeyboard: false };
   private readonly tuning?: TuningPanel;
   private readonly canvas: HTMLCanvasElement;
+  private shootPointerId: number | null = null;
+  private shootHeld = false;
   private trackDef!: TrackDefinition; // Will be set in constructor
   private track!: ReturnType<typeof createTrackFromDefinition>; // Will be set in constructor
   private trackSegmentFillStyles: string[] = [];
@@ -162,6 +164,10 @@ export class Game {
     // Track mouse position
     canvas.addEventListener('mousemove', this.onMouseMove);
     canvas.addEventListener('click', this.onMouseClick);
+    canvas.addEventListener("pointerdown", this.onShootPointerDown);
+    canvas.addEventListener("pointermove", this.onPointerAimMove);
+    canvas.addEventListener("pointerup", this.onShootPointerUp);
+    canvas.addEventListener("pointercancel", this.onShootPointerUp);
     canvas.style.cursor = 'none'; // Hide default cursor, we'll draw crosshair
 
     // Initialize weapons
@@ -172,9 +178,26 @@ export class Game {
       createWeaponState(WeaponType.SHOTGUN)
     ];
     this.currentWeaponIndex = 0; // Default to Handgun
+    this.setupWeaponButtons();
 
     // Start with a point-to-point track
     this.setTrack(createPointToPointTrackDefinition(this.proceduralSeed));
+
+    // Desktop testing: very dim role toggle button (Driver/Shooter)
+    const roleToggle = document.getElementById("role-toggle");
+    // Hide on desktop; keyboard 'I' already toggles roles there.
+    if (!isTouch && roleToggle) roleToggle.style.display = "none";
+    roleToggle?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const nextRole = this.role === PlayerRole.DRIVER ? PlayerRole.NAVIGATOR : PlayerRole.DRIVER;
+      this.setRole(nextRole);
+      if (!this.audioUnlocked) {
+        this.tryUnlockAudio();
+      }
+    });
+      // Ensure label matches initial state (without triggering a notification)
+    if (roleToggle) roleToggle.textContent = this.role === PlayerRole.DRIVER ? "Driver" : "Shooter";
 
     window.addEventListener("keydown", (e) => {
       if (e.code === "KeyR") this.reset();
@@ -240,13 +263,16 @@ export class Game {
     // Update UI
     const driverGroup = document.getElementById("driver-group");
     const navGroup = document.getElementById("navigator-group");
+    const roleToggle = document.getElementById("role-toggle");
 
     if (role === PlayerRole.DRIVER) {
       driverGroup?.classList.add("active");
       navGroup?.classList.remove("active");
+      if (roleToggle) roleToggle.textContent = "Driver";
     } else {
       driverGroup?.classList.remove("active");
       navGroup?.classList.add("active");
+      if (roleToggle) roleToggle.textContent = "Shooter";
     }
   }
 
@@ -416,6 +442,10 @@ export class Game {
   };
 
   private onMouseClick = (): void => {
+    // On touch devices, use pointerdown for immediate shooting (click fires on touchup).
+    const isTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+    if (isTouch) return;
+
     // Unlock audio on first click
     if (!this.audioUnlocked) {
       this.tryUnlockAudio();
@@ -423,9 +453,85 @@ export class Game {
     this.shoot();
   };
 
+  private onPointerAimMove = (e: PointerEvent): void => {
+    // Keep aim updated for pointer inputs (especially touch).
+    if (this.shootPointerId !== null && e.pointerId !== this.shootPointerId) return;
+    const rect = this.canvas.getBoundingClientRect();
+    this.mouseX = e.clientX - rect.left;
+    this.mouseY = e.clientY - rect.top;
+  };
+
+  private onShootPointerDown = (e: PointerEvent): void => {
+    // Avoid interfering with editor interactions.
+    if (this.editorMode) return;
+    // Only shoot in shooter role.
+    if (this.role !== PlayerRole.NAVIGATOR) return;
+    // Only use pointerdown shooting for touch/pen to avoid double-firing with click on desktop mouse.
+    if (e.pointerType === "mouse") return;
+
+    e.preventDefault();
+    this.shootPointerId = e.pointerId;
+    this.shootHeld = true;
+    try {
+      this.canvas.setPointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+    this.onPointerAimMove(e);
+
+    if (!this.audioUnlocked) {
+      this.tryUnlockAudio();
+    }
+    this.shoot();
+  };
+
+  private onShootPointerUp = (e: PointerEvent): void => {
+    if (this.shootPointerId !== e.pointerId) return;
+    this.shootHeld = false;
+    this.shootPointerId = null;
+    try {
+      this.canvas.releasePointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+  };
+
   private switchWeapon(index: number): void {
     if (index >= 0 && index < this.weapons.length) {
       this.currentWeaponIndex = index;
+      this.updateWeaponButtons();
+    }
+  }
+
+  private setupWeaponButtons(): void {
+    const buttons = Array.from(document.querySelectorAll<HTMLElement>(".mobile-button.weapon[data-weapon-index]"));
+    for (const btn of buttons) {
+      btn.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (this.editorMode) return;
+        if (this.role !== PlayerRole.NAVIGATOR) return;
+
+        const raw = btn.getAttribute("data-weapon-index");
+        const idx = raw ? Number.parseInt(raw, 10) : NaN;
+        if (!Number.isFinite(idx)) return;
+        this.switchWeapon(idx);
+
+        if (!this.audioUnlocked) {
+          this.tryUnlockAudio();
+        }
+      });
+    }
+    this.updateWeaponButtons();
+  }
+
+  private updateWeaponButtons(): void {
+    const buttons = Array.from(document.querySelectorAll<HTMLElement>(".mobile-button.weapon[data-weapon-index]"));
+    for (const btn of buttons) {
+      const raw = btn.getAttribute("data-weapon-index");
+      const idx = raw ? Number.parseInt(raw, 10) : NaN;
+      const active = Number.isFinite(idx) && idx === this.currentWeaponIndex;
+      btn.classList.toggle("active", active);
     }
   }
 
@@ -614,7 +720,10 @@ export class Game {
     const handbrake = inputsEnabled && isDriver ? rawInput.handbrake : 0;
 
     // Navigator actions
-    if (inputsEnabled && isNavigator && rawInput.shoot) {
+    // - Keyboard: rawInput.shoot (KeyL)
+    // - Touch/pen: hold-to-fire via shootHeld (pointerdown)
+    const heldTouchShoot = this.role === PlayerRole.NAVIGATOR && this.shootHeld;
+    if (inputsEnabled && ((isNavigator && rawInput.shoot) || heldTouchShoot)) {
       this.shoot();
     }
 
@@ -790,6 +899,8 @@ export class Game {
     // Draw background
     this.renderer.drawBg();
 
+    const isTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+
     // Offset camera to show more track ahead - car is lower on screen
     const cameraOffsetY = this.cameraMode === "runner" ? 8 : 4;
     const cosRot = Math.cos(this.state.car.headingRad);
@@ -799,11 +910,15 @@ export class Game {
 
     const zoom = 24; // Unified tactical zoom (increased from 18)
 
+    // Desktop driver-only: shift camera view left for testing layouts.
+    const screenCenterXCssPx = !isTouch && this.role === PlayerRole.DRIVER ? width * 0.33 : undefined;
+
     this.renderer.beginCamera({
       centerX: this.state.car.xM + this.cameraShakeX + offsetX,
       centerY: this.state.car.yM + this.cameraShakeY + offsetY,
       pixelsPerMeter: zoom,
-      rotationRad: this.cameraRotationRad
+      rotationRad: this.cameraRotationRad,
+      screenCenterXCssPx
     });
 
     // Update mouse world position now that camera is set
@@ -876,9 +991,6 @@ export class Game {
     if (this.role === PlayerRole.DRIVER) {
       this.renderer.drawFog(this.state.car.xM, this.state.car.yM, 90); // Increased visibility
     }
-
-    // Mobile detection (moved up)
-    const isTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
 
     // Draw crosshair at mouse position (screen space) - Suppressed on Touch
     if (!isTouch) {
@@ -984,8 +1096,10 @@ export class Game {
     const canShowMinimap = this.showMinimap && (this.role === PlayerRole.NAVIGATOR || !isTouch);
 
     if (canShowMinimap) {
-      const isTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
       const miniMapSize = isTouch ? width : Math.min(height * 0.4, 300);
+      const startMM = pointOnTrack(this.track, this.checkpointSM[0]).p;
+      const finishMM = pointOnTrack(this.track, this.checkpointSM[this.checkpointSM.length - 1]).p;
+      const minimapOffsetX = !isTouch && this.role === PlayerRole.DRIVER ? hudPadding : (width - miniMapSize) * 0.5;
       this.renderer.drawMinimap({
         track: this.track,
         carX: this.state.car.xM,
@@ -993,7 +1107,10 @@ export class Game {
         carHeading: this.state.car.headingRad,
         waterBodies: this.waterBodies,
         enemies: this.enemyPool.getActive(),
-        offsetX: (width - miniMapSize) * 0.5, // Centered
+        segmentSurfaceNames: this.trackSegmentSurfaceNames,
+        start: startMM,
+        finish: finishMM,
+        offsetX: minimapOffsetX,
         offsetY: height - miniMapSize - (isTouch ? 0 : hudPadding), // Bottom (no padding if full width)
         size: miniMapSize
       });

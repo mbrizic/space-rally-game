@@ -2,31 +2,57 @@
 
 ## Quick Deploy
 
-To deploy the game to your server:
+By default, deploys go to the **test** environment (recommended).
 
 ```bash
 npm run deploy
 ```
 
+Explicit test deploy:
+
+```bash
+npm run deploy:test
+```
+
+Production deploy (only when you ask for it):
+
+```bash
+npm run deploy:prod
+```
+
 Or run the script directly:
 
 ```bash
-./deploy.sh
+./deploy.sh test
 ```
 
 ## What it does
 
 1. Builds the production version (`npm run build`)
 2. Creates a compressed tarball of the `dist` folder
-3. SCPs it to `mbrizic.com:/home/mbrizic/hosting/spacerally/`
+3. SCPs it to your server (test or prod directory)
 4. Extracts it on the server
 5. Cleans up temporary files
 
 ## Prerequisites
 
-- SSH access configured to `mbrizic.com` (preferably with SSH keys)
-- Directory `/home/mbrizic/hosting/spacerally/` exists on the server
+- SSH access configured (preferably with SSH keys)
+- Directories exist (script will `mkdir -p`):
+  - Test: `/home/mbrizic/hosting/spacerally/test`
+  - Prod: `/home/mbrizic/hosting/spacerally`
 - Web server (nginx/apache) configured to serve from that directory
+
+## Config
+
+These are overridable via env vars:
+
+- `DEPLOY_HOST` (default: `mbrizic.com`)
+- `DEPLOY_TEST_DIR` (default: `/home/mbrizic/hosting/spacerally/test`)
+- `DEPLOY_PROD_DIR` (default: `/home/mbrizic/hosting/spacerally`)
+
+## Subfolder Hosting
+
+The build uses relative asset paths (`base: "./"` in `vite.config.ts`) so it can be served from subfolders like `/test/`.
 
 ## Server Configuration Example (nginx)
 
@@ -45,8 +71,10 @@ server {
 
 ## Access
 
-After deployment, the game should be available at:
+After prod deployment, the game should be available at:
 - https://mbrizic.com/spacerally
+
+For test deployments, map `/spacerally/test` (or your preferred URL) to `DEPLOY_TEST_DIR`.
 
 ## Manual Deployment
 
@@ -57,11 +85,11 @@ If you prefer manual deployment:
 npm run build
 
 # Copy to server
-scp -r dist/* mbrizic.com:/home/mbrizic/hosting/spacerally/
+scp -r dist/* mbrizic.com:/home/mbrizic/hosting/spacerally/test/
 ```
 
 ## Troubleshooting
 
 - **Permission denied**: Make sure you have SSH key access set up
-- **Directory not found**: Create the directory on the server first: `ssh mbrizic.com "mkdir -p /home/mbrizic/hosting/spacerally"`
+- **Directory not found**: The script creates it, but you can also: `ssh mbrizic.com "mkdir -p /home/mbrizic/hosting/spacerally/test"`
 - **404 errors**: Check your web server configuration and ensure it's serving the correct directory

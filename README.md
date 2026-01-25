@@ -42,10 +42,13 @@ npm test
 ## Deployment
 
 ```bash
-npm run deploy
+npm run deploy        # defaults to test
+npm run deploy:prod   # only when explicitly requested
 ```
 
 See `DEPLOY.md` for details.
+
+Note: the production build is configured to work from subfolders (e.g. `/test/`) via `vite.config.ts`.
 
 ## Tech Stack
 

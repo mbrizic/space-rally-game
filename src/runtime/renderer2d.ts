@@ -6,6 +6,9 @@ type Camera2D = {
   centerY: number;
   pixelsPerMeter: number;
   rotationRad?: number;
+  // Optional: shift the "screen center" used for camera transforms (testing/debug UI layouts).
+  screenCenterXCssPx?: number;
+  screenCenterYCssPx?: number;
 };
 
 export class Renderer2D {
@@ -50,8 +53,10 @@ export class Renderer2D {
     const width = this.viewportWidthCssPx || this.canvas.clientWidth;
     const height = this.viewportHeightCssPx || this.canvas.clientHeight;
     const ctx = this.ctx;
+    const screenCenterX = camera.screenCenterXCssPx ?? width / 2;
+    const screenCenterY = camera.screenCenterYCssPx ?? height / 2;
     ctx.save();
-    ctx.translate(width / 2, height / 2);
+    ctx.translate(screenCenterX, screenCenterY);
     ctx.scale(camera.pixelsPerMeter, camera.pixelsPerMeter);
     if (camera.rotationRad) ctx.rotate(camera.rotationRad);
     ctx.translate(-camera.centerX, -camera.centerY);
@@ -65,8 +70,10 @@ export class Renderer2D {
     const width = this.viewportWidthCssPx || this.canvas.clientWidth;
     const height = this.viewportHeightCssPx || this.canvas.clientHeight;
 
-    const dx = (xCssPx - width / 2) / this.camera.pixelsPerMeter;
-    const dy = (yCssPx - height / 2) / this.camera.pixelsPerMeter;
+    const screenCenterX = this.camera.screenCenterXCssPx ?? width / 2;
+    const screenCenterY = this.camera.screenCenterYCssPx ?? height / 2;
+    const dx = (xCssPx - screenCenterX) / this.camera.pixelsPerMeter;
+    const dy = (yCssPx - screenCenterY) / this.camera.pixelsPerMeter;
 
     const rot = this.camera.rotationRad ?? 0;
     const cosR = Math.cos(-rot);
@@ -1282,6 +1289,9 @@ export class Renderer2D {
     carHeading: number;
     waterBodies?: { x: number; y: number; radiusX: number; radiusY: number; rotation: number }[];
     enemies?: { x: number; y: number; type?: string }[];
+    segmentSurfaceNames?: ("tarmac" | "gravel" | "dirt" | "ice" | "offtrack")[];
+    start?: { x: number; y: number };
+    finish?: { x: number; y: number };
     offsetX?: number;
     offsetY?: number;
     size?: number; // Optional custom size
@@ -1308,7 +1318,8 @@ export class Renderer2D {
     // ctx.strokeRect(minimapX, minimapY, minimapSize, minimapSize);
 
     // Map Zoom: Fixed scale for tactical view - car centered
-    const viewWidthMeters = 500;
+    // Slightly tighter zoom for readability.
+    const viewWidthMeters = 450;
     const scale = minimapSize / viewWidthMeters;
 
     // CENTER & ROTATE
@@ -1328,20 +1339,67 @@ export class Renderer2D {
     // 3. Move world so car is at (0,0) (which is visually center)
     ctx.translate(-opts.carX, -opts.carY);
 
-    // Draw track
-    ctx.strokeStyle = "rgba(120, 140, 160, 0.6)";
-    ctx.lineWidth = 3 / scale;
-    ctx.beginPath();
-    for (let i = 0; i < opts.track.points.length; i++) {
-      const pt = opts.track.points[i];
-      if (i === 0) ctx.moveTo(pt.x, pt.y);
-      else ctx.lineTo(pt.x, pt.y);
+    const minimapRoadColorForSurface = (name: "tarmac" | "gravel" | "dirt" | "ice" | "offtrack"): string => {
+      switch (name) {
+        case "tarmac":
+          return "rgba(160, 180, 200, 0.85)";
+        case "gravel":
+          return "rgba(205, 185, 150, 0.85)"; // sandy
+        case "dirt":
+          return "rgba(175, 130, 95, 0.85)";
+        case "ice":
+          return "rgba(150, 220, 255, 0.9)";
+        case "offtrack":
+          return "rgba(140, 160, 120, 0.6)";
+      }
+    };
+
+    // Draw track (wider + surface-colored segments)
+    const pts: { x: number; y: number }[] = opts.track?.points ?? [];
+    const hasPts = pts.length >= 2;
+    let shouldLoop = false;
+    if (pts.length > 2) {
+      const first = pts[0];
+      const last = pts[pts.length - 1];
+      const endToStart = Math.hypot(last.x - first.x, last.y - first.y);
+      shouldLoop = endToStart < 20;
     }
-    // Close loop if circular
-    if (opts.track.points.length > 2) {
-      ctx.lineTo(opts.track.points[0].x, opts.track.points[0].y);
+
+    if (hasPts) {
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+
+      // Dark underlay for contrast
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.35)";
+      ctx.lineWidth = 13 / scale;
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      if (shouldLoop) ctx.lineTo(pts[0].x, pts[0].y);
+      ctx.stroke();
+
+      // Colored segments
+      const lw = 9 / scale;
+      ctx.lineWidth = lw;
+      const names = opts.segmentSurfaceNames;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const surfaceName = (names?.[i] ?? "tarmac") as "tarmac" | "gravel" | "dirt" | "ice" | "offtrack";
+        ctx.strokeStyle = minimapRoadColorForSurface(surfaceName);
+        ctx.beginPath();
+        ctx.moveTo(pts[i].x, pts[i].y);
+        ctx.lineTo(pts[i + 1].x, pts[i + 1].y);
+        ctx.stroke();
+      }
+      if (shouldLoop) {
+        const i = pts.length - 1;
+        const surfaceName = (names?.[i] ?? names?.[0] ?? "tarmac") as "tarmac" | "gravel" | "dirt" | "ice" | "offtrack";
+        ctx.strokeStyle = minimapRoadColorForSurface(surfaceName);
+        ctx.beginPath();
+        ctx.moveTo(pts[i].x, pts[i].y);
+        ctx.lineTo(pts[0].x, pts[0].y);
+        ctx.stroke();
+      }
     }
-    ctx.stroke();
 
     // Draw water bodies
     if (opts.waterBodies) {
@@ -1355,12 +1413,88 @@ export class Renderer2D {
 
     // Draw enemies
     if (opts.enemies) {
-      ctx.fillStyle = "rgba(180, 50, 50, 0.7)";
       for (const enemy of opts.enemies) {
-        ctx.beginPath();
-        ctx.arc(enemy.x, enemy.y, 4 / scale, 0, Math.PI * 2);
-        ctx.fill();
+        const isTank = enemy.type === "tank";
+        if (isTank) {
+          // More prominent tank marker
+          const r = 7 / scale;
+          ctx.fillStyle = "rgba(40, 0, 0, 0.55)";
+          ctx.beginPath();
+          ctx.arc(enemy.x, enemy.y, r, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.strokeStyle = "rgba(255, 80, 80, 0.9)";
+          ctx.lineWidth = 2.2 / scale;
+          ctx.beginPath();
+          ctx.arc(enemy.x, enemy.y, r, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.font = `bold ${16 / scale}px monospace`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.lineWidth = 2.4 / scale;
+          ctx.strokeStyle = "rgba(0, 0, 0, 0.9)";
+          ctx.strokeText("T", enemy.x, enemy.y);
+          ctx.fillStyle = "rgba(255, 245, 245, 0.95)";
+          ctx.fillText("T", enemy.x, enemy.y);
+        } else {
+          ctx.fillStyle = "rgba(180, 50, 50, 0.7)";
+          ctx.beginPath();
+          ctx.arc(enemy.x, enemy.y, 4 / scale, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
+    }
+
+    // START / FINISH markers
+    const drawMinimapLabel = (x: number, y: number, text: string, bg: string, fg: string): void => {
+      ctx.save();
+      ctx.font = `bold ${10 / scale}px monospace`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      const padX = 5 / scale;
+      const padY = 3 / scale;
+      const tw = ctx.measureText(text).width;
+      const w = tw + padX * 2;
+      const h = (10 / scale) + padY * 2;
+      const rx = x - w / 2;
+      const ry = y - (12 / scale) - h / 2;
+      const rad = 3 / scale;
+
+      ctx.fillStyle = bg;
+      ctx.beginPath();
+      ctx.moveTo(rx + rad, ry);
+      ctx.lineTo(rx + w - rad, ry);
+      ctx.quadraticCurveTo(rx + w, ry, rx + w, ry + rad);
+      ctx.lineTo(rx + w, ry + h - rad);
+      ctx.quadraticCurveTo(rx + w, ry + h, rx + w - rad, ry + h);
+      ctx.lineTo(rx + rad, ry + h);
+      ctx.quadraticCurveTo(rx, ry + h, rx, ry + h - rad);
+      ctx.lineTo(rx, ry + rad);
+      ctx.quadraticCurveTo(rx, ry, rx + rad, ry);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
+      ctx.lineWidth = 1.4 / scale;
+      ctx.stroke();
+
+      ctx.fillStyle = fg;
+      ctx.fillText(text, x, ry + h / 2);
+
+      // Anchor dot
+      ctx.fillStyle = fg;
+      ctx.beginPath();
+      ctx.arc(x, y, 2.2 / scale, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    };
+
+    if (opts.start) {
+      drawMinimapLabel(opts.start.x, opts.start.y, "START", "rgba(0, 0, 0, 0.35)", "rgba(220, 255, 220, 0.95)");
+    }
+    if (opts.finish) {
+      drawMinimapLabel(opts.finish.x, opts.finish.y, "FINISH", "rgba(0, 0, 0, 0.35)", "rgba(255, 235, 200, 0.95)");
     }
 
     // Draw cities (Parking Spots)
@@ -1497,18 +1631,16 @@ export class Renderer2D {
       ctx.rotate(spot.rotation);
 
       // Parking spot marker
-      ctx.strokeStyle = "rgba(255, 200, 100, 1.0)";
+      ctx.strokeStyle = "rgba(120, 120, 120, 0.95)";
       ctx.lineWidth = 0.15;
       ctx.strokeRect(-1.5, -1, 3, 2);
 
-      // Arrow showing parking direction
-      ctx.fillStyle = "rgba(255, 200, 100, 1.0)";
-      ctx.beginPath();
-      ctx.moveTo(0, -0.5);
-      ctx.lineTo(0.5, 0.5);
-      ctx.lineTo(-0.5, 0.5);
-      ctx.closePath();
-      ctx.fill();
+      // "P" label (instead of directional triangle)
+      ctx.fillStyle = "rgba(170, 170, 170, 0.95)";
+      ctx.font = "bold 1.2px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("P", 0, 0);
 
       ctx.restore();
     }
@@ -1533,8 +1665,10 @@ export class Renderer2D {
     const rx = dx * cosR + dy * sinR;
     const ry = -dx * sinR + dy * cosR;
 
-    const sx = w / 2 + rx * this.camera.pixelsPerMeter;
-    const sy = h / 2 + ry * this.camera.pixelsPerMeter;
+    const screenCenterX = this.camera.screenCenterXCssPx ?? w / 2;
+    const screenCenterY = this.camera.screenCenterYCssPx ?? h / 2;
+    const sx = screenCenterX + rx * this.camera.pixelsPerMeter;
+    const sy = screenCenterY + ry * this.camera.pixelsPerMeter;
 
     const pixelRadius = radiusM * this.camera.pixelsPerMeter;
 
