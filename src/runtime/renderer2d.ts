@@ -815,7 +815,7 @@ export class Renderer2D {
     // Instruction
     ctx.font = `${Math.floor(statsSize * 0.7)}px 'Space Mono', monospace`;
     ctx.fillStyle = "rgba(180, 220, 255, 0.6)";
-    ctx.fillText("Press R to start new stage", cx, h - 60);
+    ctx.fillText("Press N to drive new track", cx, h - 60);
 
     ctx.restore();
   }
