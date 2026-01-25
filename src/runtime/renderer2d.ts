@@ -390,7 +390,7 @@ export class Renderer2D {
     ctx.restore();
   }
 
-  drawCar(car: { x: number; y: number; headingRad: number; speed: number; rollOffsetM?: number }): void {
+  drawCar(car: { x: number; y: number; headingRad: number; speed: number; rollOffsetM?: number; pitchOffsetM?: number }): void {
     const ctx = this.ctx;
     ctx.save();
     ctx.translate(car.x, car.y);
@@ -399,33 +399,47 @@ export class Renderer2D {
     const length = 1.85;
     const width = 0.93;
 
-    const rollOffset = clamp(car.rollOffsetM ?? 0, -0.22, 0.22);
+    // Dynamics gain (Boosted for better feel)
+    const roll = (car.rollOffsetM ?? 0) * 1.2;
+    const pitch = (car.pitchOffsetM ?? 0) * 1.5;
 
-    // Shadow/body-roll hint (purely visual).
-    ctx.fillStyle = "rgba(0, 0, 0, 0.22)";
+    // 1. BASE SHADOW - Very subtle, opposite direction, and high clarity
+    ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
     ctx.beginPath();
-    ctx.rect(-length * 0.5 + rollOffset * 0.35, -width * 0.5 - rollOffset * 0.9, length, width);
+    const shadowL = length * 1.05;
+    const shadowW = width * 1.1;
+    // OPPOSITE Dynamic Shift: Shadow peeks out from the other side (very subtle)
+    const shadowShiftY = -roll * 0.3;
+    const shadowShiftX = -pitch * 0.25;
+
+    ctx.rect(-shadowL * 0.5 + shadowShiftX, -shadowW * 0.5 + shadowShiftY, shadowL, shadowW);
     ctx.fill();
 
-    ctx.fillStyle = "rgba(240, 246, 255, 0.9)";
+    // 2. MAIN BODY - Pure White (Minimal shift)
+    const bodyShiftY = roll * 0.25;
+    const bodyShiftX = pitch * 0.15;
+
+    ctx.fillStyle = "rgba(242, 246, 250, 0.95)";
     ctx.strokeStyle = "rgba(30, 40, 60, 0.9)";
     ctx.lineWidth = 2 / this.camera.pixelsPerMeter;
 
     ctx.beginPath();
-    ctx.rect(-length * 0.5, -width * 0.5, length, width);
+    ctx.rect(-length * 0.5 + bodyShiftX, -width * 0.5 + bodyShiftY, length, width);
     ctx.fill();
     ctx.stroke();
 
-    // Roof highlight shifted by roll direction.
-    ctx.fillStyle = "rgba(170, 210, 255, 0.14)";
-    ctx.beginPath();
-    ctx.rect(-length * 0.35 + rollOffset * 0.25, -width * 0.22 - rollOffset * 0.45, length * 0.7, width * 0.44);
-    ctx.fill();
+    // 4. ROOF / COCKPIT - Extremely subtle 3D lean
+    const roofShiftY = roll * 0.7;
+    const roofShiftX = pitch * 0.4;
 
-    ctx.strokeStyle = "rgba(255, 205, 105, 0.95)";
+    ctx.fillStyle = "rgba(255, 255, 255, 1.0)";
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
+    ctx.lineWidth = 2 / this.camera.pixelsPerMeter;
+
     ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(length * 0.55, 0);
+    // 2-Seater cockpit: 0.42 length, 0.55 width, shifted more towards rear
+    ctx.rect(-length * 0.22 + roofShiftX, -width * 0.275 + roofShiftY, length * 0.42, width * 0.55);
+    ctx.fill();
     ctx.stroke();
 
     ctx.restore();
@@ -746,30 +760,89 @@ export class Renderer2D {
     ctx.restore();
   }
 
-  drawPacenoteBanner(opts: { text: string }): void {
+  drawFinishScreen(opts: { time: number; avgSpeedKmH: number; kills: number; totalEnemies: number }): void {
     const ctx = this.ctx;
     ctx.save();
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
 
     const w = this.viewportWidthCssPx || this.canvas.clientWidth;
-    const x = w / 2;
-    const y = 120; // Moved down to avoid overlapping with Rally info
+    const h = this.viewportHeightCssPx || this.canvas.clientHeight;
+    const cx = w / 2;
+    const cy = h / 2;
+
+    // Background overlay for results
+    ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
+    ctx.fillRect(0, 0, w, h);
 
     ctx.textAlign = "center";
-    ctx.textBaseline = "top";
-    ctx.font = "18px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
 
-    const padX = 14;
-    const padY = 8;
-    const textW = ctx.measureText(opts.text).width;
-    const boxW = Math.ceil(textW + padX * 2);
-    const boxH = 30 + padY;
+    // "FINISHED" Title
+    ctx.font = "bold 72px 'Space Mono', monospace";
+    ctx.fillStyle = "#ffcc00"; // Rally yellow
+    ctx.shadowColor = "rgba(255, 204, 0, 0.5)";
+    ctx.shadowBlur = 20;
+    ctx.fillText("STAGE FINISHED", cx, cy - 120);
+    ctx.shadowBlur = 0;
 
-    ctx.fillStyle = "rgba(0,0,0,0.55)";
-    ctx.fillRect(x - boxW / 2, y, boxW, boxH);
+    // AVG SPEED - THE STAR METRIC
+    ctx.font = "bold 96px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.fillStyle = "white";
+    ctx.fillText(`${opts.avgSpeedKmH.toFixed(1)}`, cx, cy);
 
-    ctx.fillStyle = "rgba(255, 205, 105, 0.95)";
-    ctx.fillText(opts.text, x, y + padY);
+    ctx.font = "bold 24px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.fillStyle = "rgba(180, 220, 255, 0.8)";
+    ctx.fillText("AVG KM/H", cx, cy + 40);
+
+    // Stats
+    ctx.font = "24px 'Space Mono', monospace";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+    ctx.fillText(`TIME: ${opts.time.toFixed(2)}s`, cx, cy + 100);
+    ctx.fillText(`KILLS: ${opts.kills} / ${opts.totalEnemies}`, cx, cy + 130);
+
+    // Instruction
+    ctx.font = "16px 'Space Mono', monospace";
+    ctx.fillStyle = "rgba(180, 220, 255, 0.6)";
+    ctx.fillText("Press R to start new stage", cx, h - 60);
+
+    ctx.restore();
+  }
+
+  drawPacenotePanel(opts: { text: string; x?: number; y?: number }): void {
+    if (!opts.text) return;
+
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+
+    const w = this.viewportWidthCssPx || this.canvas.clientWidth;
+    // Default position: top right, below where Rally Info will be
+    const x = opts.x ?? (w - 12);
+    const y = opts.y ?? 100;
+
+    ctx.font = "bold 36px 'Space Mono', monospace";
+    const metrics = ctx.measureText(opts.text);
+    const textWidth = metrics.width;
+    const padding = 12;
+    const height = 50;
+
+    // Right-aligned panel
+    const panelX = x - textWidth - padding * 2;
+
+    // Panel Background
+    ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+    ctx.strokeStyle = "rgba(255, 200, 50, 0.8)";
+    ctx.lineWidth = 2;
+
+    ctx.beginPath();
+    ctx.roundRect(panelX, y, textWidth + padding * 2, height, 4);
+    ctx.fill();
+    ctx.stroke();
+
+    // Text
+    ctx.fillStyle = "#ffcc00"; // Pacenote yellow
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    ctx.fillText(opts.text, x - padding, y + height / 2);
 
     ctx.restore();
   }
@@ -1023,10 +1096,10 @@ export class Renderer2D {
     ctx.fillStyle = "rgba(180, 220, 255, 0.7)";
     ctx.fillText("GEAR", centerX + radius + 50, centerY + 35);
 
-    // DAMAGE INDICATOR - Modern vertical bar
-    const dmgX = centerX - radius - 60;
+    // DAMAGE INDICATOR - WIDER bar
+    const dmgX = centerX - radius - 55; // Slightly adjusted pos
     const dmgY = centerY - 30;
-    const dmgWidth = 12;
+    const dmgWidth = 24; // Wider (was 12)
     const dmgHeight = 60;
 
     // Background
@@ -1040,11 +1113,11 @@ export class Renderer2D {
     ctx.fillStyle = dmgColor;
     ctx.fillRect(dmgX, dmgY + (dmgHeight - fillH), dmgWidth, fillH);
 
-    // Integrity labels
-    ctx.font = "bold 10px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
-    ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
-    ctx.fillText("HP", dmgX + dmgWidth / 2, dmgY + dmgHeight + 12);
-    ctx.fillText(`${Math.round(health * 100)}%`, dmgX + dmgWidth / 2, dmgY - 8);
+    // Percentage label only (no "HP" text)
+    ctx.font = "bold 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
+    ctx.textAlign = "center";
+    ctx.fillText(`${Math.round(health * 100)}%`, dmgX + dmgWidth / 2, dmgY + dmgHeight + 14);
 
     // Total distance driven (if provided)
     if (opts.totalDistanceKm !== undefined) {
@@ -1194,6 +1267,7 @@ export class Renderer2D {
     enemies?: { x: number; y: number; type?: string }[];
     offsetX?: number;
     offsetY?: number;
+    size?: number; // Optional custom size
   }): void {
     const ctx = this.ctx;
     ctx.save();
@@ -1202,8 +1276,8 @@ export class Renderer2D {
     const w = this.viewportWidthCssPx || this.canvas.clientWidth;
     const h = this.viewportHeightCssPx || this.canvas.clientHeight;
 
-    // Position: use provided offsets or default to top-right
-    const minimapSize = Math.min(w, h) * 0.18; // 18% of screen
+    // Use custom size if provided, otherwise default to 18% of screen
+    const minimapSize = opts.size ?? Math.min(w, h) * 0.18;
     const padding = 12;
     const minimapX = opts.offsetX ?? (w - minimapSize - padding);
     const minimapY = opts.offsetY ?? 280; // Below controls panel (which is ~260px tall)

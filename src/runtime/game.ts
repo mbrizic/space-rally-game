@@ -62,6 +62,8 @@ export class Game {
   private gear: "F" | "R" = "F";
   private visualRollOffsetM = 0;
   private visualRollVel = 0;
+  private visualPitchOffsetM = 0;
+  private visualPitchVel = 0;
   private readonly driftDetector = new DriftDetector();
   private driftInfo: DriftInfo = { state: DriftState.NO_DRIFT, intensity: 0, duration: 0, score: 0 };
   private readonly particlePool = new ParticlePool(10000);
@@ -635,7 +637,7 @@ export class Game {
       this.slideAudio.update(this.driftInfo.intensity, this.lastSurface);
     }
 
-    this.updateVisualRoll(dtSeconds);
+    this.updateVisualDynamics(dtSeconds);
 
     // Emit particles when drifting OR using handbrake OR wheelspinning
     const speedMS = this.speedMS();
@@ -809,7 +811,8 @@ export class Game {
       y: this.state.car.yM,
       headingRad: this.state.car.headingRad,
       speed: this.speedMS(),
-      rollOffsetM: this.visualRollOffsetM
+      rollOffsetM: this.visualRollOffsetM,
+      pitchOffsetM: this.visualPitchOffsetM
     });
 
     // Draw projectiles (bullets)
@@ -824,26 +827,119 @@ export class Game {
     // Draw crosshair at mouse position (screen space)
     this.renderer.drawCrosshair(this.mouseX, this.mouseY);
 
-    // Rally info - prominent at top center
-    const raceTime = this.raceActive && !this.raceFinished
-      ? this.state.timeSeconds - this.raceStartTimeSeconds
-      : this.finishTimeSeconds ?? 0;
-    const stageLine = this.raceFinished
-      ? `FINISHED: ${this.finishTimeSeconds?.toFixed(2)}s`
-      : this.raceActive
-        ? `${raceTime.toFixed(2)}s`
-        : `NOT STARTED`;
-    this.renderer.drawPanel({
-      x: width / 2,
-      y: 12,
-      anchorX: "center",
-      title: `Rally - Checkpoint ${this.nextCheckpointIndex}/${this.checkpointSM.length}`,
-      lines: [
+    // --- HUD LAYOUT ORCHESTRATION ---
+
+    const hudPadding = 12;
+
+    // 1. Left Side Stack (Top Left)
+    // "disappear when you toggle debug menu" implies Debug Menu REPLACES controls?
+    // Let's assume: Show Controls normally. If Debug Menu is ON, hide Controls.
+    if (!this.showDebugMenu) {
+      this.renderer.drawPanel({
+        x: hudPadding,
+        y: hudPadding,
+        anchorX: "left",
+        title: "Controls",
+        lines: this.editorMode
+          ? [
+            `EDITOR MODE`,
+            `Left click/drag  move point`,
+            `Left click empty add point`,
+            `Right click      delete point`,
+            `1               save track`,
+            `2               load track`,
+            `T               exit editor`
+          ]
+          : [
+            `🏎️ DRIVING`,
+            `W / ↑      throttle`,
+            `S / ↓      brake / reverse`,
+            `A/D / ←/→  steer`,
+            `Space      handbrake`,
+            ``,
+            `⚙️ GEARBOX`,
+            `J / K      shift down / up`,
+            `O          toggle auto/man`,
+            ``,
+            `🔫 SHOOTING`,
+            `L / Click  fire weapon`,
+            `1 / 2 / 3  switch weapon`,
+            ``,
+            `🛠️ OTHERS`,
+            `R          reset car`,
+            `N          new route`,
+            `C          camera: ${this.cameraMode}`,
+            `M          minimap: ${this.showMinimap ? "ON" : "OFF"}`,
+            `T          editor`,
+          ]
+      });
+    }
+
+    // 2. Right Side Stack (Top Right)
+    let rightStackY = hudPadding;
+    const rightStackX = width - hudPadding;
+
+    // 2a. Rally Info Panel (Top Right)
+    if (!this.editorMode) {
+      // Calculate split time color
+      const raceTime = this.raceActive && !this.raceFinished
+        ? this.state.timeSeconds - this.raceStartTimeSeconds
+        : this.finishTimeSeconds ?? 0;
+
+      let stageLine = `NOT STARTED`;
+      if (this.raceActive) stageLine = `${raceTime.toFixed(2)}s`;
+      else if (this.raceFinished) stageLine = `FINISHED: ${this.finishTimeSeconds?.toFixed(2)}s`;
+
+      const lines = [
+        `time: ${this.state.timeSeconds.toFixed(2)}s`,
+        `checkpoint: ${this.nextCheckpointIndex}/${this.checkpointSM.length}`,
         stageLine,
         `Distance: ${this.lastTrackS.toFixed(0)}m`,
         `Kills: ${this.enemyKillCount}/${this.enemyPool.getAll().length}`
-      ]
-    });
+      ];
+
+      if (this.raceFinished) {
+        const totalTime = this.finishTimeSeconds ?? 1;
+        const avgSpeedMS = this.track.totalLengthM / totalTime;
+        const avgSpeedKmH = avgSpeedMS * 3.6;
+        lines[2] = `FINISHED: ${totalTime.toFixed(2)}s`; // Update stage line
+        lines.splice(3, 0, `AVG Speed: ${avgSpeedKmH.toFixed(1)} km/h`); // Insert Avg Speed
+      }
+
+      this.renderer.drawPanel({
+        x: rightStackX,
+        y: rightStackY,
+        anchorX: "right",
+        title: "Rally Info",
+        lines: lines
+      });
+      rightStackY += 140; // Approx height of info panel
+    }
+
+    // 2b. Pacenotes (Below Rally Info)
+    if (this.pacenoteText) {
+      this.renderer.drawPacenotePanel({
+        text: this.pacenoteText,
+        x: rightStackX,
+        y: rightStackY
+      });
+      rightStackY += 60; // Height of pacenote panel + padding
+    }
+
+    // 2c. Minimap (Below Pacenotes)
+    if (this.showMinimap) {
+      this.renderer.drawMinimap({
+        track: this.track,
+        carX: this.state.car.xM,
+        carY: this.state.car.yM,
+        carHeading: this.state.car.headingRad,
+        waterBodies: this.waterBodies,
+        enemies: this.enemyPool.getActive(),
+        offsetX: rightStackX - 250, // Fixed position
+        offsetY: rightStackY,
+        size: 250 // Fixed large size
+      });
+    }
 
     // Debug panels (F to toggle)
     if (this.showDebugMenu) {
@@ -878,63 +974,8 @@ export class Game {
       }, width, height);
     }
 
-    const controlsPanelX = width - 12;
-    const controlsPanelY = 12;
-    const controlsPanelHeight = this.editorMode ? 160 : 260; // Estimated height
-
-    this.renderer.drawPanel({
-      x: controlsPanelX,
-      y: controlsPanelY,
-      anchorX: "right",
-      title: "Controls",
-      lines: this.editorMode
-        ? [
-          `EDITOR MODE`,
-          `Left click/drag  move point`,
-          `Left click empty add point`,
-          `Right click      delete point`,
-          `1               save track`,
-          `2               load track`,
-          `T               exit editor`
-        ]
-        : [
-          `🏎️ DRIVING`,
-          `W / ↑      throttle`,
-          `S / ↓      brake / reverse`,
-          `A/D / ←/→  steer`,
-          `Space      handbrake`,
-          ``,
-          `⚙️ GEARBOX`,
-          `J / K      shift down / up`,
-          `O          toggle auto/man`,
-          ``,
-          `🔫 SHOOTING`,
-          `L / Click  fire weapon`,
-          `1 / 2 / 3  switch weapon`,
-          ``,
-          `🛠️ OTHERS`,
-          `R          reset car`,
-          `N          new route`,
-          `C          camera: ${this.cameraMode}`,
-          `M          minimap: ${this.showMinimap ? "ON" : "OFF"}`,
-          `T          editor`,
-        ]
-    });
-
     // Minimap - Moved below controls with spacing
-    if (this.showMinimap) {
-      this.renderer.drawMinimap({
-        track: this.track,
-        carX: this.state.car.xM,
-        carY: this.state.car.yM,
-        carHeading: this.state.car.headingRad,
-        waterBodies: this.waterBodies,
-        enemies: this.enemyPool.getActive(),
-        // Position below controls panel
-        offsetX: controlsPanelX - 150, // Center of minimap
-        offsetY: controlsPanelY + controlsPanelHeight + 90 // 150 is minimap size approx
-      });
-    }
+    // This section is now handled by the new HUD layout orchestration.
 
     if (this.showDebugMenu) {
       const deg = (rad: number) => (rad * 180) / Math.PI;
@@ -1005,8 +1046,7 @@ export class Game {
       this.renderer.drawNotification(this.notificationText, timeSinceNotification);
     }
 
-    // Pacenotes
-    this.renderer.drawPacenoteBanner({ text: this.pacenoteText });
+    // Pacenotes are now handled in the HUD Layout Orchestration block above.
 
     // Drift indicator
     this.renderer.drawDriftIndicator({
@@ -1020,16 +1060,7 @@ export class Game {
     }
 
     // Minimap
-    if (this.showMinimap) {
-      this.renderer.drawMinimap({
-        track: this.track,
-        carX: this.state.car.xM,
-        carY: this.state.car.yM,
-        carHeading: this.state.car.headingRad,
-        waterBodies: this.waterBodies,
-        enemies: this.enemyPool.getActive()
-      });
-    }
+
 
     // Collision flash
     if (this.collisionFlashAlpha > 0.01) {
@@ -1043,6 +1074,17 @@ export class Game {
 
     if (this.damage01 >= 1) {
       this.renderer.drawCenterText({ text: "WRECKED", subtext: "Press R to reset" });
+    }
+
+    if (this.raceFinished) {
+      const totalTime = this.finishTimeSeconds ?? 1;
+      const avgSpeedKmH = (this.track.totalLengthM / totalTime) * 3.6;
+      this.renderer.drawFinishScreen({
+        time: totalTime,
+        avgSpeedKmH: avgSpeedKmH,
+        kills: this.enemyKillCount,
+        totalEnemies: this.enemyPool.getAll().length
+      });
     }
   }
 
@@ -1058,30 +1100,46 @@ export class Game {
     this.carParams.driveBiasFront = clamp(t.driveBiasFront01, 0, 1);
   }
 
-  private updateVisualRoll(dtSeconds: number): void {
+  private updateVisualDynamics(dtSeconds: number): void {
     const t = this.state.carTelemetry;
     const p = this.carParams;
 
     const cosSteer = Math.cos(t.steerAngleRad);
     const sinSteer = Math.sin(t.steerAngleRad);
 
+    // 1. ROLL (Lateral sway)
     // Approx body lateral accel from net lateral force / mass.
     const fyFrontBodyN = t.lateralForceFrontN * cosSteer + t.longitudinalForceFrontN * sinSteer;
     const fyBodyN = t.lateralForceRearN + fyFrontBodyN;
     const ayBodyMS2 = fyBodyN / Math.max(1, p.massKg);
 
-    // Map to a visual roll offset (meters in local Y), spring-damper.
-    const target = clamp(-ayBodyMS2 * 0.018, -0.22, 0.22);
+    // Map to a visual roll offset (Negated: ay left -> roll right)
+    const rollTarget = clamp(-ayBodyMS2 * 0.025, -0.35, 0.35);
     const stiffness = 26;
     const damping = 9;
-    const accel = (target - this.visualRollOffsetM) * stiffness - this.visualRollVel * damping;
-    this.visualRollVel += accel * dtSeconds;
+
+    const rollAccel = (rollTarget - this.visualRollOffsetM) * stiffness - this.visualRollVel * damping;
+    this.visualRollVel += rollAccel * dtSeconds;
     this.visualRollOffsetM += this.visualRollVel * dtSeconds;
 
+    // 2. PITCH (Longitudinal sway - Nose dive/ squat)
+    // Approx body axial accel from net longitudinal force / mass.
+    const fxFrontBodyN = t.longitudinalForceFrontN * cosSteer - t.lateralForceFrontN * sinSteer;
+    const fxBodyN = t.longitudinalForceRearN + fxFrontBodyN;
+    const axBodyMS2 = fxBodyN / Math.max(1, p.massKg);
+
+    // Map to a visual pitch offset (Negated so dive on -accel/brake)
+    const pitchTarget = clamp(-axBodyMS2 * 0.02, -0.25, 0.25);
+    const pitchAccel = (pitchTarget - this.visualPitchOffsetM) * stiffness - this.visualPitchVel * damping;
+    this.visualPitchVel += pitchAccel * dtSeconds;
+    this.visualPitchOffsetM += this.visualPitchVel * dtSeconds;
+
     // Additional settle when nearly stopped.
-    if (this.speedMS() < 1) {
-      this.visualRollOffsetM *= 0.95;
-      this.visualRollVel *= 0.8;
+    if (this.speedMS() < 0.5) {
+      this.visualRollOffsetM *= 0.90;
+      this.visualRollVel *= 0.7;
+      this.visualPitchOffsetM *= 0.90;
+      this.visualPitchVel *= 0.7;
     }
   }
 
@@ -1652,8 +1710,9 @@ export class Game {
 
         // Type-specific physics
         const isTank = enemy.type === "tank";
-        const speedReduction = isTank ? 0.60 : 0.90; // 40% loss for tanks, 10% for zombies (was 18%)
-        const distortionMultiplier = isTank ? 0.5 : 0.10; // More yaw for tanks (was 0.25)
+        // Heavier zombies: significantly reduce speed on impact
+        const speedReduction = isTank ? 0.60 : 0.75; // 40% loss for tanks, 25% for zombies (was 15%)
+        const distortionMultiplier = isTank ? 0.5 : 0.15; // More yaw for tanks
         const damageRate = isTank ? 0.08 : 0.015; // More damage from tanks (was 0.02)
 
         this.state.car.vxMS *= speedReduction;
