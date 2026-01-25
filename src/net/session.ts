@@ -216,7 +216,7 @@ export function initNetSession(game: Game): void {
           } catch {
             // ignore
           }
-        }, 50);
+        }, 33);
       }
 
       if (state.mode === "client") {
@@ -301,7 +301,8 @@ export function initNetSession(game: Game): void {
 
     const pc0 = ensurePc(state.remotePeer);
     if (!dc) {
-      dc = pc0.createDataChannel("data", { ordered: false, maxRetransmits: 0 });
+      // Reliable/ordered for now to reduce jitter while we iterate on smoothing/interpolation.
+      dc = pc0.createDataChannel("data");
       wireDc();
     }
 

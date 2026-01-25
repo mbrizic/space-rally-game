@@ -47,9 +47,22 @@ export class Game {
   private shootPointerId: number | null = null;
   private shootHeld = false;
   private netMode: "solo" | "host" | "client" = "solo";
-  private netRemoteEnemies: { x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank"; health?: number; maxHealth?: number }[] | null = null;
+  private netRemoteEnemies: { id: number; x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank"; health?: number; maxHealth?: number }[] | null = null;
+  private netRemoteProjectiles: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age?: number; maxAge?: number }[] | null = null;
   private netRemoteNavigator: { aimX: number; aimY: number; shootHeld: boolean; shootPulse: boolean; weaponIndex: number } | null = null;
   private netShootPulseHandler: (() => void) | null = null;
+  private netClientTargetCar: {
+    xM: number;
+    yM: number;
+    headingRad: number;
+    vxMS: number;
+    vyMS: number;
+    yawRateRadS: number;
+    steerAngleRad: number;
+    alphaFrontRad: number;
+    alphaRearRad: number;
+  } | null = null;
+  private netClientLastRenderMs = 0;
   private trackDef!: TrackDefinition; // Will be set in constructor
   private track!: ReturnType<typeof createTrackFromDefinition>; // Will be set in constructor
   private trackSegmentFillStyles: string[] = [];
@@ -265,6 +278,9 @@ export class Game {
     this.netMode = mode;
     if (mode !== "client") {
       this.netRemoteEnemies = null;
+      this.netRemoteProjectiles = null;
+      this.netClientTargetCar = null;
+      this.netClientLastRenderMs = 0;
     }
     if (mode !== "host") {
       this.netRemoteNavigator = null;
@@ -290,19 +306,22 @@ export class Game {
   public applyNetSnapshot(snapshot: {
     t: number;
     car: { xM: number; yM: number; headingRad: number; vxMS: number; vyMS: number; yawRateRadS: number; steerAngleRad: number; alphaFrontRad: number; alphaRearRad: number };
-    enemies?: { x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank"; health?: number; maxHealth?: number }[];
+    enemies?: { id: number; x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank"; health?: number; maxHealth?: number }[];
+    projectiles?: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age?: number; maxAge?: number }[];
     raceActive?: boolean;
     raceFinished?: boolean;
     finishTimeSeconds?: number | null;
     enemyKillCount?: number;
   }): void {
-    // Overwrite only the parts we render.
-    this.state = {
-      ...this.state,
-      timeSeconds: snapshot.t,
-      car: { ...this.state.car, ...snapshot.car }
-    };
-    if (snapshot.enemies) this.netRemoteEnemies = snapshot.enemies;
+    // In client mode, smooth toward target to avoid jitter.
+    this.state = { ...this.state, timeSeconds: snapshot.t };
+    this.netClientTargetCar = snapshot.car;
+    if (this.netMode === "client" && this.netClientLastRenderMs === 0) {
+      this.state = { ...this.state, car: { ...this.state.car, ...snapshot.car } };
+    }
+
+    if (snapshot.enemies) this.netRemoteEnemies = snapshot.enemies.map((e) => ({ ...e }));
+    if (snapshot.projectiles) this.netRemoteProjectiles = snapshot.projectiles.map((p) => ({ ...p }));
     if (typeof snapshot.raceActive === "boolean") this.raceActive = snapshot.raceActive;
     if (typeof snapshot.raceFinished === "boolean") this.raceFinished = snapshot.raceFinished;
     if (snapshot.finishTimeSeconds !== undefined) this.finishTimeSeconds = snapshot.finishTimeSeconds;
@@ -618,7 +637,8 @@ export class Game {
   public getNetSnapshot(): {
     t: number;
     car: { xM: number; yM: number; headingRad: number; vxMS: number; vyMS: number; yawRateRadS: number; steerAngleRad: number; alphaFrontRad: number; alphaRearRad: number };
-    enemies: { x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank"; health?: number; maxHealth?: number }[];
+    enemies: { id: number; x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank"; health?: number; maxHealth?: number }[];
+    projectiles: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age: number; maxAge: number }[];
     raceActive: boolean;
     raceFinished: boolean;
     finishTimeSeconds: number | null;
@@ -628,6 +648,7 @@ export class Game {
       t: this.state.timeSeconds,
       car: { ...this.state.car },
       enemies: this.enemyPool.getActive().map((e) => ({
+        id: e.id,
         x: e.x,
         y: e.y,
         radius: e.radius,
@@ -636,6 +657,16 @@ export class Game {
         type: e.type,
         health: e.health,
         maxHealth: e.maxHealth
+      })),
+      projectiles: this.projectilePool.getActive().map((p) => ({
+        x: p.x,
+        y: p.y,
+        vx: p.vx,
+        vy: p.vy,
+        color: p.color,
+        size: p.size,
+        age: p.age,
+        maxAge: p.maxAge
       })),
       raceActive: this.raceActive,
       raceFinished: this.raceFinished,
@@ -1023,6 +1054,54 @@ export class Game {
   private render(): void {
     const { width, height } = this.renderer.resizeToDisplay();
 
+    // Client smoothing/prediction (net mode)
+    if (this.netMode === "client") {
+      const nowMs = performance.now();
+      if (this.netClientLastRenderMs === 0) this.netClientLastRenderMs = nowMs;
+      const dt = clamp((nowMs - this.netClientLastRenderMs) / 1000, 0, 0.05);
+      this.netClientLastRenderMs = nowMs;
+
+      // Predict remote enemies/projectiles forward a bit using their velocities
+      if (this.netRemoteEnemies) {
+        for (const e of this.netRemoteEnemies) {
+          e.x += e.vx * dt;
+          e.y += e.vy * dt;
+        }
+      }
+      if (this.netRemoteProjectiles) {
+        for (const p of this.netRemoteProjectiles) {
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          if (typeof p.age === "number") p.age += dt;
+        }
+        this.netRemoteProjectiles = this.netRemoteProjectiles.filter((p) =>
+          typeof p.age === "number" && typeof p.maxAge === "number" ? p.age < p.maxAge : true
+        );
+      }
+
+      // Smooth car toward latest snapshot to reduce visible jitter.
+      if (this.netClientTargetCar) {
+        const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+        const wrapPi = (a: number) => {
+          while (a > Math.PI) a -= Math.PI * 2;
+          while (a < -Math.PI) a += Math.PI * 2;
+          return a;
+        };
+        const alpha = 1 - Math.exp(-dt * 14); // responsiveness
+        const c = this.state.car;
+        const tcar = this.netClientTargetCar;
+        c.xM = lerp(c.xM, tcar.xM, alpha);
+        c.yM = lerp(c.yM, tcar.yM, alpha);
+        c.headingRad = c.headingRad + wrapPi(tcar.headingRad - c.headingRad) * alpha;
+        c.vxMS = lerp(c.vxMS, tcar.vxMS, alpha);
+        c.vyMS = lerp(c.vyMS, tcar.vyMS, alpha);
+        c.yawRateRadS = lerp(c.yawRateRadS, tcar.yawRateRadS, alpha);
+        c.steerAngleRad = lerp(c.steerAngleRad, tcar.steerAngleRad, alpha);
+        c.alphaFrontRad = lerp(c.alphaFrontRad, tcar.alphaFrontRad, alpha);
+        c.alphaRearRad = lerp(c.alphaRearRad, tcar.alphaRearRad, alpha);
+      }
+    }
+
     // Draw background
     this.renderer.drawBg();
 
@@ -1108,7 +1187,8 @@ export class Game {
     });
 
     // Draw projectiles (bullets)
-    this.renderer.drawProjectiles(this.projectilePool.getActive());
+    const projectilesToDraw = this.netMode === "client" && this.netRemoteProjectiles ? this.netRemoteProjectiles : this.projectilePool.getActive();
+    this.renderer.drawProjectiles(projectilesToDraw);
 
     if (this.showDebugMenu && this.tuning?.values.showArrows) {
       this.drawForceArrows();
