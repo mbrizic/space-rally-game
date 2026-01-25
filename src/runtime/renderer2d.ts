@@ -776,31 +776,37 @@ export class Renderer2D {
 
     ctx.textAlign = "center";
 
+    // Use responsive font sizes based on screen width
+    const baseWidth = Math.min(w, h);
+    const titleSize = Math.floor(baseWidth * 0.12);
+    const speedSize = Math.floor(baseWidth * 0.18);
+    const statsSize = Math.floor(baseWidth * 0.05);
+
     // "FINISHED" Title
-    ctx.font = "bold 72px 'Space Mono', monospace";
+    ctx.font = `bold ${titleSize}px 'Space Mono', monospace`;
     ctx.fillStyle = "#ffcc00"; // Rally yellow
     ctx.shadowColor = "rgba(255, 204, 0, 0.5)";
     ctx.shadowBlur = 20;
-    ctx.fillText("STAGE FINISHED", cx, cy - 120);
+    ctx.fillText("STAGE FINISHED", cx, cy - titleSize * 1.5);
     ctx.shadowBlur = 0;
 
     // AVG SPEED - THE STAR METRIC
-    ctx.font = "bold 96px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.font = `bold ${speedSize}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
     ctx.fillStyle = "white";
     ctx.fillText(`${opts.avgSpeedKmH.toFixed(1)}`, cx, cy);
 
-    ctx.font = "bold 24px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.font = `bold ${statsSize}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
     ctx.fillStyle = "rgba(180, 220, 255, 0.8)";
-    ctx.fillText("AVG KM/H", cx, cy + 40);
+    ctx.fillText("AVG KM/H", cx, cy + speedSize * 0.4);
 
     // Stats
-    ctx.font = "24px 'Space Mono', monospace";
+    ctx.font = `${statsSize}px 'Space Mono', monospace`;
     ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
-    ctx.fillText(`TIME: ${opts.time.toFixed(2)}s`, cx, cy + 100);
-    ctx.fillText(`KILLS: ${opts.kills} / ${opts.totalEnemies}`, cx, cy + 130);
+    ctx.fillText(`TIME: ${opts.time.toFixed(2)}s`, cx, cy + speedSize * 0.8);
+    ctx.fillText(`KILLS: ${opts.kills} / ${opts.totalEnemies}`, cx, cy + speedSize * 1.1);
 
     // Instruction
-    ctx.font = "16px 'Space Mono', monospace";
+    ctx.font = `${Math.floor(statsSize * 0.7)}px 'Space Mono', monospace`;
     ctx.fillStyle = "rgba(180, 220, 255, 0.6)";
     ctx.fillText("Press R to start new stage", cx, h - 60);
 
@@ -979,8 +985,8 @@ export class Renderer2D {
     const w = this.viewportWidthCssPx || this.canvas.clientWidth;
     const h = this.viewportHeightCssPx || this.canvas.clientHeight;
 
-    // Position bottom-center
-    const centerX = w / 2;
+    // Shift Speedometer 15px left as requested to account for pedal placement
+    const centerX = (w / 2) - 15;
     const centerY = h - 80;
     const radius = 70;
     const startAngle = Math.PI * 0.75; // 135 degrees
@@ -1152,14 +1158,25 @@ export class Renderer2D {
       alpha = 1.0 - ((timeSinceShown - 2.0) / 0.5);
     }
 
-    // Shadow/outline for visibility
-    ctx.font = "bold 48px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    // Dynamic font sizing based on text length and screen width
+    const padding = 40;
+    const maxTextWidth = w - padding;
+    let fontSize = 48;
+
+    ctx.font = `bold ${fontSize}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
+    let metrics = ctx.measureText(text);
+
+    if (metrics.width > maxTextWidth) {
+      fontSize = Math.floor(fontSize * (maxTextWidth / metrics.width));
+      ctx.font = `bold ${fontSize}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
+    }
+
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
 
     // Black outline
     ctx.strokeStyle = `rgba(0, 0, 0, ${alpha * 0.8})`;
-    ctx.lineWidth = 8;
+    ctx.lineWidth = Math.max(2, fontSize / 6);
     ctx.strokeText(text, centerX, centerY);
 
     // White text
@@ -1283,121 +1300,122 @@ export class Renderer2D {
     const minimapY = opts.offsetY ?? 280; // Below controls panel (which is ~260px tall)
 
     // Semi-transparent background
-    ctx.fillStyle = "rgba(20, 25, 30, 0.7)";
+    ctx.fillStyle = "rgba(20, 25, 30, 0.3)";
     ctx.fillRect(minimapX, minimapY, minimapSize, minimapSize);
 
-    // Border
-    ctx.strokeStyle = "rgba(180, 220, 255, 0.5)";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(minimapX, minimapY, minimapSize, minimapSize);
+    // No Border - Cleaner look
+    // ctx.strokeStyle = "rgba(180, 220, 255, 0.5)";
+    // ctx.strokeRect(minimapX, minimapY, minimapSize, minimapSize);
 
-    // Calculate track bounds
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (const pt of opts.track.points) {
-      minX = Math.min(minX, pt.x);
-      maxX = Math.max(maxX, pt.x);
-      minY = Math.min(minY, pt.y);
-      maxY = Math.max(maxY, pt.y);
-    }
+    // Map Zoom: Fixed scale for tactical view - car centered
+    const viewWidthMeters = 500;
+    const scale = minimapSize / viewWidthMeters;
 
-    const trackWidth = maxX - minX;
-    const trackHeight = maxY - minY;
-    const scale = Math.min(minimapSize / trackWidth, minimapSize / trackHeight) * 0.85;
-    const offsetX = minimapX + minimapSize / 2 - (minX + maxX) / 2 * scale;
-    const offsetY = minimapY + minimapSize / 2 - (minY + maxY) / 2 * scale;
+    // CENTER & ROTATE
+    const cx = minimapX + minimapSize / 2;
+    const cy = minimapY + minimapSize / 2;
+
+    ctx.save();
+    // Clip to minimap box
+    ctx.beginPath();
+    ctx.rect(minimapX, minimapY, minimapSize, minimapSize);
+    ctx.clip();
+
+    // 1. Move to center of minimap
+    ctx.translate(cx, cy);
+    // 2. Scale world (No rotation, North Up)
+    ctx.scale(scale, scale);
+    // 3. Move world so car is at (0,0) (which is visually center)
+    ctx.translate(-opts.carX, -opts.carY);
 
     // Draw track
     ctx.strokeStyle = "rgba(120, 140, 160, 0.6)";
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 3 / scale;
     ctx.beginPath();
     for (let i = 0; i < opts.track.points.length; i++) {
       const pt = opts.track.points[i];
-      const x = offsetX + pt.x * scale;
-      const y = offsetY + pt.y * scale;
-      if (i === 0) {
-        ctx.moveTo(x, y);
-      } else {
-        ctx.lineTo(x, y);
-      }
+      if (i === 0) ctx.moveTo(pt.x, pt.y);
+      else ctx.lineTo(pt.x, pt.y);
+    }
+    // Close loop if circular
+    if (opts.track.points.length > 2) {
+      ctx.lineTo(opts.track.points[0].x, opts.track.points[0].y);
     }
     ctx.stroke();
 
-    // Draw water bodies on minimap
+    // Draw water bodies
     if (opts.waterBodies) {
       ctx.fillStyle = "rgba(40, 120, 200, 0.6)";
       for (const water of opts.waterBodies) {
-        const wx = offsetX + water.x * scale;
-        const wy = offsetY + water.y * scale;
-        const rx = water.radiusX * scale;
-        const ry = water.radiusY * scale;
-
-        ctx.save();
-        ctx.translate(wx, wy);
-        ctx.rotate(water.rotation);
         ctx.beginPath();
-        ctx.ellipse(0, 0, Math.max(2, rx), Math.max(2, ry), 0, 0, Math.PI * 2);
+        ctx.ellipse(water.x, water.y, water.radiusX, water.radiusY, water.rotation, 0, Math.PI * 2);
         ctx.fill();
-        ctx.restore();
       }
     }
 
-    // Draw enemies on minimap
+    // Draw enemies
     if (opts.enemies) {
       ctx.fillStyle = "rgba(180, 50, 50, 0.7)";
       for (const enemy of opts.enemies) {
-        const ex = offsetX + enemy.x * scale;
-        const ey = offsetY + enemy.y * scale;
         ctx.beginPath();
-        ctx.arc(ex, ey, 3, 0, Math.PI * 2);
+        ctx.arc(enemy.x, enemy.y, 4 / scale, 0, Math.PI * 2);
         ctx.fill();
       }
     }
 
-    // Draw cities
+    // Draw cities (Parking Spots)
     if (opts.track.startCity) {
-      const cx = offsetX + opts.track.startCity.centerX * scale;
-      const cy = offsetY + opts.track.startCity.centerY * scale;
-      ctx.fillStyle = "rgba(255, 220, 100, 0.7)";
+      const city = opts.track.startCity;
+      // Dim gray circle
+      ctx.fillStyle = "rgba(100, 100, 100, 0.5)";
       ctx.beginPath();
-      ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+      ctx.arc(city.centerX, city.centerY, 8 / scale, 0, Math.PI * 2); // Slightly larger
       ctx.fill();
+
+      // "P" label
+      ctx.fillStyle = "rgba(220, 220, 220, 0.9)";
+      ctx.font = `bold ${10 / scale}px monospace`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("P", city.centerX, city.centerY);
     }
     if (opts.track.endCity) {
-      const cx = offsetX + opts.track.endCity.centerX * scale;
-      const cy = offsetY + opts.track.endCity.centerY * scale;
-      ctx.fillStyle = "rgba(100, 255, 100, 0.7)";
+      const city = opts.track.endCity;
+      // Dim gray circle
+      ctx.fillStyle = "rgba(100, 100, 100, 0.5)";
       ctx.beginPath();
-      ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+      ctx.arc(city.centerX, city.centerY, 8 / scale, 0, Math.PI * 2);
       ctx.fill();
+
+      // "P" label
+      ctx.fillStyle = "rgba(220, 220, 220, 0.9)";
+      ctx.font = `bold ${10 / scale}px monospace`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("P", city.centerX, city.centerY);
     }
 
-    // Draw car
-    const carX = offsetX + opts.carX * scale;
-    const carY = offsetY + opts.carY * scale;
+    ctx.restore(); // Undo clip and transforms
 
+    // Draw Car Indicator (Centered, Rotating to show heading)
     ctx.save();
-    ctx.translate(carX, carY);
-    ctx.rotate(opts.carHeading);
+    ctx.translate(cx, cy);
+    // Rotate indicator to match car heading
+    // Map is North-Up (-Y). Car heading 0 is East (+X).
+    // Indicator triangle draws pointing UP (-Y) by default.
+    // So if heading is East (0), we need triangle to point Right (+X).
+    // Let's just use carHeading + PI/2.
+    ctx.rotate(opts.carHeading + Math.PI / 2);
 
-    // Car triangle
-    ctx.fillStyle = "rgba(255, 100, 100, 0.9)";
+    ctx.fillStyle = "#00ff00";
     ctx.beginPath();
-    ctx.moveTo(6, 0);
-    ctx.lineTo(-4, -3);
-    ctx.lineTo(-4, 3);
-    ctx.closePath();
+    const indicatorSize = 10;
+    ctx.moveTo(0, -indicatorSize);
+    ctx.lineTo(-indicatorSize * 0.7, indicatorSize);
+    ctx.lineTo(indicatorSize * 0.7, indicatorSize);
     ctx.fill();
-
-    // Car outline
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    ctx.restore();
-
     ctx.restore();
   }
-
   private drawHudArrow(fromX: number, fromY: number, dx: number, dy: number, color: string): void {
     const ctx = this.ctx;
     const len = Math.hypot(dx, dy);
@@ -1494,5 +1512,55 @@ export class Renderer2D {
 
       ctx.restore();
     }
+  }
+
+  drawFog(centerX: number, centerY: number, radiusM: number): void {
+    const ctx = this.ctx;
+    ctx.save();
+
+    // Use screen space for the overlay
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    const w = this.viewportWidthCssPx || this.canvas.clientWidth;
+    const h = this.viewportHeightCssPx || this.canvas.clientHeight;
+
+    // Calculate screen position of the world point (centerX, centerY)
+    const dx = centerX - this.camera.centerX;
+    const dy = centerY - this.camera.centerY;
+
+    const rot = this.camera.rotationRad ?? 0;
+    const cosR = Math.cos(rot);
+    const sinR = Math.sin(rot);
+    const rx = dx * cosR + dy * sinR;
+    const ry = -dx * sinR + dy * cosR;
+
+    const sx = w / 2 + rx * this.camera.pixelsPerMeter;
+    const sy = h / 2 + ry * this.camera.pixelsPerMeter;
+
+    const pixelRadius = radiusM * this.camera.pixelsPerMeter;
+
+    const gradient = ctx.createRadialGradient(sx, sy, pixelRadius * 0.3, sx, sy, pixelRadius);
+    gradient.addColorStop(0, "rgba(5, 7, 10, 0)");
+    gradient.addColorStop(0.7, "rgba(5, 7, 10, 0.85)");
+    gradient.addColorStop(1, "rgba(5, 7, 10, 1.0)");
+
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, w, h);
+
+    // If the gradient doesn't cover the whole screen, fill the rest (handled by the fillRect)
+    // But we need to make sure the area OUTSIDE the radial gradient is also filled with solid color.
+    // createRadialGradient only works within its outer circle.
+
+    // A better way to ensure everything outside is filled:
+    ctx.fillStyle = "rgba(5, 7, 10, 1.0)";
+    // Top
+    ctx.fillRect(0, 0, w, sy - pixelRadius);
+    // Bottom
+    ctx.fillRect(0, sy + pixelRadius, w, h - (sy + pixelRadius));
+    // Left
+    ctx.fillRect(0, sy - pixelRadius, sx - pixelRadius, pixelRadius * 2);
+    // Right
+    ctx.fillRect(sx + pixelRadius, sy - pixelRadius, w - (sx + pixelRadius), pixelRadius * 2);
+
+    ctx.restore();
   }
 }
