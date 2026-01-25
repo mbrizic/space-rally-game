@@ -41,6 +41,10 @@ function setQuery(params: Record<string, string | null>): void {
   history.replaceState({}, "", url.toString());
 }
 
+function isLocalhostHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1";
+}
+
 function resolveSignalWsEndpoint(): string {
   const url = new URL(window.location.href);
   const override = url.searchParams.get("signal") ?? url.searchParams.get("signalWs");
@@ -54,7 +58,13 @@ function resolveSignalWsEndpoint(): string {
     }
   }
 
-  // Default: behind nginx (prod) or Vite dev proxy (local).
+  // Local dev convenience: if you're running the game at localhost, talk directly to local signaling.
+  // (Avoids needing Vite/nginx proxy for simple two-window testing.)
+  if (isLocalhostHost(window.location.hostname)) {
+    return "ws://127.0.0.1:8787/ws";
+  }
+
+  // Default: behind nginx (prod) or Vite dev proxy (LAN/mobile).
   const u = new URL("/api/ws", window.location.origin);
   return u.toString().replace(/^http/, "ws");
 }
@@ -64,6 +74,19 @@ function wsUrl(room: string, peer: string): string {
   u.searchParams.set("room", room);
   u.searchParams.set("peer", peer);
   return u.toString();
+}
+
+function resolveSignalHealthUrl(): string {
+  const ws = resolveSignalWsEndpoint();
+  // ws(s)://host[:port]/ws -> http(s)://host[:port]/health
+  if (ws.startsWith("ws://") || ws.startsWith("wss://")) {
+    const http = ws.replace(/^ws/, "http");
+    const u = new URL(http);
+    u.pathname = "/health";
+    u.search = "";
+    return u.toString();
+  }
+  return "/api/health";
 }
 
 export function initNetSession(): void {
@@ -227,8 +250,8 @@ export function initNetSession(): void {
     wsLastUrl = url;
     ws = new WebSocket(url);
 
-    // Quick connectivity hint (useful when nginx proxy isn't wired yet).
-    fetch("/api/health")
+    // Quick connectivity hint.
+    fetch(resolveSignalHealthUrl())
       .then((r) => {
         const ct = r.headers.get("content-type") ?? "";
         if (ct.includes("text/html")) return r.text().then(() => Promise.reject(new Error("html")));
@@ -236,7 +259,9 @@ export function initNetSession(): void {
       })
       .then(() => {})
       .catch(() => {
-        setError("no /api proxy; try ?signal=ws://127.0.0.1:8787/ws");
+        // If you're serving from a LAN IP (phones), you'll need nginx or Vite proxy for /api,
+        // or pass ?signal=ws://<YOUR_LAPTOP_IP>:8787/ws
+        setError("signal health failed (proxy or ?signal=...)");
       });
 
     ws.onopen = () => {
