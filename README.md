@@ -2,6 +2,8 @@
 
 > I am, as kids today call it, now vibe-coding this: a simple 2D rally game with unnecessarily complex and realistic physics engine underneath it; and the game will also feature guns. These two sentences are the only thing in this project that I've written myself.
 
+> Addendum: this is working so well that a) we already have guns, and b) it's escalating to become a two-player co-op mobile multiplayer game.
+
 **Play it here:** https://spacerally.supercollider.hr/
 
 ## Features
