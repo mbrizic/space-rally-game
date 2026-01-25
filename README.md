@@ -22,8 +22,8 @@ We are building a dedicated **2-player mobile app experience**. Two players, two
 
 It's a high-stakes asymmetric cooperative race designed for local play:
 
-- **The Driver** (Phone 1): Operates the vehicle with high-fidelity physics but is effectively blind (heavy fog/interference), seeing only 50m ahead.
-- **The Navigator** (Phone 2): Has a full tactical satellite view and man the car's turret, but cannot drive.
+- **The Driver** (Phone 1): The greatest driver in the world... but with the worst eyesight, seeing only 50m ahead through a thick space-fog.
+- **The Navigator** (Phone 2): A tactical genius who sees everything from orbit... but has no idea how a steering wheel works and can only scream directions while manning the car's turret.
 - **The Loop**: The Navigator must shout out hazards (ice! turning left!) and paint targets for the turret, while the Driver relies on pure reflex and trust in their partner's voice. 
 
 Ideally played in the same room for maximum shouting and adrenaline. Built for **WebRTC** direct-link connectivity between mobile devices.
