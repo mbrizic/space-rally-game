@@ -18,11 +18,15 @@
 
 ## The "Blind Rally" Vision (Coming Soon)
 
-We are pivoting to a high-stakes asymmetric multiplayer experience:
+We are building a dedicated **2-player mobile app experience**. Two players, two phones, one car.
 
-- **The Driver** is effectively blind (heavy fog/interference), seeing only 50m ahead.
-- **The Navigator** has a full tactical satellite view but cannot drive.
-- **The Loop**: The Navigator must call out hazards (ice! turning left!) and man the turret to clear enemies, while the Driver relies on pure reflex and trust. Ideally played in the same room with shouting.
+It's a high-stakes asymmetric cooperative race designed for local play:
+
+- **The Driver** (Phone 1): Operates the vehicle with high-fidelity physics but is effectively blind (heavy fog/interference), seeing only 50m ahead.
+- **The Navigator** (Phone 2): Has a full tactical satellite view and man the car's turret, but cannot drive.
+- **The Loop**: The Navigator must shout out hazards (ice! turning left!) and paint targets for the turret, while the Driver relies on pure reflex and trust in their partner's voice. 
+
+Ideally played in the same room for maximum shouting and adrenaline. Built for **WebRTC** direct-link connectivity between mobile devices.
 
 ## Development
 
