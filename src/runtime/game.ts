@@ -176,6 +176,13 @@ export class Game {
       if (e.code === "KeyM") {
         this.showMinimap = !this.showMinimap;
       }
+      if (e.code === "KeyO") {
+        if (this.tuning) {
+          this.tuning.values.manualTransmission = !this.tuning.values.manualTransmission;
+          const mode = this.tuning.values.manualTransmission ? "MANUAL" : "AUTOMATIC";
+          this.showNotification(`GEARBOX: ${mode}`);
+        }
+      }
       // Unlock audio on first key press
       if (!this.audioUnlocked) {
         this.tryUnlockAudio();
@@ -871,9 +878,13 @@ export class Game {
       }, width, height);
     }
 
+    const controlsPanelX = width - 12;
+    const controlsPanelY = 12;
+    const controlsPanelHeight = this.editorMode ? 160 : 260; // Estimated height
+
     this.renderer.drawPanel({
-      x: width - 12,
-      y: 12,
+      x: controlsPanelX,
+      y: controlsPanelY,
       anchorX: "right",
       title: "Controls",
       lines: this.editorMode
@@ -887,20 +898,43 @@ export class Game {
           `T               exit editor`
         ]
         : [
-          `W / ↑  throttle`,
-          `S / ↓  brake / reverse`,
-          `A/D or ←/→ steer`,
-          `Space  handbrake`,
-          `J / K  shift down / up`,
-          `L / Click  shoot`,
-          `R      reset`,
-          `N      new route`,
-          `C      camera: ${this.cameraMode}`,
-          `M      minimap: ${this.showMinimap ? "ON" : "OFF"}`,
-          `T      editor`,
-          `F      debug menu: ${this.showDebugMenu ? "ON" : "OFF"}`
+          `🏎️ DRIVING`,
+          `W / ↑      throttle`,
+          `S / ↓      brake / reverse`,
+          `A/D / ←/→  steer`,
+          `Space      handbrake`,
+          ``,
+          `⚙️ GEARBOX`,
+          `J / K      shift down / up`,
+          `O          toggle auto/man`,
+          ``,
+          `🔫 SHOOTING`,
+          `L / Click  fire weapon`,
+          `1 / 2 / 3  switch weapon`,
+          ``,
+          `🛠️ OTHERS`,
+          `R          reset car`,
+          `N          new route`,
+          `C          camera: ${this.cameraMode}`,
+          `M          minimap: ${this.showMinimap ? "ON" : "OFF"}`,
+          `T          editor`,
         ]
     });
+
+    // Minimap - Moved below controls with spacing
+    if (this.showMinimap) {
+      this.renderer.drawMinimap({
+        track: this.track,
+        carX: this.state.car.xM,
+        carY: this.state.car.yM,
+        carHeading: this.state.car.headingRad,
+        waterBodies: this.waterBodies,
+        enemies: this.enemyPool.getActive(),
+        // Position below controls panel
+        offsetX: controlsPanelX - 150, // Center of minimap
+        offsetY: controlsPanelY + controlsPanelHeight + 90 // 150 is minimap size approx
+      });
+    }
 
     if (this.showDebugMenu) {
       const deg = (rad: number) => (rad * 180) / Math.PI;
@@ -961,6 +995,7 @@ export class Game {
       redlineRpm: this.engineParams.redlineRpm,
       gear: this.engineState.gear,
       speedKmH: this.speedMS() * 3.6,
+      damage01: this.damage01,
       totalDistanceKm: this.totalDistanceM / 1000
     });
 

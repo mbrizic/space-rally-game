@@ -898,7 +898,7 @@ export class Renderer2D {
     ctx.restore();
   }
 
-  drawRpmMeter(opts: { rpm: number; maxRpm: number; redlineRpm: number; gear: number | string; speedKmH: number; totalDistanceKm?: number }): void {
+  drawRpmMeter(opts: { rpm: number; maxRpm: number; redlineRpm: number; gear: number | string; speedKmH: number; damage01: number; totalDistanceKm?: number }): void {
     const ctx = this.ctx;
     ctx.save();
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -1022,6 +1022,29 @@ export class Renderer2D {
     ctx.font = "bold 14px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
     ctx.fillStyle = "rgba(180, 220, 255, 0.7)";
     ctx.fillText("GEAR", centerX + radius + 50, centerY + 35);
+
+    // DAMAGE INDICATOR - Modern vertical bar
+    const dmgX = centerX - radius - 60;
+    const dmgY = centerY - 30;
+    const dmgWidth = 12;
+    const dmgHeight = 60;
+
+    // Background
+    ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+    ctx.fillRect(dmgX, dmgY, dmgWidth, dmgHeight);
+
+    // Fill (Green -> Red)
+    const health = Math.max(0, 1.0 - opts.damage01);
+    const fillH = dmgHeight * health;
+    const dmgColor = health > 0.6 ? "rgba(80, 255, 200, 0.9)" : health > 0.3 ? "rgba(255, 200, 60, 0.9)" : "rgba(255, 60, 60, 0.9)";
+    ctx.fillStyle = dmgColor;
+    ctx.fillRect(dmgX, dmgY + (dmgHeight - fillH), dmgWidth, fillH);
+
+    // Integrity labels
+    ctx.font = "bold 10px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
+    ctx.fillText("HP", dmgX + dmgWidth / 2, dmgY + dmgHeight + 12);
+    ctx.fillText(`${Math.round(health * 100)}%`, dmgX + dmgWidth / 2, dmgY - 8);
 
     // Total distance driven (if provided)
     if (opts.totalDistanceKm !== undefined) {
@@ -1162,7 +1185,16 @@ export class Renderer2D {
     ctx.restore();
   }
 
-  drawMinimap(opts: { track: any; carX: number; carY: number; carHeading: number; waterBodies?: { x: number; y: number; radiusX: number; radiusY: number; rotation: number }[]; enemies?: { x: number; y: number; type?: string }[] }): void {
+  drawMinimap(opts: {
+    track: any;
+    carX: number;
+    carY: number;
+    carHeading: number;
+    waterBodies?: { x: number; y: number; radiusX: number; radiusY: number; rotation: number }[];
+    enemies?: { x: number; y: number; type?: string }[];
+    offsetX?: number;
+    offsetY?: number;
+  }): void {
     const ctx = this.ctx;
     ctx.save();
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -1170,11 +1202,11 @@ export class Renderer2D {
     const w = this.viewportWidthCssPx || this.canvas.clientWidth;
     const h = this.viewportHeightCssPx || this.canvas.clientHeight;
 
-    // Minimap positioned below the Controls panel (top-right)
+    // Position: use provided offsets or default to top-right
     const minimapSize = Math.min(w, h) * 0.18; // 18% of screen
     const padding = 12;
-    const minimapX = w - minimapSize - padding;
-    const minimapY = 280; // Below controls panel (which is ~260px tall)
+    const minimapX = opts.offsetX ?? (w - minimapSize - padding);
+    const minimapY = opts.offsetY ?? 280; // Below controls panel (which is ~260px tall)
 
     // Semi-transparent background
     ctx.fillStyle = "rgba(20, 25, 30, 0.7)";
