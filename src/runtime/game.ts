@@ -51,6 +51,10 @@ export class Game {
   private netRemoteProjectiles: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age?: number; maxAge?: number }[] | null = null;
   private netRemoteNavigator: { aimX: number; aimY: number; shootHeld: boolean; shootPulse: boolean; weaponIndex: number } | null = null;
   private netShootPulseHandler: (() => void) | null = null;
+  private netParticleEvents: (
+    | { type: "emit"; opts: { x: number; y: number; vx: number; vy: number; lifetime: number; sizeM: number; color: string; count?: number } }
+    | { type: "enemyDeath"; x: number; y: number; isTank: boolean }
+  )[] = [];
   private netClientTargetCar: {
     xM: number;
     yM: number;
@@ -284,6 +288,7 @@ export class Game {
     }
     if (mode !== "host") {
       this.netRemoteNavigator = null;
+      this.netParticleEvents = [];
     }
   }
 
@@ -308,6 +313,10 @@ export class Game {
     car: { xM: number; yM: number; headingRad: number; vxMS: number; vyMS: number; yawRateRadS: number; steerAngleRad: number; alphaFrontRad: number; alphaRearRad: number };
     enemies?: { id: number; x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank"; health?: number; maxHealth?: number }[];
     projectiles?: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age?: number; maxAge?: number }[];
+    particleEvents?: (
+      | { type: "emit"; opts: { x: number; y: number; vx: number; vy: number; lifetime: number; sizeM: number; color: string; count?: number } }
+      | { type: "enemyDeath"; x: number; y: number; isTank: boolean }
+    )[];
     raceActive?: boolean;
     raceFinished?: boolean;
     finishTimeSeconds?: number | null;
@@ -322,6 +331,26 @@ export class Game {
 
     if (snapshot.enemies) this.netRemoteEnemies = snapshot.enemies.map((e) => ({ ...e }));
     if (snapshot.projectiles) this.netRemoteProjectiles = snapshot.projectiles.map((p) => ({ ...p }));
+    if (snapshot.particleEvents) {
+      for (const ev of snapshot.particleEvents) {
+        if (!ev) continue;
+        if (ev.type === "emit") {
+          const o = ev.opts;
+          this.particlePool.emit({
+            x: o.x,
+            y: o.y,
+            vx: o.vx,
+            vy: o.vy,
+            lifetime: o.lifetime,
+            sizeM: o.sizeM,
+            color: o.color,
+            count: o.count
+          });
+        } else if (ev.type === "enemyDeath") {
+          this.createEnemyDeathParticles(ev.x, ev.y, ev.isTank);
+        }
+      }
+    }
     if (typeof snapshot.raceActive === "boolean") this.raceActive = snapshot.raceActive;
     if (typeof snapshot.raceFinished === "boolean") this.raceFinished = snapshot.raceFinished;
     if (snapshot.finishTimeSeconds !== undefined) this.finishTimeSeconds = snapshot.finishTimeSeconds;
@@ -639,6 +668,10 @@ export class Game {
     car: { xM: number; yM: number; headingRad: number; vxMS: number; vyMS: number; yawRateRadS: number; steerAngleRad: number; alphaFrontRad: number; alphaRearRad: number };
     enemies: { id: number; x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank"; health?: number; maxHealth?: number }[];
     projectiles: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age: number; maxAge: number }[];
+    particleEvents: (
+      | { type: "emit"; opts: { x: number; y: number; vx: number; vy: number; lifetime: number; sizeM: number; color: string; count?: number } }
+      | { type: "enemyDeath"; x: number; y: number; isTank: boolean }
+    )[];
     raceActive: boolean;
     raceFinished: boolean;
     finishTimeSeconds: number | null;
@@ -668,11 +701,19 @@ export class Game {
         age: p.age,
         maxAge: p.maxAge
       })),
+      particleEvents: this.netParticleEvents.splice(0, this.netParticleEvents.length),
       raceActive: this.raceActive,
       raceFinished: this.raceFinished,
       finishTimeSeconds: this.finishTimeSeconds,
       enemyKillCount: this.enemyKillCount
     };
+  }
+
+  private emitParticles(opts: { x: number; y: number; vx: number; vy: number; lifetime: number; sizeM: number; color: string; count?: number }): void {
+    this.particlePool.emit(opts);
+    if (this.netMode === "host") {
+      this.netParticleEvents.push({ type: "emit", opts });
+    }
   }
 
   private shoot(opts?: { aimX?: number; aimY?: number; weaponIndex?: number }): void {
@@ -992,7 +1033,7 @@ export class Game {
         const vxSpread = (Math.random() - 0.5) * (isWheelspin ? 3.5 : 3);
         const vySpread = (Math.random() - 0.5) * (isWheelspin ? 3.5 : 3);
 
-        this.particlePool.emit({
+        this.emitParticles({
           x: rearX + spreadX,
           y: rearY + spreadY,
           vx: -this.state.car.vxMS * cosH * (isWheelspin ? 0.35 : 0.3) + vxSpread,
@@ -1100,6 +1141,9 @@ export class Game {
         c.alphaFrontRad = lerp(c.alphaFrontRad, tcar.alphaFrontRad, alpha);
         c.alphaRearRad = lerp(c.alphaRearRad, tcar.alphaRearRad, alpha);
       }
+
+      // Animate locally-emitted particle effects on the client (client doesn't run `step()`).
+      this.particlePool.update(dt);
     }
 
     // Draw background
@@ -1992,9 +2036,12 @@ export class Game {
             this.enemyKillCount++;
             // Create massive particle burst on death
             this.createEnemyDeathParticles(enemy.x, enemy.y, enemy.type === "tank");
+            if (this.netMode === "host") {
+              this.netParticleEvents.push({ type: "enemyDeath", x: enemy.x, y: enemy.y, isTank: enemy.type === "tank" });
+            }
           } else {
             // Smaller visual feedback for hits that don't kill
-            this.particlePool.emit({
+            this.emitParticles({
               x: proj.x,
               y: proj.y,
               vx: (Math.random() - 0.5) * 4,
