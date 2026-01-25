@@ -1,7 +1,15 @@
 # Space Rally - Development Tasks
 
 ## Current Focus
-- (Next) **SERVER INFRA** work (separate branch)
+- **SERVER INFRA** (current, `server-infra` branch)
+
+### Status (as of now)
+- ✅ Bun WebSocket signaling server (`server/`) for WebRTC SDP/ICE relay
+- ✅ In-game pairing panel (“LINK”) + room codes + copy link
+- ✅ WebRTC DataChannel connected host/client prototype
+- ✅ Host-authoritative simulation → client receives snapshots (car/enemies/projectiles)
+- ✅ Client sends Navigator inputs → host applies aim/shoot/weapon
+- ✅ Particle effects replicated via lightweight “particle events”
 
 ## Core Features ✅
 - Rally physics (bicycle model, drift detection, 6-speed manual/auto)
@@ -26,10 +34,11 @@
 - **Player 2 (Navigator)**: Full tactical map visibility, marks hazards and shoots targets for the driver.
 
 ### Phase 1: The "Blind" Prototype (Tech Foundation)
-- [ ] **Input Decoupling**: Refactor `Game` to support remote input sources.
-  - Split `KeyboardInput` into `DriverInput` (Steering/Gas) and `GunnerInput` (Aim/Map).
-- [ ] **WebRTC Link**: Implement P2P connection using `peerjs`.
-  - Node.js "Handshake" server -> Direct Browser-to-Browser link.
+- [x] **WebRTC Link (Prototype)**: P2P DataChannel + Bun signaling (no `peerjs` yet).
+- [~] **Input Decoupling**: Partially done (Navigator remote input works); still need clean driver/navigator input split.
+  - [ ] Driver remote controls (steer/throttle/brake/handbrake) + authority rules
+- [ ] **TURN Fallback**: Add `coturn` + credentials for hard NAT/cellular networks.
+- [ ] **Reconnect / Resume**: Handle tab refresh + renegotiation + room lifecycle.
 - [ ] **Fog Mechanic**:
   - Implement heavy rendering fog for the Driver view (~50m visibility).
   - Ensure Navigator has clear "Satellite" view (unlimited draw distance).
@@ -45,6 +54,11 @@
 ### Phase 3: Mobile Controls
 - [ ] **Driver Layout**: Landscape. Virtual joystick steering + right-thumb pedals.
 - [ ] **Navigator Layout**: Landscape. Tap-to-ping map, drag-to-aim turret.
+
+## Notes / Known Limitations (Server Infra Prototype)
+- Client is “render-only” (does not simulate), so the experience depends on snapshot rate + smoothing.
+- Audio is not synced.
+- Particles are synced as events (not full particle state), to keep bandwidth reasonable.
 
 ### Backlog (P3/P4 Ideas)
 - **Player 3 (Engineer)**: Manages power distribution (Shield/Engine/Weapons) and damage control.
