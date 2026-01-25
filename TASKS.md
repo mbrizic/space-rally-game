@@ -13,6 +13,8 @@
 - Root cause: Retry logic rejects interesting hairpins to avoid overlaps
 - Trade-off: 100% reliable generation vs. exciting variety
 
+**⚠️ Pacenotes Bug** - Hidden as they are not working correctly. Logic needs review or removal.
+
 ## What's Next - Plan: "Blind Driver" Co-Op
 
 **Concept**: A high-speed asymmetric multiplayer rally.

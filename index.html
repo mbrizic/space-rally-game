@@ -1,36 +1,221 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Space Rally (Prototype)</title>
-    <style>
-      html,
-      body {
-        margin: 0;
-        height: 100%;
-        background: #0b0d12;
-        color: #e8ecf1;
-        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji",
-          "Segoe UI Emoji";
-      }
-      #app {
-        height: 100%;
-        display: grid;
-        grid-template-rows: 1fr;
-      }
-      canvas {
-        width: 100%;
-        height: 100%;
-        display: block;
-      }
-    </style>
-  </head>
-  <body>
-    <div id="app">
-      <canvas id="game"></canvas>
-    </div>
-    <script type="module" src="/src/main.ts"></script>
-  </body>
-</html>
 
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Space Rally (Prototype)</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      height: 100%;
+      background: #0b0d12;
+      color: #e8ecf1;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji",
+        "Segoe UI Emoji";
+      overflow: hidden;
+      touch-action: none;
+    }
+
+    #app {
+      height: 100%;
+      display: grid;
+      grid-template-rows: 1fr;
+      position: relative;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* Mobile Overlay */
+    #mobile-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      display: none;
+      /* Shown via JS */
+      user-select: none;
+    }
+
+    /* Mobile Layout Groups */
+    .control-group {
+      display: none;
+      width: 100%;
+      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+    }
+
+    .control-group.active {
+      display: block;
+    }
+
+    /* Driver Specifics */
+    #steering-zone {
+      position: absolute;
+      /* Explicit absolute positioning */
+      left: 3%;
+      bottom: 180px;
+      /* Positioned just above Speedometer HUD */
+      width: 220px;
+      height: 60px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 2px solid rgba(255, 255, 255, 0.1);
+      border-radius: 30px;
+      /* Capsule shape */
+      pointer-events: auto;
+    }
+
+    #joystick-knob {
+      width: 40px;
+      height: 50px;
+      background: rgba(255, 255, 255, 0.2);
+      border: 2px solid rgba(255, 255, 255, 0.4);
+      border-radius: 10px;
+      /* Vertical handle */
+      /* Initially centered */
+      position: absolute;
+      left: 90px;
+      /* (220 - 40) / 2 */
+      top: 3px;
+      transition: transform 0.05s linear;
+    }
+
+    #pedals-zone {
+      position: absolute;
+      /* Ensure absolute positioning */
+      right: 3%;
+      bottom: 2%;
+      /* Adjusted to 2% as requested */
+      width: 80px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 15px;
+      pointer-events: auto;
+    }
+
+    /* Throttle Slider */
+    #throttle-slider-container {
+      width: 60px;
+      height: 180px;
+      background: rgba(100, 255, 100, 0.08);
+      border: 2px solid rgba(100, 255, 100, 0.2);
+      border-radius: 30px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #throttle-fill {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 0%;
+      background: rgba(100, 255, 100, 0.4);
+      transition: height 0.05s linear;
+    }
+
+    #throttle-handle {
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 50px;
+      height: 30px;
+      background: white;
+      border-radius: 15px;
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+    }
+
+    /* Navigator Specifics */
+    #nav-actions-zone {
+      right: 3%;
+      bottom: 12%;
+      width: 150px;
+      height: 300px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      gap: 20px;
+    }
+
+    .mobile-button {
+      width: 60px;
+      height: 60px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 2px solid rgba(255, 255, 255, 0.15);
+      border-radius: 50%;
+      /* Circle buttons */
+      color: white;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-transform: uppercase;
+      font-size: 10px;
+      letter-spacing: 0.5px;
+      user-select: none;
+    }
+
+    .mobile-button:active {
+      background: rgba(255, 255, 255, 0.2);
+      transform: scale(0.96);
+    }
+
+    #btn-brake {
+      background: rgba(255, 100, 100, 0.15);
+      border-color: rgba(255, 100, 100, 0.3);
+    }
+
+    #role-toggle:active {
+      background: #007bff;
+      border-color: #00a2ff;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="app">
+    <canvas id="game"></canvas>
+    <div id="mobile-overlay">
+      <!-- Role toggle moved to 'I' key -->
+
+      <!-- Driver Controls -->
+      <div id="driver-group" class="control-group active">
+        <div id="steering-zone" class="touch-zone">
+          <div id="joystick-knob"></div>
+        </div>
+        <div id="pedals-zone">
+          <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+            <div id="throttle-slider-container" class="touch-zone">
+              <div id="throttle-fill"></div>
+              <div id="throttle-handle"></div>
+            </div>
+            <div style="font-size: 8px; color: rgba(255,255,255,0.3);">THR</div>
+          </div>
+          <div id="btn-brake" class="mobile-button"
+            style="background: rgba(255, 100, 100, 0.15); border-color: rgba(255, 100, 100, 0.4);">BRK</div>
+          <div id="btn-handbrake" class="mobile-button" style="border-color: rgba(255,255,255,0.4);">HB</div>
+        </div>
+      </div>
+
+      <!-- Navigator Controls -->
+      <div id="navigator-group" class="control-group">
+        <!-- Text removed as requested -->
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+
+</html>

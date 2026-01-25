@@ -1,4 +1,4 @@
-import { KeyboardInput } from "./input";
+import { KeyboardInput, TouchInput, CompositeInput, type GameInput, type InputState } from "./input";
 import { Renderer2D } from "./renderer2d";
 import { clamp } from "./math";
 import { createCarState, defaultCarParams, stepCar, type CarTelemetry } from "../sim/car";
@@ -21,11 +21,15 @@ import { unlockAudio, suspendAudio, resumeAudio } from "../audio/audio-context";
 import { EngineAudio } from "../audio/audio-engine";
 import { SlideAudio } from "../audio/audio-slide";
 import { EffectsAudio } from "../audio/audio-effects";
-import { computePacenote } from "../sim/pacenotes";
 import type { TuningPanel } from "./tuning";
 import { ProjectilePool } from "../sim/projectile";
 import { EnemyPool, generateEnemies } from "../sim/enemy";
 import { createWeaponState, WeaponState, WeaponType } from "../sim/weapons";
+
+export enum PlayerRole {
+  DRIVER = "driver",
+  NAVIGATOR = "navigator"
+}
 
 type GameState = {
   timeSeconds: number;
@@ -35,7 +39,9 @@ type GameState = {
 
 export class Game {
   private readonly renderer: Renderer2D;
-  private readonly input: KeyboardInput;
+  private readonly input: GameInput;
+  private role: PlayerRole = PlayerRole.DRIVER;
+  private lastInputState: InputState = { steer: 0, throttle: 0, brake: 0, handbrake: 0, shoot: false, fromKeyboard: false };
   private readonly tuning?: TuningPanel;
   private readonly canvas: HTMLCanvasElement;
   private trackDef!: TrackDefinition; // Will be set in constructor
@@ -73,7 +79,6 @@ export class Game {
   private collisionFlashAlpha = 0;
   private cameraMode: "follow" | "runner" = "runner";
   private cameraRotationRad = 0;
-  private pacenoteText = "";
   private editorMode = false;
   private editorDragIndex: number | null = null;
   private editorHoverIndex: number | null = null;
@@ -131,9 +136,22 @@ export class Game {
 
   constructor(canvas: HTMLCanvasElement, tuning?: TuningPanel) {
     this.renderer = new Renderer2D(canvas);
-    this.input = new KeyboardInput(window);
+
+    // Mobile detection
+    const isTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+    const kb = new KeyboardInput(window);
+
+    if (isTouch) {
+      this.input = new CompositeInput([kb, new TouchInput()]);
+    } else {
+      this.input = kb;
+    }
+
     this.tuning = tuning;
     this.canvas = canvas;
+
+    // Role selection toggle moved to 'I' key (see keydown handler)
+
 
     // Load total distance from localStorage
     const savedDistance = localStorage.getItem('space-rally-total-distance');
@@ -178,6 +196,10 @@ export class Game {
       if (e.code === "KeyM") {
         this.showMinimap = !this.showMinimap;
       }
+      if (e.code === "KeyI") {
+        const nextRole = this.role === PlayerRole.DRIVER ? PlayerRole.NAVIGATOR : PlayerRole.DRIVER;
+        this.setRole(nextRole);
+      }
       if (e.code === "KeyO") {
         if (this.tuning) {
           this.tuning.values.manualTransmission = !this.tuning.values.manualTransmission;
@@ -209,6 +231,23 @@ export class Game {
     });
 
     this.reset();
+  }
+
+  private setRole(role: PlayerRole): void {
+    this.role = role;
+    this.showNotification(`ROLE: ${role.toUpperCase()}`);
+
+    // Update UI
+    const driverGroup = document.getElementById("driver-group");
+    const navGroup = document.getElementById("navigator-group");
+
+    if (role === PlayerRole.DRIVER) {
+      driverGroup?.classList.add("active");
+      navGroup?.classList.remove("active");
+    } else {
+      driverGroup?.classList.remove("active");
+      navGroup?.classList.add("active");
+    }
   }
 
   private toggleEditorMode(): void {
@@ -560,13 +599,22 @@ export class Game {
     this.applyTuning();
 
     const inputsEnabled = this.damage01 < 1;
-    const steer = inputsEnabled ? this.input.axis("steer") : 0; // [-1..1]
-    const throttleForward = inputsEnabled ? this.input.axis("throttle") : 0; // [0..1]
-    const brakeOrReverse = inputsEnabled ? this.input.axis("brake") : 0; // [0..1]
-    const handbrake = inputsEnabled ? this.input.axis("handbrake") : 0; // [0..1]
+    this.lastInputState = this.input.getState();
+    const rawInput = this.lastInputState;
 
-    // Shooting: holding 'L' fires continuously
-    if (inputsEnabled && this.input.isDown("KeyL")) {
+    // Split input by role - although keyboard allows both for solo testing, 
+    // we enforce the role logic strictly for touch users.
+    const isDriver = this.role === PlayerRole.DRIVER || !!rawInput.fromKeyboard;
+    const isNavigator = this.role === PlayerRole.NAVIGATOR || !!rawInput.fromKeyboard;
+
+    // Driver actions
+    const steer = inputsEnabled && isDriver ? rawInput.steer : 0;
+    const throttleForward = inputsEnabled && isDriver ? rawInput.throttle : 0;
+    const brakeOrReverse = inputsEnabled && isDriver ? rawInput.brake : 0;
+    const handbrake = inputsEnabled && isDriver ? rawInput.handbrake : 0;
+
+    // Navigator actions
+    if (inputsEnabled && isNavigator && rawInput.shoot) {
       this.shoot();
     }
 
@@ -720,7 +768,6 @@ export class Game {
     const projectionFinal = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
     this.lastTrackS = projectionFinal.sM;
     this.updateCheckpointsAndRace(projectionFinal);
-    this.pacenoteText = computePacenote(this.track, this.lastTrackS, this.speedMS())?.label ?? "STRAIGHT";
 
     this.resolveTreeCollisions();
     this.resolveBuildingCollisions();
@@ -744,16 +791,18 @@ export class Game {
     this.renderer.drawBg();
 
     // Offset camera to show more track ahead - car is lower on screen
-    const cameraOffsetY = this.cameraMode === "runner" ? 6 : 3; // Show 3-6m ahead
+    const cameraOffsetY = this.cameraMode === "runner" ? 8 : 4;
     const cosRot = Math.cos(this.state.car.headingRad);
     const sinRot = Math.sin(this.state.car.headingRad);
     const offsetX = cosRot * cameraOffsetY;
     const offsetY = sinRot * cameraOffsetY;
 
+    const zoom = 24; // Unified tactical zoom (increased from 18)
+
     this.renderer.beginCamera({
       centerX: this.state.car.xM + this.cameraShakeX + offsetX,
       centerY: this.state.car.yM + this.cameraShakeY + offsetY,
-      pixelsPerMeter: 36,
+      pixelsPerMeter: zoom,
       rotationRad: this.cameraRotationRad
     });
 
@@ -824,17 +873,26 @@ export class Game {
 
     this.renderer.endCamera();
 
-    // Draw crosshair at mouse position (screen space)
-    this.renderer.drawCrosshair(this.mouseX, this.mouseY);
+    if (this.role === PlayerRole.DRIVER) {
+      this.renderer.drawFog(this.state.car.xM, this.state.car.yM, 90); // Increased visibility
+    }
+
+    // Mobile detection (moved up)
+    const isTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+
+    // Draw crosshair at mouse position (screen space) - Suppressed on Touch
+    if (!isTouch) {
+      this.renderer.drawCrosshair(this.mouseX, this.mouseY);
+    }
 
     // --- HUD LAYOUT ORCHESTRATION ---
 
     const hudPadding = 12;
 
-    // 1. Left Side Stack (Top Left)
+    // 1. Controls Panel (Top Left)
     // "disappear when you toggle debug menu" implies Debug Menu REPLACES controls?
-    // Let's assume: Show Controls normally. If Debug Menu is ON, hide Controls.
-    if (!this.showDebugMenu) {
+    // Let's assume: Show Controls normally. If Debug Menu
+    if (!this.showDebugMenu && !isTouch) {
       this.renderer.drawPanel({
         x: hudPadding,
         y: hudPadding,
@@ -916,18 +974,18 @@ export class Game {
       rightStackY += 140; // Approx height of info panel
     }
 
-    // 2b. Pacenotes (Below Rally Info)
-    if (this.pacenoteText) {
-      this.renderer.drawPacenotePanel({
-        text: this.pacenoteText,
-        x: rightStackX,
-        y: rightStackY
-      });
-      rightStackY += 60; // Height of pacenote panel + padding
-    }
+    // 2b. Pacenotes (Below Rally Info) - FULLY REMOVED
 
-    // 2c. Minimap (Below Pacenotes)
-    if (this.showMinimap) {
+
+    // 2c. Minimap
+    // Show if:
+    // 1. Role is NAVIGATOR (always)
+    // 2. Role is DRIVER but we are on DESKTOP (not touch) - "Singleplayer Mode"
+    const canShowMinimap = this.showMinimap && (this.role === PlayerRole.NAVIGATOR || !isTouch);
+
+    if (canShowMinimap) {
+      const isTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+      const miniMapSize = isTouch ? width : Math.min(height * 0.4, 300);
       this.renderer.drawMinimap({
         track: this.track,
         carX: this.state.car.xM,
@@ -935,9 +993,9 @@ export class Game {
         carHeading: this.state.car.headingRad,
         waterBodies: this.waterBodies,
         enemies: this.enemyPool.getActive(),
-        offsetX: rightStackX - 250, // Fixed position
-        offsetY: rightStackY,
-        size: 250 // Fixed large size
+        offsetX: (width - miniMapSize) * 0.5, // Centered
+        offsetY: height - miniMapSize - (isTouch ? 0 : hudPadding), // Bottom (no padding if full width)
+        size: miniMapSize
       });
     }
 
@@ -955,17 +1013,15 @@ export class Game {
           `track: ${this.trackDef.meta?.name ?? "Custom"}${this.trackDef.meta?.seed ? ` (seed ${this.trackDef.meta.seed})` : ""}`,
           `camera: ${this.cameraMode}`,
           `speed: ${speedMS.toFixed(2)} m/s (${speedKmH.toFixed(0)} km/h)`,
-          `steer: ${this.input.axis("steer").toFixed(2)}  throttle: ${this.input.axis("throttle").toFixed(2)}  brake/rev: ${this.input
-            .axis("brake")
-            .toFixed(2)}`,
-          `handbrake: ${this.input.axis("handbrake").toFixed(2)}  gear: ${this.gear}`,
+          `steer: ${this.lastInputState.steer.toFixed(2)}  throttle: ${this.lastInputState.throttle.toFixed(2)}  brake/rev: ${this.lastInputState.brake.toFixed(2)}`,
+          `handbrake: ${this.lastInputState.handbrake.toFixed(2)}  gear: ${this.gear}`,
           `yawRate: ${this.state.car.yawRateRadS.toFixed(2)} rad/s`,
         ]
       });
     }
 
-    // Draw Weapon HUD
-    if (this.weapons.length > 0) {
+    // Draw Weapon HUD - Suppressed for Driver
+    if (this.weapons.length > 0 && this.role === PlayerRole.NAVIGATOR) {
       const currentWeapon = this.weapons[this.currentWeaponIndex];
       this.renderer.drawWeaponHUD({
         name: currentWeapon.stats.name,
@@ -1029,16 +1085,18 @@ export class Game {
       }
     }
 
-    // RPM Meter
-    this.renderer.drawRpmMeter({
-      rpm: this.engineState.rpm,
-      maxRpm: this.engineParams.maxRpm,
-      redlineRpm: this.engineParams.redlineRpm,
-      gear: this.engineState.gear,
-      speedKmH: this.speedMS() * 3.6,
-      damage01: this.damage01,
-      totalDistanceKm: this.totalDistanceM / 1000
-    });
+    // RPM Meter - Suppressed for Navigator (replaced by minimap)
+    if (this.role === PlayerRole.DRIVER) {
+      this.renderer.drawRpmMeter({
+        rpm: this.engineState.rpm,
+        maxRpm: this.engineParams.maxRpm,
+        redlineRpm: this.engineParams.redlineRpm,
+        gear: this.engineState.gear,
+        speedKmH: this.speedMS() * 3.6,
+        damage01: this.damage01,
+        totalDistanceKm: this.totalDistanceM / 1000
+      });
+    }
 
     // Notification (if recent)
     const timeSinceNotification = this.state.timeSeconds - this.notificationTimeSeconds;
