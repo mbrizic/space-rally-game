@@ -108,6 +108,9 @@ export class Game {
   private editorDragIndex: number | null = null;
   private editorHoverIndex: number | null = null;
   private editorPointerId: number | null = null;
+  // Client interpolation quality tracking
+  private netClientInterpolationDistance = 0;
+  private netClientVelocityError = 0;
   // Engine simulation
   private engineState: EngineState = createEngineState();
   private readonly engineParams = defaultEngineParams();
@@ -354,6 +357,7 @@ export class Game {
     if (snapshot.cameraRotationRad !== undefined) this.cameraRotationRad = snapshot.cameraRotationRad;
     if (snapshot.shakeX !== undefined) this.cameraShakeX = snapshot.shakeX;
     if (snapshot.shakeY !== undefined) this.cameraShakeY = snapshot.shakeY;
+    
     this.netClientTargetCar = snapshot.car;
     if (this.netMode === "client" && this.netClientLastRenderMs === 0) {
       this.state = { ...this.state, car: { ...this.state.car, ...snapshot.car } };
@@ -1117,8 +1121,8 @@ export class Game {
       let angleDiff = targetRot - this.cameraRotationRad;
       while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
       while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
-      // Smooth interpolation: faster rotation to reduce lag/mismatch
-      const rotationSpeed = 2.0; // rad/s
+      // Smooth interpolation: balanced rotation speed
+      const rotationSpeed = 1.2; // rad/s
       this.cameraRotationRad += angleDiff * rotationSpeed * dtSeconds;
     } else {
       this.cameraRotationRad = 0;
@@ -1182,17 +1186,35 @@ export class Game {
           while (a < -Math.PI) a += Math.PI * 2;
           return a;
         };
-        // Fast interpolation for position/heading (camera) - tuned for smoothness
-        const fastAlpha = 1 - Math.exp(-dt * 40);
-        // Slower for visual details
-        const slowAlpha = 1 - Math.exp(-dt * 14);
+        // Predictive smoothing: lower alpha (less twitch) + small lookahead (less lag)
+        const leadSeconds = 0.07;
+
+        const posAlpha = 1 - Math.exp(-dt * 18);
+        const headingAlpha = 1 - Math.exp(-dt * 14);
+        // Slower for visual/physics properties
+        const slowAlpha = 1 - Math.exp(-dt * 12);
 
         const c = this.state.car;
         const tcar = this.netClientTargetCar;
-        // Fast interpolation for camera (position + heading)
-        c.xM = lerp(c.xM, tcar.xM, fastAlpha);
-        c.yM = lerp(c.yM, tcar.yM, fastAlpha);
-        c.headingRad = c.headingRad + wrapPi(tcar.headingRad - c.headingRad) * fastAlpha;
+        
+        // Track interpolation quality metrics
+        const distToTarget = Math.hypot(tcar.xM - c.xM, tcar.yM - c.yM);
+        const velToTarget = Math.hypot(tcar.vxMS - c.vxMS, tcar.vyMS - c.vyMS);
+        this.netClientInterpolationDistance = distToTarget;
+        this.netClientVelocityError = velToTarget;
+        
+        // Predict forward only (avoid sideways lookahead causing slow lateral drift)
+        const fx = Math.cos(tcar.headingRad);
+        const fy = Math.sin(tcar.headingRad);
+        const forwardSpeedMS = tcar.vxMS * fx + tcar.vyMS * fy;
+        const targetX = tcar.xM + fx * forwardSpeedMS * leadSeconds;
+        const targetY = tcar.yM + fy * forwardSpeedMS * leadSeconds;
+        const targetHeading = tcar.headingRad + tcar.yawRateRadS * leadSeconds;
+
+        // Smooth camera (position + heading)
+        c.xM = lerp(c.xM, targetX, posAlpha);
+        c.yM = lerp(c.yM, targetY, posAlpha);
+        c.headingRad = c.headingRad + wrapPi(targetHeading - c.headingRad) * headingAlpha;
         // Smooth visual/physics properties
         c.vxMS = lerp(c.vxMS, tcar.vxMS, slowAlpha);
         c.vyMS = lerp(c.vyMS, tcar.vyMS, slowAlpha);
@@ -1304,9 +1326,10 @@ export class Game {
 
     this.renderer.endCamera();
 
-    if (this.role === PlayerRole.DRIVER) {
-      this.renderer.drawFog(this.state.car.xM, this.state.car.yM, 45); // Blind driver fog
-    }
+    // Fog disabled for now
+    // if (this.role === PlayerRole.DRIVER) {
+    //   this.renderer.drawFog(this.state.car.xM, this.state.car.yM, 45); // Blind driver fog
+    // }
 
     // Draw crosshair at mouse position (screen space) - Suppressed on Touch
     if (!isTouch) {
@@ -1449,6 +1472,10 @@ export class Game {
           `steer: ${this.lastInputState.steer.toFixed(2)}  throttle: ${this.lastInputState.throttle.toFixed(2)}  brake/rev: ${this.lastInputState.brake.toFixed(2)}`,
           `handbrake: ${this.lastInputState.handbrake.toFixed(2)}  gear: ${this.gear}`,
           `yawRate: ${this.state.car.yawRateRadS.toFixed(2)} rad/s`,
+          ...(this.netMode === "client" ? [
+            `client interp distance: ${this.netClientInterpolationDistance.toFixed(2)}m`,
+            `client velocity error: ${this.netClientVelocityError.toFixed(2)}m/s`
+          ] : []),
           ...this.netStatusLines.map(l => `net: ${l}`)
         ]
       });
@@ -1894,7 +1921,8 @@ export class Game {
 
       const impact = vN < 0 ? Math.abs(vN) : 0;
       if (impact > 1) {
-        this.damage01 = clamp(this.damage01 + impact * 0.08, 0, 1);
+        // More collision HP: reduce damage per impact
+        this.damage01 = clamp(this.damage01 + impact * 0.05, 0, 1);
         // Camera shake for tree collisions
         const shakeIntensity = Math.min(impact * 0.25, 2.5);
         this.cameraShakeX = (Math.random() - 0.5) * shakeIntensity;
@@ -1957,7 +1985,8 @@ export class Game {
 
         const impact = vN < 0 ? Math.abs(vN) : 0;
         if (impact > 1) {
-          this.damage01 = clamp(this.damage01 + impact * 0.12, 0, 1); // More damage than trees
+          // More collision HP: reduce damage per impact
+          this.damage01 = clamp(this.damage01 + impact * 0.07, 0, 1);
           const shakeIntensity = Math.min(impact * 0.35, 3.5);
           this.cameraShakeX = (Math.random() - 0.5) * shakeIntensity;
           this.cameraShakeY = (Math.random() - 0.5) * shakeIntensity;
@@ -2205,10 +2234,11 @@ export class Game {
 
         // Type-specific physics
         const isTank = enemy.type === "tank";
-        // Heavier zombies: significantly reduce speed on impact
-        const speedReduction = isTank ? 0.60 : 0.75; // 40% loss for tanks, 25% for zombies (was 15%)
-        const distortionMultiplier = isTank ? 0.5 : 0.15; // More yaw for tanks
-        const damageRate = isTank ? 0.08 : 0.015; // More damage from tanks (was 0.02)
+        // Tanks should feel less like immovable walls
+        const speedReduction = isTank ? 0.78 : 0.80;
+        const distortionMultiplier = isTank ? 0.25 : 0.15;
+        // More collision HP: reduce damage from enemy impacts
+        const damageRate = isTank ? 0.03 : 0.01;
 
         this.state.car.vxMS *= speedReduction;
         this.state.car.vyMS *= speedReduction;
@@ -2229,6 +2259,9 @@ export class Game {
         if (damaged && damaged.health <= 0) {
           this.enemyKillCount++;
           this.createEnemyDeathParticles(enemy.x, enemy.y, isTank);
+          if (this.netMode === "host") {
+            this.netParticleEvents.push({ type: "enemyDeath", x: enemy.x, y: enemy.y, isTank });
+          }
         }
 
         // Play impact sound

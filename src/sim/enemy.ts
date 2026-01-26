@@ -30,7 +30,7 @@ let nextEnemyId = 1;
 export function createEnemy(x: number, y: number, trackSegmentHint: number, type: EnemyType = EnemyType.ZOMBIE): Enemy {
   const isTank = type === EnemyType.TANK;
   const health = isTank ? 5 : 1;
-  const radius = isTank ? 1.0 : 0.6;
+  const radius = isTank ? 0.9 : 0.6;
 
   return {
     id: nextEnemyId++,

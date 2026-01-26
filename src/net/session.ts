@@ -45,10 +45,6 @@ function setQuery(params: Record<string, string | null>): void {
   history.replaceState({}, "", url.toString());
 }
 
-function isLocalhostHost(hostname: string): boolean {
-  return hostname === "localhost" || hostname === "127.0.0.1";
-}
-
 function resolveSignalWsEndpoint(): string {
   const url = new URL(window.location.href);
   const override = url.searchParams.get("signal") ?? url.searchParams.get("signalWs");
@@ -59,9 +55,6 @@ function resolveSignalWsEndpoint(): string {
       if (!u.pathname.endsWith("/ws") && !u.pathname.endsWith("/api/ws")) u.pathname = "/ws";
       return u.toString().replace(/^http/, "ws");
     }
-  }
-  if (isLocalhostHost(window.location.hostname)) {
-    return "ws://127.0.0.1:8787/ws";
   }
   const u = new URL("/api/ws", window.location.origin);
   return u.toString().replace(/^http/, "ws");

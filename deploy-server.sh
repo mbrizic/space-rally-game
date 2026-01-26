@@ -20,8 +20,11 @@ echo "🚀 Deploying SERVER to $ENV ($HOST:$DEST_DIR)..."
 rm -rf server/dist
 mkdir -p server/dist
 
-# Copy source files
+# Copy source files and dependencies lock
 cp server/package.json server/dist/
+if [ -f server/bun.lock ]; then
+  cp server/bun.lock server/dist/
+fi
 cp -r server/src server/dist/
 
 # Create tarball
@@ -33,18 +36,21 @@ echo "⬆️ Uploading..."
 ssh $HOST "mkdir -p $DEST_DIR"
 scp server-deploy.tar.gz $HOST:$DEST_DIR/
 
-# Helper to source environment variables
-INIT_CMD="source ~/.bash_profile 2>/dev/null || source ~/.bashrc 2>/dev/null || source ~/.profile 2>/dev/null"
-
-# Extract and Install
+# Extract and Install - use full path to bun
 echo "🔧 Installing..."
-ssh $HOST "$INIT_CMD && cd $DEST_DIR && tar -xzf server-deploy.tar.gz && rm server-deploy.tar.gz && bun install --production"
+ssh $HOST "cd $DEST_DIR && tar -xzf server-deploy.tar.gz && rm server-deploy.tar.gz && ~/.bun/bin/bun install --production" || {
+  echo "❌ Installation failed on remote server"
+  exit 1
+}
 
 # Restart Service (Assuming PM2 or similar)
 echo "🔄 Restarting..."
 # Using PM2 for process management - adjust name based on env
 APP_NAME="spacerally-signal-$ENV"
-ssh $HOST "$INIT_CMD && cd $DEST_DIR && pm2 start src/index.ts --name $APP_NAME --interpreter bun --env PORT=$PORT --update-env || pm2 restart $APP_NAME --update-env"
+ssh $HOST "cd $DEST_DIR && /home/mbrizic/.nvm/versions/node/v22.7.0/bin/pm2 start src/index.ts --name $APP_NAME --interpreter ~/.bun/bin/bun --env PORT=$PORT --update-env || /home/mbrizic/.nvm/versions/node/v22.7.0/bin/pm2 restart $APP_NAME --update-env" || {
+  echo "❌ Service restart failed"
+  exit 1
+}
 
 # Clean up local artifact
 rm server-deploy.tar.gz
