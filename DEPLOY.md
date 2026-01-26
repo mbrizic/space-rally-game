@@ -90,6 +90,36 @@ scp -r dist/* mbrizic.com:/home/mbrizic/hosting/spacerally/test/
 
 ## Troubleshooting
 
-- **Permission denied**: Make sure you have SSH key access set up
-- **Directory not found**: The script creates it, but you can also: `ssh mbrizic.com "mkdir -p /home/mbrizic/hosting/spacerally/test"`
 - **404 errors**: Check your web server configuration and ensure it's serving the correct directory
+
+## Server (Backend) Deployment
+
+Authentication / Signaling server is a Bun app.
+
+### Deployment Script
+
+```bash
+# Deploy to test (port 8788)
+./deploy-server.sh test
+
+# Deploy to prod (port 8787)
+./deploy-server.sh prod
+```
+
+### Prerequisites on Server
+
+1. **Bun** installed (`curl -fsSL https://bun.sh/install | bash`)
+2. **PM2** installed (`npm install -g pm2`) for process management
+3. **Nginx** reverse proxy setup (optional but recommended for SSL)
+
+### Nginx Config for WebSocket (WSS)
+
+```nginx
+location /api/ws {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "Upgrade";
+    proxy_set_header Host $host;
+}
+```

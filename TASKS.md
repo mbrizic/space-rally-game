@@ -33,15 +33,12 @@
 - **Player 1 (Driver)**: Excellent physics/control, but **terrible vision** (Fog of War / Blindness).
 - **Player 2 (Navigator)**: Full tactical map visibility, marks hazards and shoots targets for the driver.
 
-### Phase 1: The "Blind" Prototype (Tech Foundation)
+### Phase 1: The "Blind" Prototype (Tech Foundation) ✅
 - [x] **WebRTC Link (Prototype)**: P2P DataChannel + Bun signaling (no `peerjs` yet).
-- [~] **Input Decoupling**: Partially done (Navigator remote input works); still need clean driver/navigator input split.
-  - [ ] Driver remote controls (steer/throttle/brake/handbrake) + authority rules
+- [x] **Input Decoupling**: Driver remote controls (steer/throttle/brake/handbrake) + authority rules.
 - [ ] **TURN Fallback**: Add `coturn` + credentials for hard NAT/cellular networks.
-- [ ] **Reconnect / Resume**: Handle tab refresh + renegotiation + room lifecycle.
-- [ ] **Fog Mechanic**:
-  - Implement heavy rendering fog for the Driver view (~50m visibility).
-  - Ensure Navigator has clear "Satellite" view (unlimited draw distance).
+- [x] **Reconnect / Resume**: Handle tab refresh + persistent roles (`host=1` param) + auto-reconnect.
+- [x] **Fog Mechanic**: Heavy rendering fog for Driver (~45m visibility); clear "Satellite" view for Navigator.
 
 ### Phase 2: Navigation & Information Warfare
 - [ ] **Navigator HUD**:
@@ -63,5 +60,5 @@
 ### Backlog (P3/P4 Ideas)
 - **Player 3 (Engineer)**: Manages power distribution (Shield/Engine/Weapons) and damage control.
 - **Player 4 (Intel/Hacker)**: Operates a forward-scout drone to tag hazards or hack gates.
-- **Weather**: Dynamic sandstorms affecting visibility.
+- **Weather**: Dynamic sandstorms affecting visibility, rain affecting traction, electrical storms affecting electronics like a minimap.
 - **Bullet Time**: Cooperative slowdown mechanics.

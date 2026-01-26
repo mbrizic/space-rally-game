@@ -50,6 +50,8 @@ export class Game {
   private netRemoteEnemies: { id: number; x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank"; health?: number; maxHealth?: number }[] | null = null;
   private netRemoteProjectiles: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age?: number; maxAge?: number }[] | null = null;
   private netRemoteNavigator: { aimX: number; aimY: number; shootHeld: boolean; shootPulse: boolean; weaponIndex: number } | null = null;
+  private netRemoteDriver: InputState | null = null;
+  private netStatusLines: string[] = [];
   private netShootPulseHandler: (() => void) | null = null;
   private netParticleEvents: (
     | { type: "emit"; opts: { x: number; y: number; vx: number; vy: number; lifetime: number; sizeM: number; color: string; count?: number } }
@@ -251,6 +253,16 @@ export class Game {
           this.showNotification(`GEARBOX: ${mode}`);
         }
       }
+      if (e.code === "Escape") {
+        // Disconnect from multiplayer and return to solo play
+        if (this.netMode !== "solo") {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("room");
+          url.searchParams.delete("host");
+          url.searchParams.delete("role");
+          window.location.href = url.toString();
+        }
+      }
       // Unlock audio on first key press
       if (!this.audioUnlocked) {
         this.tryUnlockAudio();
@@ -288,12 +300,17 @@ export class Game {
     }
     if (mode !== "host") {
       this.netRemoteNavigator = null;
+      this.netRemoteDriver = null;
       this.netParticleEvents = [];
     }
   }
 
   public setNetShootPulseHandler(handler: (() => void) | null): void {
     this.netShootPulseHandler = handler;
+  }
+
+  public setNetStatusLines(lines: string[]): void {
+    this.netStatusLines = lines;
   }
 
   public getSerializedTrackDef(): string {
@@ -305,6 +322,11 @@ export class Game {
     if (!def) return false;
     this.setTrack(def);
     this.reset();
+    // Reset client smoothing state to snap to new position
+    if (this.netMode === "client") {
+      this.netClientTargetCar = null;
+      this.netClientLastRenderMs = 0;
+    }
     return true;
   }
 
@@ -321,9 +343,17 @@ export class Game {
     raceFinished?: boolean;
     finishTimeSeconds?: number | null;
     enemyKillCount?: number;
+    cameraMode?: "follow" | "runner";
+    cameraRotationRad?: number;
+    shakeX?: number;
+    shakeY?: number;
   }): void {
     // In client mode, smooth toward target to avoid jitter.
     this.state = { ...this.state, timeSeconds: snapshot.t };
+    if (snapshot.cameraMode) this.cameraMode = snapshot.cameraMode;
+    if (snapshot.cameraRotationRad !== undefined) this.cameraRotationRad = snapshot.cameraRotationRad;
+    if (snapshot.shakeX !== undefined) this.cameraShakeX = snapshot.shakeX;
+    if (snapshot.shakeY !== undefined) this.cameraShakeY = snapshot.shakeY;
     this.netClientTargetCar = snapshot.car;
     if (this.netMode === "client" && this.netClientLastRenderMs === 0) {
       this.state = { ...this.state, car: { ...this.state.car, ...snapshot.car } };
@@ -361,6 +391,10 @@ export class Game {
     this.netRemoteNavigator = input;
   }
 
+  public applyRemoteDriverInput(input: InputState): void {
+    this.netRemoteDriver = input;
+  }
+
   public getAimWorld(): { x: number; y: number } {
     return { x: this.mouseWorldX, y: this.mouseWorldY };
   }
@@ -376,6 +410,14 @@ export class Game {
 
   public setRoleExternal(role: PlayerRole): void {
     this.setRole(role);
+  }
+
+  public getRoleExternal(): PlayerRole {
+    return this.role;
+  }
+
+  public getInputStateExternal(): InputState {
+    return this.lastInputState;
   }
 
   private setRole(role: PlayerRole): void {
@@ -676,6 +718,10 @@ export class Game {
     raceFinished: boolean;
     finishTimeSeconds: number | null;
     enemyKillCount: number;
+    cameraMode: "follow" | "runner";
+    cameraRotationRad: number;
+    shakeX: number;
+    shakeY: number;
   } {
     return {
       t: this.state.timeSeconds,
@@ -705,7 +751,11 @@ export class Game {
       raceActive: this.raceActive,
       raceFinished: this.raceFinished,
       finishTimeSeconds: this.finishTimeSeconds,
-      enemyKillCount: this.enemyKillCount
+      enemyKillCount: this.enemyKillCount,
+      cameraMode: this.cameraMode,
+      cameraRotationRad: this.cameraRotationRad,
+      shakeX: this.cameraShakeX,
+      shakeY: this.cameraShakeY
     };
   }
 
@@ -900,21 +950,25 @@ export class Game {
 
     // Split input by role - although keyboard allows both for solo testing, 
     // we enforce the role logic strictly for touch users.
-    const isDriver = this.role === PlayerRole.DRIVER || !!rawInput.fromKeyboard;
-    const isNavigator = this.role === PlayerRole.NAVIGATOR || !!rawInput.fromKeyboard;
+    const isDriverLocal = this.role === PlayerRole.DRIVER || !!rawInput.fromKeyboard;
+    const isNavigatorLocal = this.role === PlayerRole.NAVIGATOR || !!rawInput.fromKeyboard;
+
+    // Use remote driver input if we are host and a remote driver is connected
+    const driverInput = (this.netMode === "host" && this.netRemoteDriver) ? this.netRemoteDriver : rawInput;
+    const isDriverRemote = this.netMode === "host" && !!this.netRemoteDriver;
 
     // Driver actions
-    const steer = inputsEnabled && isDriver ? rawInput.steer : 0;
-    const throttleForward = inputsEnabled && isDriver ? rawInput.throttle : 0;
-    const brakeOrReverse = inputsEnabled && isDriver ? rawInput.brake : 0;
-    const handbrake = inputsEnabled && isDriver ? rawInput.handbrake : 0;
+    const steer = inputsEnabled && (isDriverLocal || isDriverRemote) ? driverInput.steer : 0;
+    const throttleForward = inputsEnabled && (isDriverLocal || isDriverRemote) ? driverInput.throttle : 0;
+    const brakeOrReverse = inputsEnabled && (isDriverLocal || isDriverRemote) ? driverInput.brake : 0;
+    const handbrake = inputsEnabled && (isDriverLocal || isDriverRemote) ? driverInput.handbrake : 0;
 
     // Navigator actions
     // - Local keyboard: rawInput.shoot (KeyL)
     // - Local touch/pen: hold-to-fire via shootHeld
     // - Remote navigator (net host): aim + shoot
     const heldTouchShoot = this.role === PlayerRole.NAVIGATOR && this.shootHeld;
-    if (inputsEnabled && ((isNavigator && rawInput.shoot) || heldTouchShoot)) {
+    if (inputsEnabled && ((isNavigatorLocal && rawInput.shoot) || heldTouchShoot)) {
       this.shoot();
     }
     if (inputsEnabled && this.netMode === "host" && this.netRemoteNavigator) {
@@ -1063,8 +1117,8 @@ export class Game {
       let angleDiff = targetRot - this.cameraRotationRad;
       while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
       while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
-      // Smooth interpolation: slower rotation for stability during rapid maneuvers
-      const rotationSpeed = 0.8; // rad/s - lower = more stable, less disorienting
+      // Smooth interpolation: faster rotation to reduce lag/mismatch
+      const rotationSpeed = 2.0; // rad/s
       this.cameraRotationRad += angleDiff * rotationSpeed * dtSeconds;
     } else {
       this.cameraRotationRad = 0;
@@ -1120,7 +1174,7 @@ export class Game {
         );
       }
 
-      // Smooth car toward latest snapshot to reduce visible jitter.
+      // Fast interpolation to smooth network jitter while staying responsive
       if (this.netClientTargetCar) {
         const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
         const wrapPi = (a: number) => {
@@ -1128,18 +1182,24 @@ export class Game {
           while (a < -Math.PI) a += Math.PI * 2;
           return a;
         };
-        const alpha = 1 - Math.exp(-dt * 14); // responsiveness
+        // Fast interpolation for position/heading (camera) - tuned for smoothness
+        const fastAlpha = 1 - Math.exp(-dt * 40);
+        // Slower for visual details
+        const slowAlpha = 1 - Math.exp(-dt * 14);
+
         const c = this.state.car;
         const tcar = this.netClientTargetCar;
-        c.xM = lerp(c.xM, tcar.xM, alpha);
-        c.yM = lerp(c.yM, tcar.yM, alpha);
-        c.headingRad = c.headingRad + wrapPi(tcar.headingRad - c.headingRad) * alpha;
-        c.vxMS = lerp(c.vxMS, tcar.vxMS, alpha);
-        c.vyMS = lerp(c.vyMS, tcar.vyMS, alpha);
-        c.yawRateRadS = lerp(c.yawRateRadS, tcar.yawRateRadS, alpha);
-        c.steerAngleRad = lerp(c.steerAngleRad, tcar.steerAngleRad, alpha);
-        c.alphaFrontRad = lerp(c.alphaFrontRad, tcar.alphaFrontRad, alpha);
-        c.alphaRearRad = lerp(c.alphaRearRad, tcar.alphaRearRad, alpha);
+        // Fast interpolation for camera (position + heading)
+        c.xM = lerp(c.xM, tcar.xM, fastAlpha);
+        c.yM = lerp(c.yM, tcar.yM, fastAlpha);
+        c.headingRad = c.headingRad + wrapPi(tcar.headingRad - c.headingRad) * fastAlpha;
+        // Smooth visual/physics properties
+        c.vxMS = lerp(c.vxMS, tcar.vxMS, slowAlpha);
+        c.vyMS = lerp(c.vyMS, tcar.vyMS, slowAlpha);
+        c.yawRateRadS = lerp(c.yawRateRadS, tcar.yawRateRadS, slowAlpha);
+        c.steerAngleRad = lerp(c.steerAngleRad, tcar.steerAngleRad, slowAlpha);
+        c.alphaFrontRad = lerp(c.alphaFrontRad, tcar.alphaFrontRad, slowAlpha);
+        c.alphaRearRad = lerp(c.alphaRearRad, tcar.alphaRearRad, slowAlpha);
       }
 
       // Animate locally-emitted particle effects on the client (client doesn't run `step()`).
@@ -1158,14 +1218,18 @@ export class Game {
     const offsetX = cosRot * cameraOffsetY;
     const offsetY = sinRot * cameraOffsetY;
 
-    const zoom = 24; // Unified tactical zoom (increased from 18)
+    const zoom = 24; // Unified tactical zoom
 
-    // Desktop driver-only: shift camera view left for testing layouts.
-    const screenCenterXCssPx = !isTouch && this.role === PlayerRole.DRIVER ? width * 0.33 : undefined;
+    // Don't shift screen center based on role - keep cameras identical for multiplayer
+    const screenCenterXCssPx = undefined;
+
+    // Use zero camera shake for client (shake is local to host simulation)
+    const shakeX = this.netMode === "client" ? 0 : this.cameraShakeX;
+    const shakeY = this.netMode === "client" ? 0 : this.cameraShakeY;
 
     this.renderer.beginCamera({
-      centerX: this.state.car.xM + this.cameraShakeX + offsetX,
-      centerY: this.state.car.yM + this.cameraShakeY + offsetY,
+      centerX: this.state.car.xM + shakeX + offsetX,
+      centerY: this.state.car.yM + shakeY + offsetY,
       pixelsPerMeter: zoom,
       rotationRad: this.cameraRotationRad,
       screenCenterXCssPx
@@ -1241,7 +1305,7 @@ export class Game {
     this.renderer.endCamera();
 
     if (this.role === PlayerRole.DRIVER) {
-      this.renderer.drawFog(this.state.car.xM, this.state.car.yM, 90); // Increased visibility
+      this.renderer.drawFog(this.state.car.xM, this.state.car.yM, 45); // Blind driver fog
     }
 
     // Draw crosshair at mouse position (screen space) - Suppressed on Touch
@@ -1385,6 +1449,7 @@ export class Game {
           `steer: ${this.lastInputState.steer.toFixed(2)}  throttle: ${this.lastInputState.throttle.toFixed(2)}  brake/rev: ${this.lastInputState.brake.toFixed(2)}`,
           `handbrake: ${this.lastInputState.handbrake.toFixed(2)}  gear: ${this.gear}`,
           `yawRate: ${this.state.car.yawRateRadS.toFixed(2)} rad/s`,
+          ...this.netStatusLines.map(l => `net: ${l}`)
         ]
       });
     }

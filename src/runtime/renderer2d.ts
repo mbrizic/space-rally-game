@@ -1672,10 +1672,11 @@ export class Renderer2D {
 
     const pixelRadius = radiusM * this.camera.pixelsPerMeter;
 
-    const gradient = ctx.createRadialGradient(sx, sy, pixelRadius * 0.3, sx, sy, pixelRadius);
+    const gradient = ctx.createRadialGradient(sx, sy, pixelRadius * 0.2, sx, sy, pixelRadius);
     gradient.addColorStop(0, "rgba(5, 7, 10, 0)");
-    gradient.addColorStop(0.7, "rgba(5, 7, 10, 0.85)");
-    gradient.addColorStop(1, "rgba(5, 7, 10, 1.0)");
+    gradient.addColorStop(0.5, "rgba(5, 7, 10, 0.6)");
+    gradient.addColorStop(0.8, "rgba(5, 7, 10, 0.9)");
+    gradient.addColorStop(1, "rgba(3, 5, 8, 1.0)");
 
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, w, h);
