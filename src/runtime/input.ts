@@ -75,13 +75,23 @@ export class TouchInput implements GameInput {
   private handbrake = 0;
   private shoot = false;
 
-  constructor() {
+  constructor(
+    private readonly opts: {
+      setAimClientPoint?: (clientX: number, clientY: number) => void;
+      setShootHeld?: (held: boolean) => void;
+      shootPulse?: () => void;
+      showOverlay?: boolean;
+    } = {}
+  ) {
     this.setupJoystick();
     this.setupButtons();
+    this.setupNavigatorControls();
 
-    // Show overlay
-    const overlay = document.getElementById("mobile-overlay");
-    if (overlay) overlay.style.display = "block";
+    // Show overlay (optional; start menu may want to delay this)
+    if (this.opts.showOverlay !== false) {
+      const overlay = document.getElementById("mobile-overlay");
+      if (overlay) overlay.style.display = "block";
+    }
   }
 
   private setupJoystick(): void {
@@ -89,23 +99,39 @@ export class TouchInput implements GameInput {
     const knob = document.getElementById("joystick-knob");
     if (!zone || !knob) return;
 
-    const handleMove = (e: TouchEvent | PointerEvent) => {
+    const deadzone = 0.08;
+    const expo = 1.25;
+
+    const handleMove = (e: PointerEvent) => {
       const rect = zone.getBoundingClientRect();
-      const centerX = rect.left + rect.width / 2;
-      const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
 
-      const deltaX = clientX - centerX;
-      const maxDelta = rect.width / 2;
+      const dx = e.clientX - cx;
+      const dy = e.clientY - cy;
+      const maxR = Math.max(1, Math.min(rect.width, rect.height) * 0.42);
+      const r = Math.hypot(dx, dy);
+      const k = r > 1e-6 ? Math.min(1, r / maxR) : 0;
+      const nx = r > 1e-6 ? (dx / r) * k : 0;
+      const ny = r > 1e-6 ? (dy / r) * k : 0;
 
-      this.steer = Math.max(-1, Math.min(1, deltaX / maxDelta));
+      const rawSteer = nx;
+      const mag = Math.abs(rawSteer);
+      if (mag < deadzone) {
+        this.steer = 0;
+      } else {
+        const t = (mag - deadzone) / (1 - deadzone);
+        const shaped = Math.pow(t, expo);
+        this.steer = Math.sign(rawSteer) * shaped;
+      }
 
-      // Visuals
-      knob.style.transform = `translateX(${this.steer * (maxDelta - 20)}px)`;
+      // Visuals (full 2D for better thumb feedback)
+      knob.style.transform = `translate(calc(-50% + ${nx * maxR}px), calc(-50% + ${ny * maxR}px))`;
     };
 
     const handleEnd = () => {
       this.steer = 0;
-      knob.style.transform = "translateX(0)";
+      knob.style.transform = "translate(-50%, -50%)";
     };
 
     zone.addEventListener("pointerdown", (e) => {
@@ -113,23 +139,19 @@ export class TouchInput implements GameInput {
       handleMove(e);
     });
     zone.addEventListener("pointermove", (e) => {
-      if (zone.hasPointerCapture(e.pointerId)) {
-        handleMove(e);
-      }
+      if (zone.hasPointerCapture(e.pointerId)) handleMove(e);
     });
     zone.addEventListener("pointerup", (e) => {
-      zone.releasePointerCapture(e.pointerId);
+      try { zone.releasePointerCapture(e.pointerId); } catch { }
       handleEnd();
     });
     zone.addEventListener("pointercancel", () => handleEnd());
   }
 
   private setupButtons(): void {
+    const throttle = document.getElementById("btn-throttle");
     const brake = document.getElementById("btn-brake");
     const handbrake = document.getElementById("btn-handbrake");
-    const throttleZone = document.getElementById("throttle-slider-container");
-    const throttleHandle = document.getElementById("throttle-handle");
-    const throttleFill = document.getElementById("throttle-fill");
 
     const bind = (el: HTMLElement | null, action: (down: boolean) => void) => {
       if (!el) return;
@@ -138,55 +160,69 @@ export class TouchInput implements GameInput {
         action(true);
       });
       el.addEventListener("pointerup", (e) => {
-        el.releasePointerCapture(e.pointerId);
+        try { el.releasePointerCapture(e.pointerId); } catch { }
         action(false);
       });
       el.addEventListener("pointercancel", () => action(false));
     };
 
+    bind(throttle, (down) => this.throttle = down ? 1 : 0);
     bind(brake, (down) => this.brake = down ? 1 : 0);
     bind(handbrake, (down) => this.handbrake = down ? 1 : 0);
+  }
 
-    // Throttle Slider Logic
-    if (throttleZone && throttleHandle && throttleFill) {
-      const updateThrottle = (e: PointerEvent) => {
-        const rect = throttleZone.getBoundingClientRect();
-        const y = e.clientY - rect.top;
-        const normalized = 1 - Math.max(0, Math.min(1, y / rect.height));
-        this.throttle = normalized;
+  private setupNavigatorControls(): void {
+    const aimZone = document.getElementById("aim-zone");
+    const shootBtn = document.getElementById("btn-shoot");
 
-        // Visuals
-        throttleHandle.style.bottom = `${normalized * (rect.height - 30)}px`;
-        throttleFill.style.height = `${normalized * 100}%`;
+    if (aimZone && this.opts.setAimClientPoint) {
+      const updateAim = (e: PointerEvent) => {
+        this.opts.setAimClientPoint?.(e.clientX, e.clientY);
       };
 
-      const resetThrottle = () => {
-        this.throttle = 0;
-        throttleHandle.style.bottom = "0px";
-        throttleFill.style.height = "0%";
-      };
+      aimZone.addEventListener("pointerdown", (e) => {
+        aimZone.setPointerCapture(e.pointerId);
+        updateAim(e);
+        // Tap/hold anywhere to shoot (especially useful for automatic weapons)
+        this.opts.shootPulse?.();
+        this.opts.setShootHeld?.(true);
+        e.preventDefault();
+      });
+      aimZone.addEventListener("pointermove", (e) => {
+        if (aimZone.hasPointerCapture(e.pointerId)) updateAim(e);
+      });
+      aimZone.addEventListener("pointerup", (e) => {
+        try { aimZone.releasePointerCapture(e.pointerId); } catch { }
+        this.opts.setShootHeld?.(false);
+      });
+      aimZone.addEventListener("pointercancel", () => {
+        this.opts.setShootHeld?.(false);
+      });
+    }
 
-      throttleZone.addEventListener("pointerdown", (e) => {
-        throttleZone.setPointerCapture(e.pointerId);
-        updateThrottle(e);
+    if (shootBtn) {
+      shootBtn.addEventListener("pointerdown", (e) => {
+        shootBtn.setPointerCapture(e.pointerId);
+        this.opts.shootPulse?.();
+        this.opts.setShootHeld?.(true);
+        e.preventDefault();
       });
-      throttleZone.addEventListener("pointermove", (e) => {
-        if (throttleZone.hasPointerCapture(e.pointerId)) {
-          updateThrottle(e);
-        }
+      shootBtn.addEventListener("pointerup", (e) => {
+        try { shootBtn.releasePointerCapture(e.pointerId); } catch { }
+        this.opts.setShootHeld?.(false);
       });
-      throttleZone.addEventListener("pointerup", (e) => {
-        throttleZone.releasePointerCapture(e.pointerId);
-        resetThrottle();
+      shootBtn.addEventListener("pointercancel", () => {
+        this.opts.setShootHeld?.(false);
       });
-      throttleZone.addEventListener("pointercancel", () => resetThrottle());
     }
   }
 
   getState(): InputState {
+    // Prefer braking over throttle if both are pressed.
+    const throttle = this.brake > 0 ? 0 : this.throttle;
     return {
       steer: this.steer,
-      throttle: this.throttle,
+      throttle,
       brake: this.brake,
       handbrake: this.handbrake,
       shoot: this.shoot,

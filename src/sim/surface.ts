@@ -58,6 +58,7 @@ export function surfaceForTrackSM(totalLengthM: number, sM: number, offTrack: bo
     case "dirt":
       return { name: "dirt", frictionMu: 0.78 + surfaceRand(seed + segmentIdx) * 0.08, rollingResistanceN: 500 + surfaceRand(seed * 1.9 + segmentIdx) * 40 };
     case "ice":
-      return { name: "ice", frictionMu: 0.32 + surfaceRand(seed + segmentIdx) * 0.06, rollingResistanceN: 140 + surfaceRand(seed * 2.1 + segmentIdx) * 20 };
+      // Slipperier ice: lower mu and slightly lower rolling resistance.
+      return { name: "ice", frictionMu: 0.22 + surfaceRand(seed + segmentIdx) * 0.06, rollingResistanceN: 120 + surfaceRand(seed * 2.1 + segmentIdx) * 20 };
   }
 }

@@ -36,6 +36,26 @@ function randId(len: number): string {
   return out;
 }
 
+function hostKeyStorageKey(room: string): string {
+  return `space-rally-host-key:${room}`;
+}
+
+function loadStoredHostKey(room: string): string | null {
+  try {
+    return localStorage.getItem(hostKeyStorageKey(room));
+  } catch {
+    return null;
+  }
+}
+
+function storeHostKey(room: string, key: string): void {
+  try {
+    localStorage.setItem(hostKeyStorageKey(room), key);
+  } catch {
+    // ignore
+  }
+}
+
 function setQuery(params: Record<string, string | null>): void {
   const url = new URL(window.location.href);
   for (const [k, v] of Object.entries(params)) {
@@ -79,12 +99,19 @@ function resolveSignalHealthUrl(): string {
   return "/api/health";
 }
 
-export function initNetSession(game: Game): void {
+export function initNetSession(
+  game: Game,
+  opts?: {
+    onPeerConnected?: (mode: "host" | "client") => void;
+    onPeerReady?: () => void;
+    onPeerDisconnected?: () => void;
+  }
+): { invite: () => void; isPeerReady: () => boolean } | null {
   const inviteBtn = document.getElementById("net-invite") as HTMLButtonElement | null;
   const roomInput = document.getElementById("net-room") as HTMLInputElement | null;
   const statusEl = document.getElementById("net-status") as HTMLDivElement | null;
 
-  if (!inviteBtn || !roomInput || !statusEl) return;
+  if (!inviteBtn || !roomInput || !statusEl) return null;
 
   const state: NetState = {
     room: "",
@@ -103,6 +130,7 @@ export function initNetSession(game: Game): void {
   let hostSendTimer: number | null = null;
   let clientSendTimer: number | null = null;
   let shootPulse = false;
+  let peerReady = false;
 
   const render = (): void => {
     const lines = [
@@ -151,6 +179,8 @@ export function initNetSession(game: Game): void {
     if (clientSendTimer) window.clearInterval(clientSendTimer);
     hostSendTimer = null;
     clientSendTimer = null;
+    peerReady = false;
+    opts?.onPeerDisconnected?.();
     game.setNetShootPulseHandler(null);
     try { dc?.close(); } catch { }
     try { pc?.close(); } catch { }
@@ -205,6 +235,8 @@ export function initNetSession(game: Game): void {
             dc.send(JSON.stringify({ type: "state", ...game.getNetSnapshot() }));
           } catch { }
         }, 33);
+
+        opts?.onPeerConnected?.("host");
       }
 
       if (state.mode === "client") {
@@ -212,6 +244,11 @@ export function initNetSession(game: Game): void {
         const initialRole = new URL(window.location.href).searchParams.get("role") === "driver" ? PlayerRole.DRIVER : PlayerRole.NAVIGATOR;
         game.setRoleExternal(initialRole);
         game.setNetShootPulseHandler(() => { shootPulse = true; });
+
+        // Tell the host we're actually in-game (so host can start sim).
+        try {
+          dc.send(JSON.stringify({ type: "ready" }));
+        } catch { }
 
         clientSendTimer = window.setInterval(() => {
           if (!dc || dc.readyState !== "open") return;
@@ -236,6 +273,8 @@ export function initNetSession(game: Game): void {
             try { dc.send(JSON.stringify(payload)); } catch { }
           }
         }, 33);
+
+        opts?.onPeerConnected?.("client");
       }
     };
     dc.onclose = () => {
@@ -250,6 +289,12 @@ export function initNetSession(game: Game): void {
       if (typeof e.data !== "string") return;
       let msg: any;
       try { msg = JSON.parse(e.data); } catch { return; }
+
+      if (msg?.type === "ready" && state.mode === "host") {
+        peerReady = true;
+        opts?.onPeerReady?.();
+        return;
+      }
 
       if (msg?.type === "init" && state.mode === "client") {
         const ok = typeof msg.trackDef === "string" ? game.loadSerializedTrackDef(msg.trackDef) : false;
@@ -429,7 +474,9 @@ export function initNetSession(game: Game): void {
     const cleanRoom = room.trim().toUpperCase();
     roomInput.value = cleanRoom;
     if (asHost) {
-      setQuery({ room: cleanRoom, host: "1" });
+      const key = randId(10);
+      storeHostKey(cleanRoom, key);
+      setQuery({ room: cleanRoom, host: "1", hostKey: key });
     } else {
       setQuery({ room: cleanRoom });
     }
@@ -439,8 +486,13 @@ export function initNetSession(game: Game): void {
   const copyToClipboard = async () => {
     const url = new URL(window.location.href);
     if (state.room) url.searchParams.set("room", state.room);
-    // Remove host parameter from copied URL - P2 should join as client
+
+    // Ensure copied URL is always a *joiner* link (never a host link).
+    // Preserve other params like signaling overrides.
     url.searchParams.delete("host");
+    url.searchParams.delete("hostKey");
+    const role = url.searchParams.get("role");
+    if (role === "driver") url.searchParams.delete("role");
     try {
       await navigator.clipboard.writeText(url.toString());
       const oldText = inviteBtn.textContent;
@@ -453,7 +505,7 @@ export function initNetSession(game: Game): void {
     }
   };
 
-  inviteBtn.addEventListener("click", () => {
+  const doInvite = () => {
     if (state.mode === "host" && state.room) {
       // Disconnect and return to solo
       const url = new URL(window.location.href);
@@ -468,6 +520,10 @@ export function initNetSession(game: Game): void {
       startRoom(roomCode, true);
       copyToClipboard();
     }
+  };
+
+  inviteBtn.addEventListener("click", () => {
+    doInvite();
   });
 
   roomInput.addEventListener("keydown", (e) => {
@@ -477,17 +533,25 @@ export function initNetSession(game: Game): void {
   // Auto-join/host based on URL parameters
   const url = new URL(window.location.href);
   const initialRoom = url.searchParams.get("room");
-  const isHost = url.searchParams.get("host") === "1";
+  const requestedHost = url.searchParams.get("host") === "1";
+  const urlHostKey = url.searchParams.get("hostKey");
 
   if (initialRoom) {
-    if (isHost) {
-      state.mode = "host";
-      startRoom(initialRoom, true);
-    } else {
-      state.mode = "client";
-      startRoom(initialRoom, false);
+    const room = initialRoom.trim().toUpperCase();
+    const storedHostKey = loadStoredHostKey(room);
+    const isHost = requestedHost && !!storedHostKey && !!urlHostKey && storedHostKey === urlHostKey;
+
+    if (requestedHost && !isHost) {
+      // Someone tried to force host=1 without owning the room. Downgrade to client.
+      setQuery({ host: null, hostKey: null });
     }
+
+    if (isHost) state.mode = "host";
+    else state.mode = "client";
+    startRoom(room, isHost);
   } else {
     render();
   }
+
+  return { invite: doInvite, isPeerReady: () => peerReady };
 }

@@ -984,7 +984,16 @@ export class Renderer2D {
     ctx.restore();
   }
 
-  drawRpmMeter(opts: { rpm: number; maxRpm: number; redlineRpm: number; gear: number | string; speedKmH: number; damage01: number; totalDistanceKm?: number }): void {
+  drawRpmMeter(opts: {
+    rpm: number;
+    maxRpm: number;
+    redlineRpm: number;
+    gear: number | string;
+    speedKmH: number;
+    damage01: number;
+    totalDistanceKm?: number;
+    layout?: "bottom" | "left";
+  }): void {
     const ctx = this.ctx;
     ctx.save();
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -992,16 +1001,27 @@ export class Renderer2D {
     const w = this.viewportWidthCssPx || this.canvas.clientWidth;
     const h = this.viewportHeightCssPx || this.canvas.clientHeight;
 
-    // Shift Speedometer 15px left as requested to account for pedal placement
-    const centerX = (w / 2) - 15;
-    const centerY = h - 80;
-    const radius = 70;
+    const layout = opts.layout ?? "bottom";
+
+    // Default layout: bottom center.
+    // Mobile landscape layout: left side, lifted above the bottom controls.
+    let centerX = (w / 2) - 15;
+    let centerY = h - 80;
+    let radius = 70;
+    if (layout === "left") {
+      // Smaller + higher so it doesn't sit on top of the joystick/pedals.
+      const lift = Math.min(410, Math.max(235, h * 0.57));
+      centerX = Math.min(150, Math.max(110, w * 0.16));
+      centerY = h - lift;
+      radius = 58;
+    }
+    const scale = radius / 70;
     const startAngle = Math.PI * 0.75; // 135 degrees
     const endAngle = Math.PI * 2.25; // 405 degrees (270 degree sweep)
 
     // Background arc
     ctx.strokeStyle = "rgba(0,0,0,0.5)";
-    ctx.lineWidth = 18;
+    ctx.lineWidth = 18 * scale;
     ctx.beginPath();
     ctx.arc(centerX, centerY, radius, startAngle, endAngle);
     ctx.stroke();
@@ -1012,7 +1032,7 @@ export class Renderer2D {
     const sweepAngle = endAngle - startAngle;
 
     // Background full arc (Dimmed and desaturated)
-    ctx.lineWidth = 14;
+    ctx.lineWidth = 14 * scale;
     ctx.lineCap = "round";
 
     // Dimmed Green (0-70%)
@@ -1072,48 +1092,52 @@ export class Renderer2D {
       const tipY = centerY + Math.sin(tipAngle) * radius;
 
       ctx.shadowColor = rpmFraction > redlineFraction * 0.9 ? "rgba(255, 60, 60, 1)" : "rgba(180, 220, 255, 0.8)";
-      ctx.shadowBlur = 10;
+      ctx.shadowBlur = 10 * scale;
       ctx.fillStyle = "white";
       ctx.beginPath();
-      ctx.arc(tipX, tipY, 4, 0, Math.PI * 2);
+      ctx.arc(tipX, tipY, 4 * scale, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     }
 
     // Speed text - BOLD and PROMINENT
     ctx.fillStyle = "rgba(255, 255, 255, 0.98)";
-    ctx.font = "bold 32px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.font = `bold ${Math.round(32 * scale)}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(`${Math.round(opts.speedKmH)}`, centerX, centerY - 10);
+    ctx.fillText(`${Math.round(opts.speedKmH)}`, centerX, centerY - 10 * scale);
 
     // Speed unit
-    ctx.font = "bold 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.font = `bold ${Math.round(12 * scale)}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
     ctx.fillStyle = "rgba(180, 220, 255, 0.7)";
-    ctx.fillText("KM/H", centerX, centerY + 12);
+    ctx.fillText("KM/H", centerX, centerY + 12 * scale);
 
     // RPM text (smaller, below speed)
     ctx.fillStyle = "rgba(180, 220, 255, 0.6)";
-    ctx.font = "bold 14px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.font = `bold ${Math.round(14 * scale)}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(`RPM: ${Math.round(opts.rpm)}`, centerX, centerY + 32);
+    ctx.fillText(`RPM: ${Math.round(opts.rpm)}`, centerX, centerY + 32 * scale);
 
     // Gear indicator - PROMINENT for manual shifting
-    ctx.font = "bold 60px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    const gearScale = layout === "left" ? scale * 0.82 : scale;
+    ctx.font = `bold ${Math.round(60 * gearScale)}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
     ctx.fillStyle = rpmFraction > redlineFraction * 0.9 ? "rgba(255, 100, 100, 1)" : "rgba(180, 220, 255, 0.98)";
-    ctx.fillText(`${opts.gear}`, centerX + radius + 50, centerY - 5);
+    let gearX = centerX + radius + 42;
+    if (gearX > w - 12) gearX = centerX - radius - 42;
+    ctx.fillText(`${opts.gear}`, gearX, centerY - 5 * scale);
 
     // Gear label
-    ctx.font = "bold 14px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.font = `bold ${Math.round(14 * gearScale)}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
     ctx.fillStyle = "rgba(180, 220, 255, 0.7)";
-    ctx.fillText("GEAR", centerX + radius + 50, centerY + 35);
+    ctx.fillText("GEAR", gearX, centerY + 35 * scale);
 
     // DAMAGE INDICATOR - WIDER bar
-    const dmgX = centerX - radius - 55; // Slightly adjusted pos
-    const dmgY = centerY - 30;
-    const dmgWidth = 24; // Wider (was 12)
-    const dmgHeight = 60;
+    let dmgX = centerX - radius - 55; // Slightly adjusted pos
+    if (dmgX < 12) dmgX = centerX + radius + 18;
+    const dmgY = centerY - 30 * scale;
+    const dmgWidth = 24 * scale; // Wider (was 12)
+    const dmgHeight = 60 * scale;
 
     // Background
     ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
@@ -1127,17 +1151,17 @@ export class Renderer2D {
     ctx.fillRect(dmgX, dmgY + (dmgHeight - fillH), dmgWidth, fillH);
 
     // Percentage label only (no "HP" text)
-    ctx.font = "bold 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    ctx.font = `bold ${Math.round(12 * scale)}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
     ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
     ctx.textAlign = "center";
-    ctx.fillText(`${Math.round(health * 100)}%`, dmgX + dmgWidth / 2, dmgY + dmgHeight + 14);
+    ctx.fillText(`${Math.round(health * 100)}%`, dmgX + dmgWidth / 2, dmgY + dmgHeight + 14 * scale);
 
     // Total distance driven (if provided)
     if (opts.totalDistanceKm !== undefined) {
-      ctx.font = "bold 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+      ctx.font = `bold ${Math.round(12 * scale)}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
       ctx.fillStyle = "rgba(180, 220, 255, 0.6)";
       ctx.textAlign = "center";
-      ctx.fillText(`${opts.totalDistanceKm.toFixed(1)} km`, centerX, centerY + 50);
+      ctx.fillText(`${opts.totalDistanceKm.toFixed(1)} km`, centerX, centerY + 50 * scale);
     }
 
     ctx.restore();

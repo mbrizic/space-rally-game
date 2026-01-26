@@ -13,6 +13,8 @@
 - ✅ Prod deployment script works reliably with non-interactive SSH (explicit Bun + PM2 paths)
 - ✅ Client blood/death particles now replicate for car-impact enemy kills (host emits `enemyDeath` event)
 - ✅ Tanks feel less “immovable” + car has more collision HP (tuning pass)
+- ✅ Mobile start menu gates first interaction; fullscreen is touch-only and user-toggleable
+- ✅ Stage seed selection: start loads a random stage from seeds 1..1000; seed shown in Debug panel
 - ⚠️ Client playback smoothing still needs another pass (small residual drift / “wonky” feel under fast motion)
 
 ## Core Features ✅
@@ -22,6 +24,7 @@
 - Water hazards beside track (off-road penalty)
 - Minimap (toggle with `M`) with surface colors, START/FINISH, enemies
 - Shooter mode: weapons + mobile weapon buttons + touch hold-to-fire
+- Mobile HUD: driver speedometer left layout; navigator ammo display above weapon buttons; larger navigator minimap
 
 ## Known Issues
 **⚠️ Track Variety Problem** - Tracks are repetitive and safe
@@ -36,6 +39,10 @@
 
 **⚠️ Pacenotes Bug** - Hidden as they are not working correctly; logic needs review or removal.
 
+**⚠️ Enemy Placement Determinism (Future)**
+- Enemy placement has been made less evenly spaced (clusters + gaps).
+- TODO: Ensure this remains deterministic and purely seed-driven across multiplayer clients.
+
 ## What's Next - Plan: "Blind Driver" Co-Op
 
 **Concept**: A high-speed asymmetric multiplayer rally.
@@ -46,8 +53,13 @@
 - [x] **WebRTC Link (Prototype)**: P2P DataChannel + Bun signaling (no `peerjs` yet).
 - [x] **Input Decoupling**: Driver remote controls (steer/throttle/brake/handbrake) + authority rules.
 - [ ] **TURN Fallback**: Add `coturn` + credentials for hard NAT/cellular networks.
-- [x] **Reconnect / Resume**: Handle tab refresh + persistent roles (`host=1` param) + auto-reconnect.
+- [x] **Reconnect / Resume**: Handle tab refresh + persistent host ownership (`host=1` + per-room `hostKey`) + auto-join.
 - [x] **Fog Mechanic**: Heavy rendering fog for Driver (~45m visibility); clear "Satellite" view for Navigator. (Currently disabled while tuning.)
+
+### Multiplayer Rules (current)
+- Host is the room creator only (enforced client-side via a per-room `hostKey` stored in localStorage).
+- Invite links never include `host`/`hostKey`.
+- Host simulation waits for the client to send a `ready` message (not just DC open).
 
 ### Infra Notes (Where things stand)
 - Signaling endpoints: client resolves to `/api/ws` by default (no forced localhost); dev server proxies `/api`.
@@ -55,22 +67,31 @@
 
 ### Phase 2: Navigation & Information Warfare
 - [ ] **Navigator HUD**:
-  - Full-screen tactical map overlay.
-  - "Ping" system: Clicking map places 3D markers in Driver's view (ice, rocks, corners).
-- [ ] **Shooting Integration**:
-  - Navigator controls the turret to clear obstacles/enemies.
-  - Driver focuses purely on survival/speed.
+  - "Ping" system: Clicking map places 3D markers in Driver's view (ice, rocks, corners). (not sure if I want this, need to think)
+- [x] **Shooting Integration**
 
 ### Phase 3: Mobile Controls
 - [ ] **Driver Layout**: Landscape. Virtual joystick steering + right-thumb pedals.
 - [ ] **Navigator Layout**: Landscape. Tap-to-ping map, drag-to-aim turret.
+
+## Short-Term Next Steps (Non-Network)
+- Tune surface/audio feel (gravel slide audio vs drift intensity, ice slipperiness)
+- Improve zombie variety/AI without breaking determinism
+- Re-enable / rework pacenotes or remove fully
 
 ## Notes / Known Limitations (Server Infra Prototype)
 - Client is “render-only” (does not simulate), so the experience depends on snapshot rate + smoothing.
 - Audio is not synced.
 - Particles are synced as events (not full particle state), to keep bandwidth reasonable.
 
+## Bugs
+- drift should maybe start earlier?
+
 ### Backlog (P3/P4 Ideas)
+- more tactile feedback - vibration on steering, indicating grip level?
+- detect and ignore screen resizes to prevent cheating
+- add manual gearbox controls on mobile view
+- some way for co-driver to send visual cues to the driver
 - **Player 3 (Engineer)**: Manages power distribution (Shield/Engine/Weapons) and damage control.
 - **Player 4 (Intel/Hacker)**: Operates a forward-scout drone to tag hazards or hack gates.
 - **Weather**: Dynamic sandstorms affecting visibility, rain affecting traction, electrical storms affecting electronics like a minimap.

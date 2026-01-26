@@ -129,19 +129,30 @@ export function generateEnemies(track: Track, opts?: { seed?: number; count?: nu
   const enemies: Enemy[] = [];
   const roadHalfWidthM = track.widthM * 0.5;
 
-  // Place enemies at intervals along the track (EVEN MORE zombies!)
-  const minSpacing = 20; // 20m between spawns
-  const maxSpacing = 40; // 40m between spawns
+  // Place enemies at uneven intervals along the track.
+  // NOTE: This is deterministic via the seeded RNG (mulberry32).
+  // TODO: Ensure enemy generation remains deterministic and seed-driven across multiplayer clients.
+  const minSpacing = 14; // allow clusters
+  const maxSpacing = 52; // allow gaps
   const desiredCount = opts?.count ?? Math.floor(track.totalLengthM / 25); // ~1 per 25m (4x more than original)
 
-  let nextEnemyAt = minSpacing + rand() * (maxSpacing - minSpacing);
+  const sampleSpacing = (): number => {
+    // Biased distribution: more small spacings than large ones, plus occasional big gaps.
+    const r = rand();
+    const biased = r * r; // 0..1, biased toward 0
+    let spacing = minSpacing + biased * (maxSpacing - minSpacing);
+    if (rand() < 0.16) spacing += 35 + rand() * 65; // occasional larger gap
+    return spacing;
+  };
+
+  let nextEnemyAt = sampleSpacing();
 
   for (let i = 0; i < desiredCount && nextEnemyAt < track.totalLengthM - 100; i++) {
     const { p, headingRad } = pointOnTrack(track, nextEnemyAt);
 
     // Skip if too close to start or end
     if (nextEnemyAt < 80 || nextEnemyAt > track.totalLengthM - 80) {
-      nextEnemyAt += minSpacing + rand() * (maxSpacing - minSpacing);
+      nextEnemyAt += sampleSpacing();
       continue;
     }
 
@@ -174,7 +185,7 @@ export function generateEnemies(track: Track, opts?: { seed?: number; count?: nu
     }
 
     // Schedule next enemy
-    nextEnemyAt += minSpacing + rand() * (maxSpacing - minSpacing);
+    nextEnemyAt += sampleSpacing();
   }
 
   return enemies;

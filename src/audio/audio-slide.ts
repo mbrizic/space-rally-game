@@ -24,25 +24,25 @@ export function defaultSlideAudioParams(): SlideAudioParams {
             tarmac: {
                 filterFreq: 3200, // higher pitch screech
                 filterQ: 5, // more resonant/sharp
-                gain: 0.65, // balanced for audibility without being harsh
+                gain: 0.58, // slightly quieter to keep drift from overpowering
                 noiseType: "white",
             },
             gravel: {
                 filterFreq: 800, // mid rumble with crackle
                 filterQ: 1.5,
-                gain: 0.8,
+                gain: 0.72,
                 noiseType: "white",
             },
             dirt: {
                 filterFreq: 500, // lower, muffled
                 filterQ: 1.2,
-                gain: 0.5,
+                gain: 0.48,
                 noiseType: "pink",
             },
             offtrack: {
                 filterFreq: 400, // very muffled
                 filterQ: 1.0,
-                gain: 0.35,
+                gain: 0.34,
                 noiseType: "pink",
             },
         },

@@ -26,6 +26,17 @@ import { ProjectilePool } from "../sim/projectile";
 import { EnemyPool, generateEnemies } from "../sim/enemy";
 import { createWeaponState, WeaponState, WeaponType } from "../sim/weapons";
 
+function isTouchMode(): boolean {
+  try {
+    const url = new URL(window.location.href);
+    const forced = url.searchParams.get("mobile") === "1" || url.searchParams.get("touch") === "1";
+    if (forced) return true;
+  } catch {
+    // ignore
+  }
+  return "ontouchstart" in window || navigator.maxTouchPoints > 0;
+}
+
 export enum PlayerRole {
   DRIVER = "driver",
   NAVIGATOR = "navigator"
@@ -47,6 +58,7 @@ export class Game {
   private shootPointerId: number | null = null;
   private shootHeld = false;
   private netMode: "solo" | "host" | "client" = "solo";
+  private netWaitForPeer = false;
   private netRemoteEnemies: { id: number; x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank"; health?: number; maxHealth?: number }[] | null = null;
   private netRemoteProjectiles: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age?: number; maxAge?: number }[] | null = null;
   private netRemoteNavigator: { aimX: number; aimY: number; shootHeld: boolean; shootPulse: boolean; weaponIndex: number } | null = null;
@@ -83,11 +95,11 @@ export class Game {
   private raceStartTimeSeconds = 0;
   private raceFinished = false;
   private finishTimeSeconds: number | null = null;
+  private wreckedTimeSeconds: number | null = null;
   private notificationText = "";
   private notificationTimeSeconds = 0;
   private damage01 = 0;
   private lastSurface: Surface = { name: "tarmac", frictionMu: 1, rollingResistanceN: 260 };
-  private lastTrackS = 0;
   private showDebugMenu = false; // F to toggle debug/tires/tuning panels
   private showMinimap = true;
   private gear: "F" | "R" = "F";
@@ -133,6 +145,8 @@ export class Game {
   private currentWeaponIndex = 0;
   private enemyKillCount = 0; // Track kills for scoring
 
+  private readonly startStageSeedStorageKey = "space-rally-last-start-stage-seed";
+
   private lastFrameTimeMs = 0;
   private accumulatorMs = 0;
   private readonly fixedStepMs = 1000 / 120;
@@ -166,11 +180,19 @@ export class Game {
     this.renderer = new Renderer2D(canvas);
 
     // Mobile detection
-    const isTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+    const isTouch = isTouchMode();
     const kb = new KeyboardInput(window);
 
     if (isTouch) {
-      this.input = new CompositeInput([kb, new TouchInput()]);
+      this.input = new CompositeInput([
+        kb,
+        new TouchInput({
+          setAimClientPoint: (clientX, clientY) => this.setTouchAimClientPoint(clientX, clientY),
+          setShootHeld: (held) => this.setTouchShootHeld(held),
+          shootPulse: () => this.touchShootPulse(),
+          showOverlay: false
+        })
+      ]);
     } else {
       this.input = kb;
     }
@@ -209,6 +231,26 @@ export class Game {
     // Start with a point-to-point track
     this.setTrack(createPointToPointTrackDefinition(this.proceduralSeed));
 
+    // Touch: New track button (shown when finished)
+    const newTrackBtn = document.getElementById("btn-new-track");
+    newTrackBtn?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (this.netMode === "client") return;
+      this.randomizeTrack();
+      if (!this.audioUnlocked) this.tryUnlockAudio();
+    });
+
+    // Wrecked: on-screen reset button (shown via JS)
+    const resetBtn = document.getElementById("btn-reset") as HTMLButtonElement | null;
+    resetBtn?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (this.netMode === "client") return;
+      this.reset();
+      if (!this.audioUnlocked) this.tryUnlockAudio();
+    });
+
     // Desktop testing: very dim role toggle button (Driver/Shooter)
     const roleToggle = document.getElementById("role-toggle");
     // Hide on desktop; keyboard 'I' already toggles roles there.
@@ -226,7 +268,9 @@ export class Game {
     if (roleToggle) roleToggle.textContent = this.role === PlayerRole.DRIVER ? "Driver" : "Shooter";
 
     window.addEventListener("keydown", (e) => {
-      if (e.code === "KeyR") this.reset();
+      if (e.code === "KeyR") {
+        if (this.netMode !== "client") this.reset();
+      }
       if (e.code === "KeyN") this.randomizeTrack();
       if (e.code === "KeyC") this.toggleCameraMode();
       if (e.code === "KeyT") this.toggleEditorMode(); // Changed from E to T
@@ -308,6 +352,10 @@ export class Game {
     }
   }
 
+  public setNetWaitForPeer(wait: boolean): void {
+    this.netWaitForPeer = wait;
+  }
+
   public setNetShootPulseHandler(handler: (() => void) | null): void {
     this.netShootPulseHandler = handler;
   }
@@ -343,8 +391,10 @@ export class Game {
       | { type: "enemyDeath"; x: number; y: number; isTank: boolean }
     )[];
     raceActive?: boolean;
+    raceStartTimeSeconds?: number;
     raceFinished?: boolean;
     finishTimeSeconds?: number | null;
+    damage01?: number;
     enemyKillCount?: number;
     cameraMode?: "follow" | "runner";
     cameraRotationRad?: number;
@@ -386,8 +436,17 @@ export class Game {
       }
     }
     if (typeof snapshot.raceActive === "boolean") this.raceActive = snapshot.raceActive;
+    if (typeof snapshot.raceStartTimeSeconds === "number") this.raceStartTimeSeconds = snapshot.raceStartTimeSeconds;
     if (typeof snapshot.raceFinished === "boolean") this.raceFinished = snapshot.raceFinished;
     if (snapshot.finishTimeSeconds !== undefined) this.finishTimeSeconds = snapshot.finishTimeSeconds;
+    if (typeof snapshot.damage01 === "number") {
+      this.damage01 = clamp(snapshot.damage01, 0, 1);
+      if (this.damage01 >= 1) {
+        if (this.wreckedTimeSeconds === null) this.wreckedTimeSeconds = this.state.timeSeconds;
+      } else {
+        this.wreckedTimeSeconds = null;
+      }
+    }
     if (typeof snapshot.enemyKillCount === "number") this.enemyKillCount = snapshot.enemyKillCount;
   }
 
@@ -401,6 +460,36 @@ export class Game {
 
   public getAimWorld(): { x: number; y: number } {
     return { x: this.mouseWorldX, y: this.mouseWorldY };
+  }
+
+  public setTouchAimClientPoint(clientX: number, clientY: number): void {
+    const rect = this.canvas.getBoundingClientRect();
+    this.mouseX = clientX - rect.left;
+    this.mouseY = clientY - rect.top;
+  }
+
+  public setTouchShootHeld(held: boolean): void {
+    if (this.role !== PlayerRole.NAVIGATOR) return;
+    this.shootHeld = held;
+    if (held && !this.audioUnlocked) {
+      this.tryUnlockAudio();
+    }
+  }
+
+  public touchShootPulse(): void {
+    if (this.role !== PlayerRole.NAVIGATOR) return;
+    if (!this.audioUnlocked) {
+      this.tryUnlockAudio();
+    }
+
+    // In net client mode, request a one-shot shot on the host.
+    if (this.netMode === "client") {
+      this.netShootPulseHandler?.();
+      return;
+    }
+
+    // In solo/host mode, fire locally.
+    this.shoot();
   }
 
   public getCurrentWeaponIndex(): number {
@@ -442,6 +531,8 @@ export class Game {
       navGroup?.classList.add("active");
       if (roleToggle) roleToggle.textContent = "Shooter";
     }
+
+    this.updateAmmoDisplay();
   }
 
   private toggleEditorMode(): void {
@@ -602,6 +693,48 @@ export class Game {
     this.reset();
   }
 
+  public pickRandomStartStage(opts?: { minSeed?: number; maxSeed?: number }): number {
+    // In multiplayer client mode, the host owns track selection.
+    if (this.netMode === "client") return this.trackDef.meta?.seed ?? this.proceduralSeed;
+
+    const minSeed = Math.max(1, Math.floor(opts?.minSeed ?? 1));
+    const maxSeed = Math.max(minSeed, Math.floor(opts?.maxSeed ?? 1000));
+
+    const lastRaw = localStorage.getItem(this.startStageSeedStorageKey);
+    const lastSeed = lastRaw ? Number.parseInt(lastRaw, 10) : NaN;
+
+    const rand01 = (): number => {
+      try {
+        const c: any = globalThis as any;
+        const cryptoObj: Crypto | undefined = c.crypto;
+        if (cryptoObj?.getRandomValues) {
+          const buf = new Uint32Array(1);
+          cryptoObj.getRandomValues(buf);
+          return (buf[0] ?? 0) / 0x1_0000_0000;
+        }
+      } catch {
+        // ignore
+      }
+      return Math.random();
+    };
+
+    const randomIntInclusive = (min: number, max: number): number => {
+      return min + Math.floor(rand01() * (max - min + 1));
+    };
+
+    let seed = randomIntInclusive(minSeed, maxSeed);
+    for (let i = 0; i < 10 && Number.isFinite(lastSeed) && seed === lastSeed; i++) {
+      seed = randomIntInclusive(minSeed, maxSeed);
+    }
+
+    this.proceduralSeed = seed;
+    const def = createPointToPointTrackDefinition(this.proceduralSeed);
+    this.setTrack(def);
+    this.reset();
+    localStorage.setItem(this.startStageSeedStorageKey, String(seed));
+    return seed;
+  }
+
   private onMouseMove = (e: MouseEvent): void => {
     const rect = this.canvas.getBoundingClientRect();
     this.mouseX = e.clientX - rect.left;
@@ -611,7 +744,7 @@ export class Game {
 
   private onMouseClick = (): void => {
     // On touch devices, use pointerdown for immediate shooting (click fires on touchup).
-    const isTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+    const isTouch = isTouchMode();
     if (isTouch) return;
 
     if (this.netMode === "client" && this.role === PlayerRole.NAVIGATOR) {
@@ -674,6 +807,7 @@ export class Game {
     if (index >= 0 && index < this.weapons.length) {
       this.currentWeaponIndex = index;
       this.updateWeaponButtons();
+      this.updateAmmoDisplay();
     }
   }
 
@@ -697,6 +831,7 @@ export class Game {
       });
     }
     this.updateWeaponButtons();
+    this.updateAmmoDisplay();
   }
 
   private updateWeaponButtons(): void {
@@ -709,6 +844,23 @@ export class Game {
     }
   }
 
+  private updateAmmoDisplay(): void {
+    const el = document.getElementById("ammo-display");
+    if (!(el instanceof HTMLDivElement)) return;
+
+    // Only show for Navigator; driver doesn't need it.
+    el.style.display = this.role === PlayerRole.NAVIGATOR ? "block" : "none";
+
+    const weapon = this.weapons[this.currentWeaponIndex];
+    if (!weapon) {
+      el.textContent = "";
+      return;
+    }
+
+    const cap = weapon.stats.ammoCapacity;
+    el.textContent = cap === -1 ? "∞" : `${weapon.ammo}/${cap}`;
+  }
+
   public getNetSnapshot(): {
     t: number;
     car: { xM: number; yM: number; headingRad: number; vxMS: number; vyMS: number; yawRateRadS: number; steerAngleRad: number; alphaFrontRad: number; alphaRearRad: number };
@@ -719,8 +871,10 @@ export class Game {
       | { type: "enemyDeath"; x: number; y: number; isTank: boolean }
     )[];
     raceActive: boolean;
+    raceStartTimeSeconds: number;
     raceFinished: boolean;
     finishTimeSeconds: number | null;
+    damage01: number;
     enemyKillCount: number;
     cameraMode: "follow" | "runner";
     cameraRotationRad: number;
@@ -753,8 +907,10 @@ export class Game {
       })),
       particleEvents: this.netParticleEvents.splice(0, this.netParticleEvents.length),
       raceActive: this.raceActive,
+      raceStartTimeSeconds: this.raceStartTimeSeconds,
       raceFinished: this.raceFinished,
       finishTimeSeconds: this.finishTimeSeconds,
+      damage01: this.damage01,
       enemyKillCount: this.enemyKillCount,
       cameraMode: this.cameraMode,
       cameraRotationRad: this.cameraRotationRad,
@@ -791,6 +947,7 @@ export class Game {
     if (weapon.ammo > 0) {
       weapon.ammo--;
     }
+    this.updateAmmoDisplay();
 
     // Spawn projectile(s) from car center
     const carX = this.state.car.xM;
@@ -889,7 +1046,6 @@ export class Game {
     this.finishTimeSeconds = null;
     this.nextCheckpointIndex = 0;
     this.insideActiveGate = false;
-    this.lastTrackS = 0;
   }
 
   private async tryUnlockAudio(): Promise<void> {
@@ -901,6 +1057,11 @@ export class Game {
       this.slideAudio.start();
       this.effectsAudio.start();
     }
+  }
+
+  // Called from explicit user gestures (start menu, invite button, etc).
+  public unlockAudioFromUserGesture(): void {
+    void this.tryUnlockAudio();
   }
 
   start(): void {
@@ -942,6 +1103,10 @@ export class Game {
     this.lastInputState = this.input.getState();
 
     if (this.netMode === "client") {
+      return;
+    }
+
+    if (this.netWaitForPeer) {
       return;
     }
 
@@ -1048,12 +1213,11 @@ export class Game {
     if (this.audioUnlocked) {
       const rpmNorm = rpmFraction(this.engineState, this.engineParams);
       this.engineAudio.update(rpmNorm, this.engineState.throttleInput);
-      this.slideAudio.update(this.driftInfo.intensity, this.lastSurface);
     }
 
     this.updateVisualDynamics(dtSeconds);
 
-    // Emit particles when drifting OR using handbrake OR wheelspinning
+    // Emit particles when drifting OR using handbrake OR wheelspinning OR hard braking on loose surfaces
     const speedMS = this.speedMS();
     const driftIntensity = Math.max(this.driftInfo.intensity, handbrake * Math.min(speedMS / 15, 1));
     const rawWheelspinIntensity = this.state.carTelemetry.wheelspinIntensity;
@@ -1063,8 +1227,27 @@ export class Game {
     const wheelspinSurfaceScale = Math.max(0.1, 1.5 - surfaceFriction); // 0.5 on tarmac, 1.0+ on gravel/dirt
     const wheelspinIntensity = rawWheelspinIntensity * wheelspinSurfaceScale;
 
+    // Hard braking can kick up gravel/sand even without a big yaw slip.
+    const surfaceName = this.lastSurface.name;
+    const surfaceIsLoose = surfaceName === "gravel" || surfaceName === "dirt" || surfaceName === "offtrack";
+    const brakeSurfaceScale = surfaceIsLoose ? 1.0 : 0.35;
+    const brakeIntensity = clamp(brake * clamp(speedMS / 18, 0, 1) * brakeSurfaceScale * clamp(1.35 - surfaceFriction, 0, 1), 0, 1);
+
     // Combine drift and wheelspin - wheelspin is most visible at lower speeds
-    const totalIntensity = Math.max(driftIntensity, wheelspinIntensity * (1 - Math.min(speedMS / 30, 1)));
+    const totalIntensity = Math.max(driftIntensity, wheelspinIntensity * (1 - Math.min(speedMS / 30, 1)), brakeIntensity);
+
+    // Slide/gravel sound: tie it to the same signal that drives particles.
+    // More audible on gravel/dirt/offtrack, and stronger while actually sliding.
+    if (this.audioUnlocked) {
+      // Prefer regular gravel/loose spray a bit more, and keep drift from dominating the mix.
+      const driftLoud = clamp(this.driftInfo.intensity * 0.95, 0, 1);
+      const particleSignal = clamp((totalIntensity - 0.06) / 0.68, 0, 1);
+      const looseDrive = surfaceIsLoose
+        ? clamp((Math.abs(this.engineState.throttleInput) - 0.12) / 0.6, 0, 1) * clamp(speedMS / 10, 0, 1)
+        : 0;
+      const gravelLoud = clamp(particleSignal * (0.58 + 0.42 * looseDrive) + looseDrive * 0.12, 0, 1);
+      this.slideAudio.update(Math.max(driftLoud, gravelLoud), this.lastSurface);
+    }
 
     if (totalIntensity > 0.2) {
       const particleConfig = getParticleConfig(this.lastSurface);
@@ -1132,7 +1315,6 @@ export class Game {
     this.resolveHardBoundary(projectionAfter);
 
     const projectionFinal = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
-    this.lastTrackS = projectionFinal.sM;
     this.updateCheckpointsAndRace(projectionFinal);
 
     this.resolveTreeCollisions();
@@ -1140,6 +1322,7 @@ export class Game {
     this.resolveEnemyCollisions();
     this.checkWaterHazards(dtSeconds);
     if (this.damage01 >= 1) {
+      if (this.wreckedTimeSeconds === null) this.wreckedTimeSeconds = this.state.timeSeconds;
       this.damage01 = 1;
       this.state.car.vxMS = 0;
       this.state.car.vyMS = 0;
@@ -1147,11 +1330,17 @@ export class Game {
       this.state.car.steerAngleRad = 0;
       this.state.car.alphaFrontRad = 0;
       this.state.car.alphaRearRad = 0;
+    } else {
+      this.wreckedTimeSeconds = null;
     }
   }
 
   private render(): void {
     const { width, height } = this.renderer.resizeToDisplay();
+
+    // Wrecked reset button visibility (DOM overlay)
+    const resetBtn = document.getElementById("btn-reset") as HTMLButtonElement | null;
+    if (resetBtn) resetBtn.style.display = this.damage01 >= 1 && this.netMode !== "client" ? "block" : "none";
 
     // Client smoothing/prediction (net mode)
     if (this.netMode === "client") {
@@ -1231,16 +1420,54 @@ export class Game {
     // Draw background
     this.renderer.drawBg();
 
-    const isTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+    const isTouch = isTouchMode();
 
-    // Offset camera to show more track ahead - car is lower on screen
-    const cameraOffsetY = this.cameraMode === "runner" ? 8 : 4;
-    const cosRot = Math.cos(this.state.car.headingRad);
-    const sinRot = Math.sin(this.state.car.headingRad);
-    const offsetX = cosRot * cameraOffsetY;
-    const offsetY = sinRot * cameraOffsetY;
+    // Touch UI: show NEW TRACK button when finished.
+    if (isTouch) {
+      const newTrackBtn = document.getElementById("btn-new-track") as HTMLButtonElement | null;
+      if (newTrackBtn) {
+        newTrackBtn.style.display = this.raceFinished && this.netMode !== "client" ? "block" : "none";
+      }
+    }
 
-    const zoom = 24; // Unified tactical zoom
+    // Camera framing
+    // Goal: ensure the car is always visible even on short landscape viewports.
+    // Strategy:
+    // - Use a "safe" on-screen car position so it can't disappear under touch UI.
+    // - Derive zoom from a target forward visibility (meters ahead), so short viewports zoom out.
+    const basePixelsPerMeter = 24;
+    const minPixelsPerMeter = 10;
+
+    // Reserve space for touch controls at the bottom so the car remains visible.
+    // (The controls are HTML overlays and can obscure the canvas.)
+    const bottomUiSafePx = isTouch ? Math.min(280, height * 0.34) : 0;
+    const marginPx = isTouch ? 12 : 0;
+    const minCarYPx = marginPx;
+    const maxCarYPx = height - bottomUiSafePx - marginPx;
+
+    // In runner mode, the camera rotates so "forward" is up on the screen.
+    // Keep the car a bit higher on touch to avoid being covered by controls.
+    const desiredCarYFrac = this.cameraMode === "runner" ? (isTouch ? 0.66 : 0.72) : 0.64;
+    const screenCenterYCssPx = clamp(height * desiredCarYFrac, minCarYPx, maxCarYPx);
+
+    // Target meters of view ahead of the car (toward the top of the screen in runner mode).
+    // Using screenCenterY means aheadMeters ≈ screenCenterY / pixelsPerMeter.
+    const targetAheadMeters = this.cameraMode === "runner" ? (isTouch ? 14 : 18) : 14;
+    const pixelsPerMeter = clamp(screenCenterYCssPx / Math.max(1e-6, targetAheadMeters), minPixelsPerMeter, basePixelsPerMeter);
+
+    // Fallback look-ahead for non-runner (no camera rotation): keep a small forward offset.
+    let offsetX = 0;
+    let offsetY = 0;
+    let screenCenterYCssPxOverride: number | undefined = undefined;
+    if (this.cameraMode === "runner") {
+      screenCenterYCssPxOverride = screenCenterYCssPx;
+    } else {
+      const cosH = Math.cos(this.state.car.headingRad);
+      const sinH = Math.sin(this.state.car.headingRad);
+      const lookAheadM = 4.5;
+      offsetX = cosH * lookAheadM;
+      offsetY = sinH * lookAheadM;
+    }
 
     // Don't shift screen center based on role - keep cameras identical for multiplayer
     const screenCenterXCssPx = undefined;
@@ -1252,9 +1479,10 @@ export class Game {
     this.renderer.beginCamera({
       centerX: this.state.car.xM + shakeX + offsetX,
       centerY: this.state.car.yM + shakeY + offsetY,
-      pixelsPerMeter: zoom,
+      pixelsPerMeter,
       rotationRad: this.cameraRotationRad,
-      screenCenterXCssPx
+      screenCenterXCssPx,
+      screenCenterYCssPx: screenCenterYCssPxOverride
     });
 
     // Update mouse world position now that camera is set
@@ -1391,38 +1619,25 @@ export class Game {
     // 2a. Rally Info Panel (Top Right)
     if (!this.editorMode) {
       // Calculate split time color
+      const nowTimeSeconds = this.wreckedTimeSeconds ?? this.state.timeSeconds;
       const raceTime = this.raceActive && !this.raceFinished
-        ? this.state.timeSeconds - this.raceStartTimeSeconds
+        ? nowTimeSeconds - this.raceStartTimeSeconds
         : this.finishTimeSeconds ?? 0;
 
       let stageLine = `NOT STARTED`;
       if (this.raceActive) stageLine = `${raceTime.toFixed(2)}s`;
       else if (this.raceFinished) stageLine = `FINISHED: ${this.finishTimeSeconds?.toFixed(2)}s`;
 
-      const lines = [
-        `time: ${this.state.timeSeconds.toFixed(2)}s`,
-        `checkpoint: ${this.nextCheckpointIndex}/${this.checkpointSM.length}`,
-        stageLine,
-        `Distance: ${this.lastTrackS.toFixed(0)}m`,
-        `Kills: ${this.enemyKillCount}/${this.enemyPool.getAll().length}`
-      ];
-
-      if (this.raceFinished) {
-        const totalTime = this.finishTimeSeconds ?? 1;
-        const avgSpeedMS = this.track.totalLengthM / totalTime;
-        const avgSpeedKmH = avgSpeedMS * 3.6;
-        lines[2] = `FINISHED: ${totalTime.toFixed(2)}s`; // Update stage line
-        lines.splice(3, 0, `AVG Speed: ${avgSpeedKmH.toFixed(1)} km/h`); // Insert Avg Speed
-      }
+      const lines = [stageLine];
 
       this.renderer.drawPanel({
         x: rightStackX,
         y: rightStackY,
         anchorX: "right",
-        title: "Rally Info",
+        title: "Time",
         lines: lines
       });
-      rightStackY += 140; // Approx height of info panel
+      rightStackY += 68; // Slim panel
     }
 
     // 2b. Pacenotes (Below Rally Info) - FULLY REMOVED
@@ -1435,10 +1650,14 @@ export class Game {
     const canShowMinimap = this.showMinimap && (this.role === PlayerRole.NAVIGATOR || !isTouch);
 
     if (canShowMinimap) {
-      const miniMapSize = isTouch ? width : Math.min(height * 0.4, 300);
+      const miniMapSize = (isTouch && this.role === PlayerRole.NAVIGATOR)
+        ? Math.min(width * 0.56, height * 0.56)
+        : (isTouch ? width : Math.min(height * 0.4, 300));
       const startMM = pointOnTrack(this.track, this.checkpointSM[0]).p;
       const finishMM = pointOnTrack(this.track, this.checkpointSM[this.checkpointSM.length - 1]).p;
-      const minimapOffsetX = !isTouch && this.role === PlayerRole.DRIVER ? hudPadding : (width - miniMapSize) * 0.5;
+      const minimapOffsetX = (isTouch && this.role === PlayerRole.NAVIGATOR)
+        ? hudPadding
+        : (!isTouch && this.role === PlayerRole.DRIVER ? hudPadding : (width - miniMapSize) * 0.5);
       this.renderer.drawMinimap({
         track: this.track,
         carX: this.state.car.xM,
@@ -1450,7 +1669,7 @@ export class Game {
         start: startMM,
         finish: finishMM,
         offsetX: minimapOffsetX,
-        offsetY: height - miniMapSize - (isTouch ? 0 : hudPadding), // Bottom (no padding if full width)
+        offsetY: height - miniMapSize - ((isTouch && this.role === PlayerRole.NAVIGATOR) ? hudPadding : (isTouch ? 0 : hudPadding)),
         size: miniMapSize
       });
     }
@@ -1467,6 +1686,7 @@ export class Game {
           `FPS: ${this.fps.toFixed(0)}`,
           `t: ${this.state.timeSeconds.toFixed(2)}s`,
           `track: ${this.trackDef.meta?.name ?? "Custom"}${this.trackDef.meta?.seed ? ` (seed ${this.trackDef.meta.seed})` : ""}`,
+          `stage: ${this.trackDef.meta?.seed ?? this.proceduralSeed}`,
           `camera: ${this.cameraMode}`,
           `speed: ${speedMS.toFixed(2)} m/s (${speedKmH.toFixed(0)} km/h)`,
           `steer: ${this.lastInputState.steer.toFixed(2)}  throttle: ${this.lastInputState.throttle.toFixed(2)}  brake/rev: ${this.lastInputState.brake.toFixed(2)}`,
@@ -1481,8 +1701,8 @@ export class Game {
       });
     }
 
-    // Draw Weapon HUD - Suppressed for Driver
-    if (this.weapons.length > 0 && this.role === PlayerRole.NAVIGATOR) {
+    // Draw Weapon HUD - Suppressed for Driver and for touch (touch uses HTML ammo above weapon buttons)
+    if (this.weapons.length > 0 && this.role === PlayerRole.NAVIGATOR && !isTouch) {
       const currentWeapon = this.weapons[this.currentWeaponIndex];
       this.renderer.drawWeaponHUD({
         name: currentWeapon.stats.name,
@@ -1555,7 +1775,8 @@ export class Game {
         gear: this.engineState.gear,
         speedKmH: this.speedMS() * 3.6,
         damage01: this.damage01,
-        totalDistanceKm: this.totalDistanceM / 1000
+        totalDistanceKm: this.totalDistanceM / 1000,
+        layout: isTouch ? "left" : "bottom"
       });
     }
 
@@ -1567,11 +1788,7 @@ export class Game {
 
     // Pacenotes are now handled in the HUD Layout Orchestration block above.
 
-    // Drift indicator
-    this.renderer.drawDriftIndicator({
-      intensity: this.driftInfo.intensity,
-      score: this.driftInfo.score
-    });
+    // Drift indicator removed (future: vibration-driven feedback)
 
     // Damage overlay (red vignette)
     if (this.damage01 > 0.15) {
@@ -1591,8 +1808,12 @@ export class Game {
       ctx.restore();
     }
 
+    if (this.netMode === "host" && this.netWaitForPeer) {
+      this.renderer.drawCenterText({ text: "WAITING", subtext: "Invite the shooter to join" });
+    }
+
     if (this.damage01 >= 1) {
-      this.renderer.drawCenterText({ text: "WRECKED", subtext: "Press R to reset" });
+      this.renderer.drawCenterText({ text: "WRECKED" });
     }
 
     if (this.raceFinished) {
@@ -1768,6 +1989,7 @@ export class Game {
     this.raceFinished = false;
     this.finishTimeSeconds = null;
     this.damage01 = 0;
+    this.wreckedTimeSeconds = null;
     this.state.car.steerAngleRad = 0;
     this.visualRollOffsetM = 0;
     this.visualRollVel = 0;
@@ -1786,6 +2008,7 @@ export class Game {
 
   private updateCheckpointsAndRace(proj: TrackProjection): void {
     if (this.raceFinished) return; // Don't update if race is done
+    if (this.damage01 >= 1) return; // Stop timer/progression when wrecked
 
     const speed = this.speedMS();
     if (speed < 1.5) {
@@ -2235,8 +2458,8 @@ export class Game {
         // Type-specific physics
         const isTank = enemy.type === "tank";
         // Tanks should feel less like immovable walls
-        const speedReduction = isTank ? 0.78 : 0.80;
-        const distortionMultiplier = isTank ? 0.25 : 0.15;
+        const speedReduction = isTank ? 0.78 : 0.77;
+        const distortionMultiplier = isTank ? 0.25 : 0.18;
         // More collision HP: reduce damage from enemy impacts
         const damageRate = isTank ? 0.03 : 0.01;
 
@@ -2266,7 +2489,9 @@ export class Game {
 
         // Play impact sound
         if (this.audioUnlocked) {
-          this.effectsAudio.playEffect("impact", isTank ? 0.9 : 0.6);
+          const base = isTank ? 0.85 : 0.75;
+          const volume = clamp(base + impact * 0.18, 0, 1);
+          this.effectsAudio.playEffect("impact", volume);
         }
       }
     }

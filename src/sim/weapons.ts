@@ -79,8 +79,8 @@ export function createWeaponStats(type: WeaponType): WeaponStats {
                 projectileCount: 6, // 6 pellets
                 spread: 0.25, // Wide spread
                 ammoCapacity: 12,
-                projectileColor: "#aaaaaa", // Gray pellets
-                projectileSize: 0.15,
+                projectileColor: "#ffcc00",
+                projectileSize: 0.2,
                 sound: "shotgun"
             };
     }

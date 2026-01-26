@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Space Rally (Prototype)</title>
   <style>
     html,
@@ -40,6 +40,76 @@
       pointer-events: auto;
     }
 
+    /* Start Menu (forces a user gesture for audio + fullscreen) */
+    #start-menu {
+      position: absolute;
+      inset: 0;
+      z-index: 180;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      pointer-events: auto;
+      background: rgba(11, 13, 18, 0.78);
+      backdrop-filter: blur(10px);
+    }
+
+    body.started #start-menu {
+      display: none;
+    }
+
+    #start-menu .card {
+      width: min(520px, calc(100vw - 40px));
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 18px;
+      padding: 18px 16px;
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
+      text-align: center;
+    }
+
+    #start-menu .title {
+      font-weight: 950;
+      letter-spacing: 0.02em;
+      font-size: 18px;
+      margin-bottom: 6px;
+    }
+
+    #start-menu .sub {
+      opacity: 0.85;
+      font-size: 13px;
+      line-height: 1.35;
+      margin-bottom: 14px;
+    }
+
+    #start-menu .row {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    #start-menu .menu-btn {
+      min-width: 170px;
+      height: 54px;
+      border-radius: 999px;
+      border: none;
+      font-weight: 950;
+      letter-spacing: 0.08em;
+      cursor: pointer;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+    }
+
+    #btn-start {
+      background: #22C55E;
+      color: rgba(10, 13, 18, 0.95);
+    }
+
+    #btn-invite-menu {
+      background: #3B82F6;
+      color: rgba(255, 255, 255, 0.98);
+    }
+
     #net-invite {
       background: #3B82F6;
       color: white;
@@ -74,17 +144,179 @@
       display: none;
     }
 
-    /* Mobile Overlay */
+    /* Wrecked Reset Button (shown via JS) */
+    #btn-reset {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, 68px);
+      z-index: 175;
+      display: none;
+      pointer-events: auto;
+
+      background: #EF4444;
+      color: rgba(255, 255, 255, 0.98);
+      border: none;
+      padding: 14px 22px;
+      border-radius: 999px;
+      font-weight: 950;
+      letter-spacing: 0.08em;
+      box-shadow: 0 12px 34px rgba(239, 68, 68, 0.35);
+      cursor: pointer;
+    }
+
+    #btn-reset:active {
+      transform: translate(-50%, 68px) scale(0.98);
+    }
+
+    /* Mobile Overlay (landscape-first) */
     #mobile-overlay {
       position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
+      inset: 0;
       pointer-events: none;
       display: none;
       /* Shown via JS */
       user-select: none;
+
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-right: env(safe-area-inset-right, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --safe-left: env(safe-area-inset-left, 0px);
+      --pad: clamp(10px, 2.2vmin, 22px);
+      --btn: clamp(58px, 11vmin, 96px);
+      --btn-sm: clamp(46px, 9vmin, 76px);
+      --joy: clamp(140px, 26vmin, 240px);
+      --joy-knob: clamp(54px, 10vmin, 90px);
+    }
+
+    #mobile-overlay .touch-auto {
+      pointer-events: auto;
+      touch-action: none;
+    }
+
+    /* Role toggle button (touch only; wired in game.ts) */
+    #role-toggle {
+      position: absolute;
+      top: calc(var(--pad) + var(--safe-top));
+      right: calc(var(--pad) + var(--safe-right));
+      z-index: 120;
+      pointer-events: auto;
+
+      background: rgba(255, 255, 255, 0.10);
+      border: 2px solid rgba(255, 255, 255, 0.18);
+      color: rgba(255, 255, 255, 0.95);
+      padding: 10px 14px;
+      border-radius: 999px;
+      font-weight: 800;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      user-select: none;
+    }
+
+    #role-toggle:active {
+      transform: scale(0.98);
+      background: rgba(255, 255, 255, 0.16);
+    }
+
+    /* Fullscreen exit (touch only; wired in main.ts) */
+    #fullscreen-toggle {
+      display: none;
+      position: absolute;
+      top: calc(var(--pad) + var(--safe-top));
+      left: calc(var(--pad) + var(--safe-left));
+      z-index: 120;
+      pointer-events: auto;
+
+      background: rgba(255, 255, 255, 0.10);
+      border: 2px solid rgba(255, 255, 255, 0.18);
+      color: rgba(255, 255, 255, 0.95);
+      padding: 10px 14px;
+      border-radius: 999px;
+      font-weight: 900;
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      user-select: none;
+    }
+
+    #fullscreen-toggle:active {
+      transform: scale(0.98);
+      background: rgba(255, 255, 255, 0.16);
+    }
+
+    /* Navigator ammo indicator (above weapon buttons) */
+    #ammo-display {
+      position: absolute;
+      right: calc(var(--pad) + var(--safe-right));
+      bottom: calc(var(--pad) + var(--safe-bottom) + var(--btn-sm) + 10px);
+      padding: 8px 10px;
+      border-radius: 14px;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      color: rgba(255, 255, 255, 0.92);
+      font-weight: 950;
+      letter-spacing: 0.04em;
+      font-size: 14px;
+      pointer-events: none;
+      user-select: none;
+    }
+
+    /* Hide touch controls until the user starts (start menu handles the first gesture). */
+    body:not(.started) #mobile-overlay .control-group,
+    body:not(.started) #role-toggle,
+    body:not(.started) #fullscreen-toggle {
+      display: none;
+    }
+
+    /* Portrait helper: encourage landscape */
+    #mobile-rotate {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 24px;
+      z-index: 200;
+      pointer-events: auto;
+      background: rgba(11, 13, 18, 0.92);
+      backdrop-filter: blur(10px);
+    }
+
+    #mobile-rotate .card {
+      max-width: 420px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 16px;
+      padding: 18px 16px;
+    }
+
+    #mobile-rotate .title {
+      font-weight: 900;
+      letter-spacing: 0.02em;
+      font-size: 18px;
+      margin-bottom: 6px;
+    }
+
+    #mobile-rotate .sub {
+      opacity: 0.8;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    @media (orientation: portrait) and (hover: none) and (pointer: coarse) {
+      #mobile-overlay {
+        display: block;
+      }
+
+      #mobile-rotate {
+        display: flex;
+      }
+
+      #mobile-overlay .control-group,
+      #role-toggle {
+        opacity: 0.25;
+        filter: blur(0.6px);
+      }
     }
 
     /* Mobile Layout Groups */
@@ -93,8 +325,7 @@
       width: 100%;
       height: 100%;
       position: absolute;
-      top: 0;
-      left: 0;
+      inset: 0;
       pointer-events: none;
     }
 
@@ -102,139 +333,149 @@
       display: block;
     }
 
-    /* Driver Specifics */
-    #steering-zone {
+    /* Post-finish: New track button (touch) */
+    #btn-new-track {
       position: absolute;
-      /* Explicit absolute positioning */
-      left: 3%;
-      bottom: 180px;
-      /* Positioned just above Speedometer HUD */
-      width: 220px;
-      height: 60px;
-      background: rgba(255, 255, 255, 0.05);
-      border: 2px solid rgba(255, 255, 255, 0.1);
-      border-radius: 30px;
-      /* Capsule shape */
-      pointer-events: auto;
-    }
-
-    #joystick-knob {
-      width: 40px;
-      height: 50px;
-      background: rgba(255, 255, 255, 0.2);
-      border: 2px solid rgba(255, 255, 255, 0.4);
-      border-radius: 10px;
-      /* Vertical handle */
-      /* Initially centered */
-      position: absolute;
-      left: 90px;
-      /* (220 - 40) / 2 */
-      top: 3px;
-      transition: transform 0.05s linear;
-    }
-
-    #pedals-zone {
-      position: absolute;
-      /* Ensure absolute positioning */
-      right: 3%;
-      bottom: 2%;
-      /* Adjusted to 2% as requested */
-      width: 80px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 15px;
-      pointer-events: auto;
-    }
-
-    /* Throttle Slider */
-    #throttle-slider-container {
-      width: 60px;
-      height: 180px;
-      background: rgba(100, 255, 100, 0.08);
-      border: 2px solid rgba(100, 255, 100, 0.2);
-      border-radius: 30px;
-      position: relative;
-      overflow: hidden;
-    }
-
-    #throttle-fill {
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      width: 100%;
-      height: 0%;
-      background: rgba(100, 255, 100, 0.4);
-      transition: height 0.05s linear;
-    }
-
-    #throttle-handle {
-      position: absolute;
-      bottom: 0;
       left: 50%;
       transform: translateX(-50%);
-      width: 50px;
-      height: 30px;
-      background: white;
-      border-radius: 15px;
-      box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
-    }
-
-    /* Navigator Specifics */
-    #nav-actions-zone {
-      right: 3%;
-      bottom: 12%;
-      width: 150px;
-      height: 300px;
-      display: flex;
-      flex-direction: column;
-      justify-content: flex-end;
-      gap: 20px;
-    }
-
-    /* Shooter weapon buttons (mobile) */
-    #weapon-zone {
-      position: absolute;
-      right: 3%;
-      top: 20%;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
+      bottom: calc(var(--pad) + var(--safe-bottom) + min(240px, 34vh));
+      z-index: 140;
       pointer-events: auto;
-    }
 
-    .mobile-button.weapon.active {
-      background: rgba(255, 255, 255, 0.18);
-      border-color: rgba(255, 255, 255, 0.35);
+      display: none;
+      height: 52px;
+      min-width: 190px;
+      padding: 0 18px;
+      border-radius: 999px;
+      border: 2px solid rgba(255, 255, 255, 0.18);
+      background: rgba(255, 255, 255, 0.10);
       color: rgba(255, 255, 255, 0.95);
+      font-weight: 950;
+      letter-spacing: 0.08em;
+      user-select: none;
+      box-shadow: 0 12px 26px rgba(0, 0, 0, 0.28);
     }
 
+    #btn-new-track:active {
+      transform: translateX(-50%) scale(0.98);
+      background: rgba(255, 255, 255, 0.16);
+    }
+
+    /* Shared button styling */
     .mobile-button {
-      width: 60px;
-      height: 60px;
+      width: var(--btn);
+      height: var(--btn);
       background: rgba(255, 255, 255, 0.08);
-      border: 2px solid rgba(255, 255, 255, 0.15);
-      border-radius: 50%;
-      /* Circle buttons */
-      color: white;
-      font-weight: bold;
+      border: 2px solid rgba(255, 255, 255, 0.16);
+      border-radius: 18px;
+      color: rgba(255, 255, 255, 0.92);
+      font-weight: 900;
       display: flex;
       align-items: center;
       justify-content: center;
       text-transform: uppercase;
-      font-size: 10px;
-      letter-spacing: 0.5px;
+      font-size: 11px;
+      letter-spacing: 0.06em;
       user-select: none;
+      box-shadow: 0 12px 26px rgba(0, 0, 0, 0.28);
     }
 
     .mobile-button:active {
-      background: rgba(255, 255, 255, 0.2);
-      transform: scale(0.96);
+      background: rgba(255, 255, 255, 0.16);
+      transform: scale(0.98);
+    }
+
+    /* Driver UI */
+    #steering-zone {
+      position: absolute;
+      left: calc(var(--pad) + var(--safe-left));
+      bottom: calc(var(--pad) + var(--safe-bottom));
+      width: var(--joy);
+      height: var(--joy);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.045);
+      border: 2px solid rgba(255, 255, 255, 0.10);
+      pointer-events: auto;
+    }
+
+    #joystick-knob {
+      width: var(--joy-knob);
+      height: var(--joy-knob);
+      background: rgba(255, 255, 255, 0.18);
+      border: 2px solid rgba(255, 255, 255, 0.34);
+      border-radius: 999px;
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      transition: transform 0.02s linear;
+    }
+
+    #pedals-zone {
+      position: absolute;
+      right: calc(var(--pad) + var(--safe-right));
+      bottom: calc(var(--pad) + var(--safe-bottom));
+      display: flex;
+      flex-direction: column;
+      gap: clamp(10px, 1.8vmin, 16px);
+      pointer-events: auto;
+      align-items: flex-end;
+    }
+
+    #btn-throttle {
+      background: rgba(84, 255, 130, 0.12);
+      border-color: rgba(84, 255, 130, 0.25);
     }
 
     #btn-brake {
-      background: rgba(255, 100, 100, 0.15);
-      border-color: rgba(255, 100, 100, 0.3);
+      background: rgba(255, 92, 92, 0.14);
+      border-color: rgba(255, 92, 92, 0.28);
+    }
+
+    #btn-handbrake {
+      width: var(--btn-sm);
+      height: var(--btn-sm);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.06);
+      border-color: rgba(255, 255, 255, 0.18);
+      font-size: 10px;
+    }
+
+    /* Navigator UI */
+    #aim-zone {
+      position: absolute;
+      left: calc(var(--pad) + var(--safe-left));
+      right: calc(var(--pad) + var(--safe-right));
+      bottom: calc(var(--pad) + var(--safe-bottom));
+      top: calc(44px + var(--pad) + var(--safe-top));
+      border-radius: 16px;
+      background: transparent;
+      border: none;
+      pointer-events: auto;
+    }
+
+    /* Navigator weapon buttons float bottom-right; shooting is tap/hold anywhere in aim-zone */
+    #weapon-zone {
+      position: absolute;
+      right: calc(var(--pad) + var(--safe-right));
+      bottom: calc(var(--pad) + var(--safe-bottom));
+      display: flex;
+      gap: 10px;
+      pointer-events: auto;
+    }
+
+    .mobile-button.weapon {
+      width: var(--btn-sm);
+      height: var(--btn-sm);
+      border-radius: 14px;
+      font-size: 10px;
+      letter-spacing: 0.02em;
+    }
+
+    .mobile-button.weapon.active {
+      background: rgba(255, 255, 255, 0.18);
+      border-color: rgba(255, 255, 255, 0.34);
+      color: rgba(255, 255, 255, 0.96);
     }
   </style>
 </head>
@@ -242,6 +483,23 @@
 <body>
   <div id="app">
     <canvas id="game"></canvas>
+
+    <button id="btn-reset" type="button">RESET</button>
+
+    <div id="start-menu">
+      <div class="card">
+        <div class="title">SPACE RALLY</div>
+        <div id="start-menu-sub" class="sub">
+          <b>START GAME</b>: singleplayer stage.<br />
+          <b>MULTIPLAYER</b>: experimental — may feel jittery; best on same Wi‑Fi.
+        </div>
+        <div class="row">
+          <button id="btn-start" class="menu-btn" type="button">START GAME</button>
+          <button id="btn-invite-menu" class="menu-btn" type="button">MULTIPLAYER</button>
+        </div>
+      </div>
+    </div>
+
     <div id="net-panel">
       <button id="net-invite" type="button">INVITE PLAYER</button>
       <div id="net-room-container">
@@ -255,31 +513,34 @@
       </div>
     </div>
     <div id="mobile-overlay">
-      <!-- Role toggle moved to 'I' key -->
+      <div id="mobile-rotate">
+        <div class="card">
+          <div class="title">Rotate to landscape</div>
+          <div class="sub">Touch controls are designed for landscape play. Portrait mode feels cramped and misaligned on many phones.</div>
+        </div>
+      </div>
+
+        <button id="role-toggle" type="button">Driver</button>
+        <button id="fullscreen-toggle" type="button" aria-label="Toggle fullscreen">FULL</button>
+      <button id="btn-new-track" type="button">NEW TRACK</button>
 
       <!-- Driver Controls -->
       <div id="driver-group" class="control-group active">
-        <div id="steering-zone" class="touch-zone">
+        <div id="steering-zone" class="touch-auto">
           <div id="joystick-knob"></div>
         </div>
-        <div id="pedals-zone">
-          <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
-            <div id="throttle-slider-container" class="touch-zone">
-              <div id="throttle-fill"></div>
-              <div id="throttle-handle"></div>
-            </div>
-            <div style="font-size: 8px; color: rgba(255,255,255,0.3);">THR</div>
-          </div>
-          <div id="btn-brake" class="mobile-button"
-            style="background: rgba(255, 100, 100, 0.15); border-color: rgba(255, 100, 100, 0.4);">BRK</div>
-          <div id="btn-handbrake" class="mobile-button" style="border-color: rgba(255,255,255,0.4);">HB</div>
+        <div id="pedals-zone" class="touch-auto">
+          <div id="btn-throttle" class="mobile-button">GAS</div>
+          <div id="btn-brake" class="mobile-button">BRK</div>
+          <div id="btn-handbrake" class="mobile-button">HB</div>
         </div>
       </div>
 
       <!-- Navigator Controls -->
       <div id="navigator-group" class="control-group">
-        <!-- Text removed as requested -->
-        <div id="weapon-zone">
+        <div id="aim-zone" class="touch-auto"></div>
+        <div id="ammo-display"></div>
+        <div id="weapon-zone" class="touch-auto">
           <div class="mobile-button weapon" data-weapon-index="0">HG</div>
           <div class="mobile-button weapon" data-weapon-index="1">RIF</div>
           <div class="mobile-button weapon" data-weapon-index="2">AK</div>

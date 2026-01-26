@@ -13,12 +13,12 @@
 - ❄️ **Multiple surfaces** - Tarmac, gravel, dirt, and ice with different friction characteristics
 - 🎮 **Two camera modes** - Fixed follow and stabilized runner mode (toggle with `C`)
 - 🎵 **Procedural audio** - Engine and tire sounds that react to your driving
-- 🏁 **Procedural tracks** - Generate infinite rally stages (press `N`)
+- 🏁 **Procedural tracks** - Generate rally stages (press `N` for a new one)
 - 💨 **Drift scoring** - Show off your Scandinavian flicks
 - 🛠️ **Track editor** - Create custom stages (press `T`)
 
 
-## The "Blind Rally" Co-Op Mode (In Progress)
+## The "Blind Rally" Co-Op Mode (Under Construction)
 
 This will be a **2-player mobile app experience**. Two players, two phones, one car.
 
@@ -29,6 +29,23 @@ It's a high-stakes asymmetric cooperative race designed for local play:
 - **The Loop**: The Navigator must shout out hazards (ice! turning left! enemy!), while the Driver relies on pure reflex and trust in their partner's voice. 
 
 Ideally played in the same room for maximum shouting and adrenaline.
+
+### Multiplayer (current prototype)
+
+- Click **MULTIPLAYER** to create a room (you become the host/driver).
+- The game copies an invite link to your clipboard; send it to Player 2.
+- Player 2 opens the link and joins immediately (no start menu).
+- The host simulation **waits** until Player 2 is connected and "ready".
+
+Host links include a private `hostKey` and should not be shared; use the in-game **DISCONNECT** button to return to singleplayer.
+
+## Stage Seeds (How Tracks Work)
+
+- A “stage” is generated from an integer **seed**.
+- The track generator is deterministic for a given seed (same seed → same track), which makes stages shareable.
+- On game start, the client picks a random seed in the range **1..1000** and loads that stage.
+- The current stage seed is shown in the in-game Debug panel (toggle with `F`).
+- The `N` key / “NEW TRACK” button advances to a different stage by changing the seed (seed logic unchanged; this is just stage selection).
 
 ## Development
 
