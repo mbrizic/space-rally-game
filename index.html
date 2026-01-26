@@ -31,39 +31,47 @@
       display: block;
     }
 
-    /* Desktop Role Toggle (Driver/Shooter) */
-    #role-toggle {
+    /* Simplified Net / Invite UI */
+    #net-panel {
       position: absolute;
-      top: 10px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 10;
+      left: 15px;
+      top: 15px;
+      z-index: 100;
       pointer-events: auto;
-      padding: 6px 10px;
+    }
+
+    #net-invite {
+      background: #3B82F6;
+      color: white;
+      border: none;
+      padding: 10px 20px;
       border-radius: 999px;
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      background: rgba(255, 255, 255, 0.05);
-      color: rgba(255, 255, 255, 0.35);
-      font: 600 11px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      opacity: 0.35; /* very dim */
-      transition: opacity 120ms ease, background 120ms ease, border-color 120ms ease, color 120ms ease;
-      user-select: none;
+      font-weight: 700;
+      font-size: 13px;
+      letter-spacing: 0.05em;
+      box-shadow: 0 4px 14px 0 rgba(59, 130, 246, 0.4);
+      transition: all 0.2s ease;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
 
-    #role-toggle:hover {
-      opacity: 0.55;
-      background: rgba(255, 255, 255, 0.07);
-      border-color: rgba(255, 255, 255, 0.18);
-      color: rgba(255, 255, 255, 0.55);
+    #net-invite:hover {
+      background: #2563EB;
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px 0 rgba(59, 130, 246, 0.5);
     }
 
-    #role-toggle:active {
-      opacity: 0.75;
-      background: rgba(255, 255, 255, 0.10);
-      border-color: rgba(255, 255, 255, 0.25);
-      color: rgba(255, 255, 255, 0.75);
+    #net-invite:active {
+      background: #1D4ED8;
+      transform: translateY(0);
+    }
+
+    /* Hidden legacy/debug elements */
+    #net-room-container,
+    #net-status-container {
+      display: none;
     }
 
     /* Mobile Overlay */
@@ -228,14 +236,24 @@
       background: rgba(255, 100, 100, 0.15);
       border-color: rgba(255, 100, 100, 0.3);
     }
-
   </style>
 </head>
 
 <body>
   <div id="app">
     <canvas id="game"></canvas>
-    <button id="role-toggle" type="button">Driver</button>
+    <div id="net-panel">
+      <button id="net-invite" type="button">INVITE PLAYER</button>
+      <div id="net-room-container">
+        <input id="net-room" type="hidden" />
+        <button id="net-create" type="button"></button>
+        <button id="net-join" type="button"></button>
+        <button id="net-copy" type="button"></button>
+      </div>
+      <div id="net-status-container">
+        <div id="net-status"></div>
+      </div>
+    </div>
     <div id="mobile-overlay">
       <!-- Role toggle moved to 'I' key -->
 

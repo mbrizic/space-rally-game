@@ -94,12 +94,12 @@ export function defaultCarParams(): CarParams {
     frictionMu: 1.22,
     maxSteerRad: 1.0,
     maxSteerRateRadS: 7.5,
-    engineForceN: 32000,
+    engineForceN: 28500,
     engineFadeSpeedMS: 58,
-    brakeForceN: 42000,
-    handbrakeForceN: 16000,
+    brakeForceN: 19000,
+    handbrakeForceN: 7000,
     handbrakeRearGripScale: 0.55,
-    driveBiasFront: 0.35, // 35% front (default)
+    driveBiasFront: 0.30, // 30% front, 70% rear (mostly RWD)
     brakeBiasFront: 0.65,
     // Shorter relaxation => less "springy" snap, still enough transient for flicks.
     relaxationLengthFrontM: 0.7,

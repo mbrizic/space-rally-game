@@ -46,6 +46,29 @@ export class Game {
   private readonly canvas: HTMLCanvasElement;
   private shootPointerId: number | null = null;
   private shootHeld = false;
+  private netMode: "solo" | "host" | "client" = "solo";
+  private netRemoteEnemies: { id: number; x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank"; health?: number; maxHealth?: number }[] | null = null;
+  private netRemoteProjectiles: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age?: number; maxAge?: number }[] | null = null;
+  private netRemoteNavigator: { aimX: number; aimY: number; shootHeld: boolean; shootPulse: boolean; weaponIndex: number } | null = null;
+  private netRemoteDriver: InputState | null = null;
+  private netStatusLines: string[] = [];
+  private netShootPulseHandler: (() => void) | null = null;
+  private netParticleEvents: (
+    | { type: "emit"; opts: { x: number; y: number; vx: number; vy: number; lifetime: number; sizeM: number; color: string; count?: number } }
+    | { type: "enemyDeath"; x: number; y: number; isTank: boolean }
+  )[] = [];
+  private netClientTargetCar: {
+    xM: number;
+    yM: number;
+    headingRad: number;
+    vxMS: number;
+    vyMS: number;
+    yawRateRadS: number;
+    steerAngleRad: number;
+    alphaFrontRad: number;
+    alphaRearRad: number;
+  } | null = null;
+  private netClientLastRenderMs = 0;
   private trackDef!: TrackDefinition; // Will be set in constructor
   private track!: ReturnType<typeof createTrackFromDefinition>; // Will be set in constructor
   private trackSegmentFillStyles: string[] = [];
@@ -85,6 +108,9 @@ export class Game {
   private editorDragIndex: number | null = null;
   private editorHoverIndex: number | null = null;
   private editorPointerId: number | null = null;
+  // Client interpolation quality tracking
+  private netClientInterpolationDistance = 0;
+  private netClientVelocityError = 0;
   // Engine simulation
   private engineState: EngineState = createEngineState();
   private readonly engineParams = defaultEngineParams();
@@ -196,7 +222,7 @@ export class Game {
         this.tryUnlockAudio();
       }
     });
-      // Ensure label matches initial state (without triggering a notification)
+    // Ensure label matches initial state (without triggering a notification)
     if (roleToggle) roleToggle.textContent = this.role === PlayerRole.DRIVER ? "Driver" : "Shooter";
 
     window.addEventListener("keydown", (e) => {
@@ -230,6 +256,16 @@ export class Game {
           this.showNotification(`GEARBOX: ${mode}`);
         }
       }
+      if (e.code === "Escape") {
+        // Disconnect from multiplayer and return to solo play
+        if (this.netMode !== "solo") {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("room");
+          url.searchParams.delete("host");
+          url.searchParams.delete("role");
+          window.location.href = url.toString();
+        }
+      }
       // Unlock audio on first key press
       if (!this.audioUnlocked) {
         this.tryUnlockAudio();
@@ -254,6 +290,138 @@ export class Game {
     });
 
     this.reset();
+  }
+
+  // --- Net (server-infra testing) ---
+  public setNetMode(mode: "solo" | "host" | "client"): void {
+    this.netMode = mode;
+    if (mode !== "client") {
+      this.netRemoteEnemies = null;
+      this.netRemoteProjectiles = null;
+      this.netClientTargetCar = null;
+      this.netClientLastRenderMs = 0;
+    }
+    if (mode !== "host") {
+      this.netRemoteNavigator = null;
+      this.netRemoteDriver = null;
+      this.netParticleEvents = [];
+    }
+  }
+
+  public setNetShootPulseHandler(handler: (() => void) | null): void {
+    this.netShootPulseHandler = handler;
+  }
+
+  public setNetStatusLines(lines: string[]): void {
+    this.netStatusLines = lines;
+  }
+
+  public getSerializedTrackDef(): string {
+    return serializeTrackDefinition(this.trackDef);
+  }
+
+  public loadSerializedTrackDef(json: string): boolean {
+    const def = parseTrackDefinition(json);
+    if (!def) return false;
+    this.setTrack(def);
+    this.reset();
+    // Reset client smoothing state to snap to new position
+    if (this.netMode === "client") {
+      this.netClientTargetCar = null;
+      this.netClientLastRenderMs = 0;
+    }
+    return true;
+  }
+
+  public applyNetSnapshot(snapshot: {
+    t: number;
+    car: { xM: number; yM: number; headingRad: number; vxMS: number; vyMS: number; yawRateRadS: number; steerAngleRad: number; alphaFrontRad: number; alphaRearRad: number };
+    enemies?: { id: number; x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank"; health?: number; maxHealth?: number }[];
+    projectiles?: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age?: number; maxAge?: number }[];
+    particleEvents?: (
+      | { type: "emit"; opts: { x: number; y: number; vx: number; vy: number; lifetime: number; sizeM: number; color: string; count?: number } }
+      | { type: "enemyDeath"; x: number; y: number; isTank: boolean }
+    )[];
+    raceActive?: boolean;
+    raceFinished?: boolean;
+    finishTimeSeconds?: number | null;
+    enemyKillCount?: number;
+    cameraMode?: "follow" | "runner";
+    cameraRotationRad?: number;
+    shakeX?: number;
+    shakeY?: number;
+  }): void {
+    // In client mode, smooth toward target to avoid jitter.
+    this.state = { ...this.state, timeSeconds: snapshot.t };
+    if (snapshot.cameraMode) this.cameraMode = snapshot.cameraMode;
+    if (snapshot.cameraRotationRad !== undefined) this.cameraRotationRad = snapshot.cameraRotationRad;
+    if (snapshot.shakeX !== undefined) this.cameraShakeX = snapshot.shakeX;
+    if (snapshot.shakeY !== undefined) this.cameraShakeY = snapshot.shakeY;
+    
+    this.netClientTargetCar = snapshot.car;
+    if (this.netMode === "client" && this.netClientLastRenderMs === 0) {
+      this.state = { ...this.state, car: { ...this.state.car, ...snapshot.car } };
+    }
+
+    if (snapshot.enemies) this.netRemoteEnemies = snapshot.enemies.map((e) => ({ ...e }));
+    if (snapshot.projectiles) this.netRemoteProjectiles = snapshot.projectiles.map((p) => ({ ...p }));
+    if (snapshot.particleEvents) {
+      for (const ev of snapshot.particleEvents) {
+        if (!ev) continue;
+        if (ev.type === "emit") {
+          const o = ev.opts;
+          this.particlePool.emit({
+            x: o.x,
+            y: o.y,
+            vx: o.vx,
+            vy: o.vy,
+            lifetime: o.lifetime,
+            sizeM: o.sizeM,
+            color: o.color,
+            count: o.count
+          });
+        } else if (ev.type === "enemyDeath") {
+          this.createEnemyDeathParticles(ev.x, ev.y, ev.isTank);
+        }
+      }
+    }
+    if (typeof snapshot.raceActive === "boolean") this.raceActive = snapshot.raceActive;
+    if (typeof snapshot.raceFinished === "boolean") this.raceFinished = snapshot.raceFinished;
+    if (snapshot.finishTimeSeconds !== undefined) this.finishTimeSeconds = snapshot.finishTimeSeconds;
+    if (typeof snapshot.enemyKillCount === "number") this.enemyKillCount = snapshot.enemyKillCount;
+  }
+
+  public applyRemoteNavigatorInput(input: { aimX: number; aimY: number; shootHeld: boolean; shootPulse: boolean; weaponIndex: number }): void {
+    this.netRemoteNavigator = input;
+  }
+
+  public applyRemoteDriverInput(input: InputState): void {
+    this.netRemoteDriver = input;
+  }
+
+  public getAimWorld(): { x: number; y: number } {
+    return { x: this.mouseWorldX, y: this.mouseWorldY };
+  }
+
+  public getCurrentWeaponIndex(): number {
+    return this.currentWeaponIndex;
+  }
+
+  public getNavigatorShootHeld(): boolean {
+    // Touch uses shootHeld; keyboard uses lastInputState.shoot (KeyL).
+    return (this.role === PlayerRole.NAVIGATOR) && (this.shootHeld || !!this.lastInputState.shoot);
+  }
+
+  public setRoleExternal(role: PlayerRole): void {
+    this.setRole(role);
+  }
+
+  public getRoleExternal(): PlayerRole {
+    return this.role;
+  }
+
+  public getInputStateExternal(): InputState {
+    return this.lastInputState;
   }
 
   private setRole(role: PlayerRole): void {
@@ -446,6 +614,11 @@ export class Game {
     const isTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
     if (isTouch) return;
 
+    if (this.netMode === "client" && this.role === PlayerRole.NAVIGATOR) {
+      this.netShootPulseHandler?.();
+      return;
+    }
+
     // Unlock audio on first click
     if (!this.audioUnlocked) {
       this.tryUnlockAudio();
@@ -482,6 +655,7 @@ export class Game {
     if (!this.audioUnlocked) {
       this.tryUnlockAudio();
     }
+    if (this.netMode === "client") return;
     this.shoot();
   };
 
@@ -535,8 +709,70 @@ export class Game {
     }
   }
 
-  private shoot(): void {
-    const weapon = this.weapons[this.currentWeaponIndex];
+  public getNetSnapshot(): {
+    t: number;
+    car: { xM: number; yM: number; headingRad: number; vxMS: number; vyMS: number; yawRateRadS: number; steerAngleRad: number; alphaFrontRad: number; alphaRearRad: number };
+    enemies: { id: number; x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank"; health?: number; maxHealth?: number }[];
+    projectiles: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age: number; maxAge: number }[];
+    particleEvents: (
+      | { type: "emit"; opts: { x: number; y: number; vx: number; vy: number; lifetime: number; sizeM: number; color: string; count?: number } }
+      | { type: "enemyDeath"; x: number; y: number; isTank: boolean }
+    )[];
+    raceActive: boolean;
+    raceFinished: boolean;
+    finishTimeSeconds: number | null;
+    enemyKillCount: number;
+    cameraMode: "follow" | "runner";
+    cameraRotationRad: number;
+    shakeX: number;
+    shakeY: number;
+  } {
+    return {
+      t: this.state.timeSeconds,
+      car: { ...this.state.car },
+      enemies: this.enemyPool.getActive().map((e) => ({
+        id: e.id,
+        x: e.x,
+        y: e.y,
+        radius: e.radius,
+        vx: e.vx,
+        vy: e.vy,
+        type: e.type,
+        health: e.health,
+        maxHealth: e.maxHealth
+      })),
+      projectiles: this.projectilePool.getActive().map((p) => ({
+        x: p.x,
+        y: p.y,
+        vx: p.vx,
+        vy: p.vy,
+        color: p.color,
+        size: p.size,
+        age: p.age,
+        maxAge: p.maxAge
+      })),
+      particleEvents: this.netParticleEvents.splice(0, this.netParticleEvents.length),
+      raceActive: this.raceActive,
+      raceFinished: this.raceFinished,
+      finishTimeSeconds: this.finishTimeSeconds,
+      enemyKillCount: this.enemyKillCount,
+      cameraMode: this.cameraMode,
+      cameraRotationRad: this.cameraRotationRad,
+      shakeX: this.cameraShakeX,
+      shakeY: this.cameraShakeY
+    };
+  }
+
+  private emitParticles(opts: { x: number; y: number; vx: number; vy: number; lifetime: number; sizeM: number; color: string; count?: number }): void {
+    this.particlePool.emit(opts);
+    if (this.netMode === "host") {
+      this.netParticleEvents.push({ type: "emit", opts });
+    }
+  }
+
+  private shoot(opts?: { aimX?: number; aimY?: number; weaponIndex?: number }): void {
+    const weaponIndex = opts?.weaponIndex ?? this.currentWeaponIndex;
+    const weapon = this.weapons[weaponIndex];
     if (!weapon) return;
 
     // Check ammo
@@ -562,8 +798,10 @@ export class Game {
     const stats = weapon.stats;
 
     // Calculate base angle to target
-    const dx = this.mouseWorldX - carX;
-    const dy = this.mouseWorldY - carY;
+    const aimX = opts?.aimX ?? this.mouseWorldX;
+    const aimY = opts?.aimY ?? this.mouseWorldY;
+    const dx = aimX - carX;
+    const dy = aimY - carY;
     const baseAngle = Math.atan2(dy, dx);
 
     for (let i = 0; i < stats.projectileCount; i++) {
@@ -700,31 +938,50 @@ export class Game {
 
   private step(dtSeconds: number): void {
     if (this.editorMode) return;
+    // Always update inputs so net-clients can send them.
+    this.lastInputState = this.input.getState();
+
+    if (this.netMode === "client") {
+      return;
+    }
+
     this.state.timeSeconds += dtSeconds;
 
     this.applyTuning();
 
     const inputsEnabled = this.damage01 < 1;
-    this.lastInputState = this.input.getState();
     const rawInput = this.lastInputState;
 
     // Split input by role - although keyboard allows both for solo testing, 
     // we enforce the role logic strictly for touch users.
-    const isDriver = this.role === PlayerRole.DRIVER || !!rawInput.fromKeyboard;
-    const isNavigator = this.role === PlayerRole.NAVIGATOR || !!rawInput.fromKeyboard;
+    const isDriverLocal = this.role === PlayerRole.DRIVER || !!rawInput.fromKeyboard;
+    const isNavigatorLocal = this.role === PlayerRole.NAVIGATOR || !!rawInput.fromKeyboard;
+
+    // Use remote driver input if we are host and a remote driver is connected
+    const driverInput = (this.netMode === "host" && this.netRemoteDriver) ? this.netRemoteDriver : rawInput;
+    const isDriverRemote = this.netMode === "host" && !!this.netRemoteDriver;
 
     // Driver actions
-    const steer = inputsEnabled && isDriver ? rawInput.steer : 0;
-    const throttleForward = inputsEnabled && isDriver ? rawInput.throttle : 0;
-    const brakeOrReverse = inputsEnabled && isDriver ? rawInput.brake : 0;
-    const handbrake = inputsEnabled && isDriver ? rawInput.handbrake : 0;
+    const steer = inputsEnabled && (isDriverLocal || isDriverRemote) ? driverInput.steer : 0;
+    const throttleForward = inputsEnabled && (isDriverLocal || isDriverRemote) ? driverInput.throttle : 0;
+    const brakeOrReverse = inputsEnabled && (isDriverLocal || isDriverRemote) ? driverInput.brake : 0;
+    const handbrake = inputsEnabled && (isDriverLocal || isDriverRemote) ? driverInput.handbrake : 0;
 
     // Navigator actions
-    // - Keyboard: rawInput.shoot (KeyL)
-    // - Touch/pen: hold-to-fire via shootHeld (pointerdown)
+    // - Local keyboard: rawInput.shoot (KeyL)
+    // - Local touch/pen: hold-to-fire via shootHeld
+    // - Remote navigator (net host): aim + shoot
     const heldTouchShoot = this.role === PlayerRole.NAVIGATOR && this.shootHeld;
-    if (inputsEnabled && ((isNavigator && rawInput.shoot) || heldTouchShoot)) {
+    if (inputsEnabled && ((isNavigatorLocal && rawInput.shoot) || heldTouchShoot)) {
       this.shoot();
+    }
+    if (inputsEnabled && this.netMode === "host" && this.netRemoteNavigator) {
+      const n = this.netRemoteNavigator;
+      if (n.shootPulse || n.shootHeld) {
+        this.shoot({ aimX: n.aimX, aimY: n.aimY, weaponIndex: n.weaponIndex });
+      }
+      // Pulse is one-shot; held is continuous.
+      this.netRemoteNavigator = { ...n, shootPulse: false };
     }
 
     // Gear logic: holding brake from (near) standstill engages reverse.
@@ -834,7 +1091,7 @@ export class Game {
         const vxSpread = (Math.random() - 0.5) * (isWheelspin ? 3.5 : 3);
         const vySpread = (Math.random() - 0.5) * (isWheelspin ? 3.5 : 3);
 
-        this.particlePool.emit({
+        this.emitParticles({
           x: rearX + spreadX,
           y: rearY + spreadY,
           vx: -this.state.car.vxMS * cosH * (isWheelspin ? 0.35 : 0.3) + vxSpread,
@@ -864,8 +1121,8 @@ export class Game {
       let angleDiff = targetRot - this.cameraRotationRad;
       while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
       while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
-      // Smooth interpolation: slower rotation for stability during rapid maneuvers
-      const rotationSpeed = 0.8; // rad/s - lower = more stable, less disorienting
+      // Smooth interpolation: balanced rotation speed
+      const rotationSpeed = 1.2; // rad/s
       this.cameraRotationRad += angleDiff * rotationSpeed * dtSeconds;
     } else {
       this.cameraRotationRad = 0;
@@ -896,6 +1153,81 @@ export class Game {
   private render(): void {
     const { width, height } = this.renderer.resizeToDisplay();
 
+    // Client smoothing/prediction (net mode)
+    if (this.netMode === "client") {
+      const nowMs = performance.now();
+      if (this.netClientLastRenderMs === 0) this.netClientLastRenderMs = nowMs;
+      const dt = clamp((nowMs - this.netClientLastRenderMs) / 1000, 0, 0.05);
+      this.netClientLastRenderMs = nowMs;
+
+      // Predict remote enemies/projectiles forward a bit using their velocities
+      if (this.netRemoteEnemies) {
+        for (const e of this.netRemoteEnemies) {
+          e.x += e.vx * dt;
+          e.y += e.vy * dt;
+        }
+      }
+      if (this.netRemoteProjectiles) {
+        for (const p of this.netRemoteProjectiles) {
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          if (typeof p.age === "number") p.age += dt;
+        }
+        this.netRemoteProjectiles = this.netRemoteProjectiles.filter((p) =>
+          typeof p.age === "number" && typeof p.maxAge === "number" ? p.age < p.maxAge : true
+        );
+      }
+
+      // Fast interpolation to smooth network jitter while staying responsive
+      if (this.netClientTargetCar) {
+        const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+        const wrapPi = (a: number) => {
+          while (a > Math.PI) a -= Math.PI * 2;
+          while (a < -Math.PI) a += Math.PI * 2;
+          return a;
+        };
+        // Predictive smoothing: lower alpha (less twitch) + small lookahead (less lag)
+        const leadSeconds = 0.07;
+
+        const posAlpha = 1 - Math.exp(-dt * 18);
+        const headingAlpha = 1 - Math.exp(-dt * 14);
+        // Slower for visual/physics properties
+        const slowAlpha = 1 - Math.exp(-dt * 12);
+
+        const c = this.state.car;
+        const tcar = this.netClientTargetCar;
+        
+        // Track interpolation quality metrics
+        const distToTarget = Math.hypot(tcar.xM - c.xM, tcar.yM - c.yM);
+        const velToTarget = Math.hypot(tcar.vxMS - c.vxMS, tcar.vyMS - c.vyMS);
+        this.netClientInterpolationDistance = distToTarget;
+        this.netClientVelocityError = velToTarget;
+        
+        // Predict forward only (avoid sideways lookahead causing slow lateral drift)
+        const fx = Math.cos(tcar.headingRad);
+        const fy = Math.sin(tcar.headingRad);
+        const forwardSpeedMS = tcar.vxMS * fx + tcar.vyMS * fy;
+        const targetX = tcar.xM + fx * forwardSpeedMS * leadSeconds;
+        const targetY = tcar.yM + fy * forwardSpeedMS * leadSeconds;
+        const targetHeading = tcar.headingRad + tcar.yawRateRadS * leadSeconds;
+
+        // Smooth camera (position + heading)
+        c.xM = lerp(c.xM, targetX, posAlpha);
+        c.yM = lerp(c.yM, targetY, posAlpha);
+        c.headingRad = c.headingRad + wrapPi(targetHeading - c.headingRad) * headingAlpha;
+        // Smooth visual/physics properties
+        c.vxMS = lerp(c.vxMS, tcar.vxMS, slowAlpha);
+        c.vyMS = lerp(c.vyMS, tcar.vyMS, slowAlpha);
+        c.yawRateRadS = lerp(c.yawRateRadS, tcar.yawRateRadS, slowAlpha);
+        c.steerAngleRad = lerp(c.steerAngleRad, tcar.steerAngleRad, slowAlpha);
+        c.alphaFrontRad = lerp(c.alphaFrontRad, tcar.alphaFrontRad, slowAlpha);
+        c.alphaRearRad = lerp(c.alphaRearRad, tcar.alphaRearRad, slowAlpha);
+      }
+
+      // Animate locally-emitted particle effects on the client (client doesn't run `step()`).
+      this.particlePool.update(dt);
+    }
+
     // Draw background
     this.renderer.drawBg();
 
@@ -908,14 +1240,18 @@ export class Game {
     const offsetX = cosRot * cameraOffsetY;
     const offsetY = sinRot * cameraOffsetY;
 
-    const zoom = 24; // Unified tactical zoom (increased from 18)
+    const zoom = 24; // Unified tactical zoom
 
-    // Desktop driver-only: shift camera view left for testing layouts.
-    const screenCenterXCssPx = !isTouch && this.role === PlayerRole.DRIVER ? width * 0.33 : undefined;
+    // Don't shift screen center based on role - keep cameras identical for multiplayer
+    const screenCenterXCssPx = undefined;
+
+    // Use zero camera shake for client (shake is local to host simulation)
+    const shakeX = this.netMode === "client" ? 0 : this.cameraShakeX;
+    const shakeY = this.netMode === "client" ? 0 : this.cameraShakeY;
 
     this.renderer.beginCamera({
-      centerX: this.state.car.xM + this.cameraShakeX + offsetX,
-      centerY: this.state.car.yM + this.cameraShakeY + offsetY,
+      centerX: this.state.car.xM + shakeX + offsetX,
+      centerY: this.state.car.yM + shakeY + offsetY,
       pixelsPerMeter: zoom,
       rotationRad: this.cameraRotationRad,
       screenCenterXCssPx
@@ -948,7 +1284,8 @@ export class Game {
     }
     this.renderer.drawWater(this.waterBodies);
     this.renderer.drawTrees(this.trees);
-    this.renderer.drawEnemies(this.enemyPool.getActive());
+    const enemiesToDraw = this.netMode === "client" && this.netRemoteEnemies ? this.netRemoteEnemies : this.enemyPool.getActive();
+    this.renderer.drawEnemies(enemiesToDraw);
     this.renderer.drawParticles(this.particlePool.getActiveParticles());
     // Draw start line at the first checkpoint position (edge of starting city)
     const start = pointOnTrack(this.track, this.checkpointSM[0]);
@@ -980,7 +1317,8 @@ export class Game {
     });
 
     // Draw projectiles (bullets)
-    this.renderer.drawProjectiles(this.projectilePool.getActive());
+    const projectilesToDraw = this.netMode === "client" && this.netRemoteProjectiles ? this.netRemoteProjectiles : this.projectilePool.getActive();
+    this.renderer.drawProjectiles(projectilesToDraw);
 
     if (this.showDebugMenu && this.tuning?.values.showArrows) {
       this.drawForceArrows();
@@ -988,9 +1326,10 @@ export class Game {
 
     this.renderer.endCamera();
 
-    if (this.role === PlayerRole.DRIVER) {
-      this.renderer.drawFog(this.state.car.xM, this.state.car.yM, 90); // Increased visibility
-    }
+    // Fog disabled for now
+    // if (this.role === PlayerRole.DRIVER) {
+    //   this.renderer.drawFog(this.state.car.xM, this.state.car.yM, 45); // Blind driver fog
+    // }
 
     // Draw crosshair at mouse position (screen space) - Suppressed on Touch
     if (!isTouch) {
@@ -1133,6 +1472,11 @@ export class Game {
           `steer: ${this.lastInputState.steer.toFixed(2)}  throttle: ${this.lastInputState.throttle.toFixed(2)}  brake/rev: ${this.lastInputState.brake.toFixed(2)}`,
           `handbrake: ${this.lastInputState.handbrake.toFixed(2)}  gear: ${this.gear}`,
           `yawRate: ${this.state.car.yawRateRadS.toFixed(2)} rad/s`,
+          ...(this.netMode === "client" ? [
+            `client interp distance: ${this.netClientInterpolationDistance.toFixed(2)}m`,
+            `client velocity error: ${this.netClientVelocityError.toFixed(2)}m/s`
+          ] : []),
+          ...this.netStatusLines.map(l => `net: ${l}`)
         ]
       });
     }
@@ -1577,7 +1921,8 @@ export class Game {
 
       const impact = vN < 0 ? Math.abs(vN) : 0;
       if (impact > 1) {
-        this.damage01 = clamp(this.damage01 + impact * 0.08, 0, 1);
+        // More collision HP: reduce damage per impact
+        this.damage01 = clamp(this.damage01 + impact * 0.05, 0, 1);
         // Camera shake for tree collisions
         const shakeIntensity = Math.min(impact * 0.25, 2.5);
         this.cameraShakeX = (Math.random() - 0.5) * shakeIntensity;
@@ -1640,7 +1985,8 @@ export class Game {
 
         const impact = vN < 0 ? Math.abs(vN) : 0;
         if (impact > 1) {
-          this.damage01 = clamp(this.damage01 + impact * 0.12, 0, 1); // More damage than trees
+          // More collision HP: reduce damage per impact
+          this.damage01 = clamp(this.damage01 + impact * 0.07, 0, 1);
           const shakeIntensity = Math.min(impact * 0.35, 3.5);
           this.cameraShakeX = (Math.random() - 0.5) * shakeIntensity;
           this.cameraShakeY = (Math.random() - 0.5) * shakeIntensity;
@@ -1784,9 +2130,12 @@ export class Game {
             this.enemyKillCount++;
             // Create massive particle burst on death
             this.createEnemyDeathParticles(enemy.x, enemy.y, enemy.type === "tank");
+            if (this.netMode === "host") {
+              this.netParticleEvents.push({ type: "enemyDeath", x: enemy.x, y: enemy.y, isTank: enemy.type === "tank" });
+            }
           } else {
             // Smaller visual feedback for hits that don't kill
-            this.particlePool.emit({
+            this.emitParticles({
               x: proj.x,
               y: proj.y,
               vx: (Math.random() - 0.5) * 4,
@@ -1885,10 +2234,11 @@ export class Game {
 
         // Type-specific physics
         const isTank = enemy.type === "tank";
-        // Heavier zombies: significantly reduce speed on impact
-        const speedReduction = isTank ? 0.60 : 0.75; // 40% loss for tanks, 25% for zombies (was 15%)
-        const distortionMultiplier = isTank ? 0.5 : 0.15; // More yaw for tanks
-        const damageRate = isTank ? 0.08 : 0.015; // More damage from tanks (was 0.02)
+        // Tanks should feel less like immovable walls
+        const speedReduction = isTank ? 0.78 : 0.80;
+        const distortionMultiplier = isTank ? 0.25 : 0.15;
+        // More collision HP: reduce damage from enemy impacts
+        const damageRate = isTank ? 0.03 : 0.01;
 
         this.state.car.vxMS *= speedReduction;
         this.state.car.vyMS *= speedReduction;
@@ -1909,6 +2259,9 @@ export class Game {
         if (damaged && damaged.health <= 0) {
           this.enemyKillCount++;
           this.createEnemyDeathParticles(enemy.x, enemy.y, isTank);
+          if (this.netMode === "host") {
+            this.netParticleEvents.push({ type: "enemyDeath", x: enemy.x, y: enemy.y, isTank });
+          }
         }
 
         // Play impact sound
