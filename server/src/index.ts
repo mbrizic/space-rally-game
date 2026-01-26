@@ -15,6 +15,14 @@ type Client = {
   lastSeenMs: number;
 };
 
+import { createHmac } from "node:crypto";
+
+type TurnConfig = {
+  urls: string[];
+  username: string;
+  credential: string;
+};
+
 const HOST = process.env.HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.PORT ?? "8787", 10);
 const ROOM_TTL_MS = Number.parseInt(process.env.ROOM_TTL_MS ?? `${15 * 60_000}`, 10);
@@ -29,6 +37,30 @@ const corsHeaders: Record<string, string> = {
   "access-control-allow-methods": "GET, OPTIONS",
   "access-control-allow-headers": "content-type"
 };
+
+const jsonHeaders: Record<string, string> = {
+  ...corsHeaders,
+  "content-type": "application/json; charset=utf-8",
+  // Avoid caching ephemeral creds.
+  "cache-control": "no-store"
+};
+
+function parseTurnUrls(raw: string | undefined | null): string[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function makeTurnConfig(opts: { urls: string[]; secret: string; peer: string }): TurnConfig {
+  // TURN REST API: username is an expiry timestamp (seconds since epoch) + optional user id.
+  // Credential is base64(hmac-sha1(secret, username)).
+  const expirySeconds = Math.floor(Date.now() / 1000) + 6 * 60 * 60; // 6 hours
+  const username = `${expirySeconds}:${opts.peer}`;
+  const credential = createHmac("sha1", opts.secret).update(username).digest("base64");
+  return { urls: opts.urls, username, credential };
+}
 
 function nowMs(): number {
   return Date.now();
@@ -98,6 +130,26 @@ const server = Bun.serve<WsData>({
 
     if (path === "/health" || path === "/api/health") {
       return new Response("ok\n", { headers: { ...corsHeaders, "content-type": "text/plain; charset=utf-8" } });
+    }
+
+    // Optional TURN (coturn) support for strict NATs.
+    // Configure via env:
+    // - TURN_URLS="turn:your-domain:3478?transport=udp,turn:your-domain:3478?transport=tcp"
+    // - TURN_SHARED_SECRET="..." (must match coturn `static-auth-secret`)
+    if (path === "/turn" || path === "/api/turn") {
+      const urls = parseTurnUrls(process.env.TURN_URLS);
+      const secret = process.env.TURN_SHARED_SECRET ?? "";
+      const peer = normalizePeer(url.searchParams.get("peer") ?? "");
+      if (!urls.length || !secret || !peer) {
+        return new Response(JSON.stringify({ ok: false }), { status: 404, headers: jsonHeaders });
+      }
+
+      try {
+        const cfg = makeTurnConfig({ urls, secret, peer });
+        return new Response(JSON.stringify({ ok: true, iceServers: [{ urls: cfg.urls, username: cfg.username, credential: cfg.credential }] }), { headers: jsonHeaders });
+      } catch {
+        return new Response(JSON.stringify({ ok: false }), { status: 500, headers: jsonHeaders });
+      }
     }
 
     const isWsPath = path === "/ws" || path === "/api/ws";

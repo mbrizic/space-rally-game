@@ -25,7 +25,7 @@ export class TuningPanel {
     this.root = document.createElement("div");
     this.root.style.position = "fixed";
     this.root.style.left = "12px";
-    this.root.style.top = "280px"; // Below Debug panel (which is ~270px tall at top-left)
+    this.root.style.top = "312px"; // Below Debug panel (which is ~270px tall at top-left)
     this.root.style.padding = "10px 12px";
     this.root.style.background = "rgba(0,0,0,0.55)";
     this.root.style.border = "1px solid rgba(255,255,255,0.12)";

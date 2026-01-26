@@ -12,6 +12,19 @@ Rally games need:
 
 These requirements are in tension - hairpins naturally want to loop back!
 
+## Visual Design Rules (Important)
+
+### Road color must be predictable
+- Road segment colors are derived only from the surface type (tarmac/gravel/dirt/ice).
+- Track theme/type must never recolor the road, because players learn surface→handling by color.
+
+### Theme lives under/around the road
+- Track type “flavor” is expressed as a solid terrain underlay beneath/around the road (and in the minimap/background palette).
+- The far world background can stay dark/neutral so the road remains readable.
+
+### Zones should not break readability
+- Zones should communicate via minimap overlays and lightweight screen-space effects, not by recoloring the road.
+
 ## Approaches Tried
 
 ### 1. Random Angle Budget System (Failed)

@@ -13,6 +13,7 @@ import {
   type TrackProjection
 } from "../sim/track";
 import { surfaceForTrackSM, type Surface } from "../sim/surface";
+import { resolveStageTheme, stageMetaFromSeed, zonesAtSM, type StageThemeKind, type TrackZone, type TrackZoneKind } from "../sim/stage";
 import { generateTrees, generateWaterBodies, type CircleObstacle, type WaterBody } from "../sim/props";
 import { DriftDetector, DriftState, type DriftInfo } from "../sim/drift";
 import { createEngineState, defaultEngineParams, stepEngine, rpmFraction, shiftUp, shiftDown, type EngineState } from "../sim/engine";
@@ -21,6 +22,7 @@ import { unlockAudio, suspendAudio, resumeAudio } from "../audio/audio-context";
 import { EngineAudio } from "../audio/audio-engine";
 import { SlideAudio } from "../audio/audio-slide";
 import { EffectsAudio } from "../audio/audio-effects";
+import { RainAudio } from "../audio/audio-rain";
 import type { TuningPanel } from "./tuning";
 import { ProjectilePool } from "../sim/projectile";
 import { EnemyPool, generateEnemies } from "../sim/enemy";
@@ -100,6 +102,8 @@ export class Game {
   private notificationTimeSeconds = 0;
   private damage01 = 0;
   private lastSurface: Surface = { name: "tarmac", frictionMu: 1, rollingResistanceN: 260 };
+  private currentStageThemeKind: StageThemeKind = "temperate";
+  private currentStageZones: TrackZone[] = [];
   private showDebugMenu = false; // F to toggle debug/tires/tuning panels
   private showMinimap = true;
   private gear: "F" | "R" = "F";
@@ -130,6 +134,7 @@ export class Game {
   private readonly engineAudio = new EngineAudio();
   private readonly slideAudio = new SlideAudio();
   private readonly effectsAudio = new EffectsAudio();
+  private readonly rainAudio = new RainAudio();
   private audioUnlocked = false;
   private running = false;
   private proceduralSeed = 20260124;
@@ -1005,18 +1010,36 @@ export class Game {
   }
 
   private setTrack(def: TrackDefinition): void {
+    // Ensure stage meta exists deterministically if we have a seed.
+    const seed = def.meta?.seed;
+    if (typeof seed === "number" && Number.isFinite(seed)) {
+      const stageMeta = stageMetaFromSeed(seed);
+      const meta = def.meta ?? {};
+      const theme = meta.theme ?? stageMeta.theme;
+      const zones = meta.zones ?? stageMeta.zones;
+      def = { ...def, meta: { ...meta, theme, zones } };
+    }
+
     this.trackDef = def;
     this.track = createTrackFromDefinition(def);
+
+    const themeRef = def.meta?.theme ?? { kind: "temperate" as const };
+    this.currentStageThemeKind = themeRef.kind;
+    this.currentStageZones = def.meta?.zones ?? [];
 
     const trackSeed = def.meta?.seed ?? 1;
     this.trackSegmentFillStyles = [];
     this.trackSegmentShoulderStyles = [];
     this.trackSegmentSurfaceNames = [];
+
+    const theme = resolveStageTheme(themeRef);
+
     for (let i = 0; i < this.track.points.length; i++) {
       const midSM = this.track.cumulativeLengthsM[i] + this.track.segmentLengthsM[i] * 0.5;
-      const surface = surfaceForTrackSM(this.track.totalLengthM, midSM, false, trackSeed);
+      const surface = surfaceForTrackSM(this.track.totalLengthM, midSM, false, trackSeed, themeRef.kind);
       this.trackSegmentFillStyles.push(surfaceFillStyle(surface));
-      this.trackSegmentShoulderStyles.push(surfaceShoulderStyle(surface));
+      // Track type flavor: a solid, stable underlay beneath the road.
+      this.trackSegmentShoulderStyles.push(theme.offtrackBgColor);
       this.trackSegmentSurfaceNames.push(surface.name);
     }
 
@@ -1056,6 +1079,7 @@ export class Game {
       this.engineAudio.start();
       this.slideAudio.start();
       this.effectsAudio.start();
+      this.rainAudio.start();
     }
   }
 
@@ -1170,7 +1194,36 @@ export class Game {
     const roadHalfWidthM = projectionBefore.widthM * 0.5;
     const offTrack = projectionBefore.distanceToCenterlineM > roadHalfWidthM;
     const trackSeed = this.trackDef.meta?.seed ?? 1;
-    this.lastSurface = surfaceForTrackSM(this.track.totalLengthM, projectionBefore.sM, offTrack, trackSeed);
+    const activeZones = this.currentStageZones.length
+      ? zonesAtSM(this.track.totalLengthM, projectionBefore.sM, this.currentStageZones)
+      : [];
+
+    const rainIntensity = activeZones
+      .filter((z) => z.kind === "rain")
+      .reduce((m, z) => Math.max(m, z.intensity01), 0);
+    const sandIntensity = activeZones
+      .filter((z) => z.kind === "sandstorm")
+      .reduce((m, z) => Math.max(m, z.intensity01), 0);
+
+    // Rain should be very slippy - forces you to slow down or lose control.
+    // Lower frictionMu = less max tire force = less grip = more sliding.
+    const rainGripMult = 1 - 0.62 * rainIntensity;
+    const sandGripMult = 1 - 0.18 * sandIntensity;
+    const zoneGripMult = clamp(rainGripMult * sandGripMult, 0.55, 1.0);
+    const zoneRRMult = clamp(1 + 0.22 * sandIntensity, 1.0, 1.35);
+
+    const baseSurface = surfaceForTrackSM(
+      this.track.totalLengthM,
+      projectionBefore.sM,
+      offTrack,
+      trackSeed,
+      this.currentStageThemeKind
+    );
+    this.lastSurface = {
+      ...baseSurface,
+      frictionMu: clamp(baseSurface.frictionMu * zoneGripMult, 0.18, 1.8),
+      rollingResistanceN: clamp(baseSurface.rollingResistanceN * zoneRRMult, 80, 2500)
+    };
 
     // Step engine simulation BEFORE car simulation to use its output
     const engineResult = stepEngine(
@@ -1418,7 +1471,8 @@ export class Game {
     }
 
     // Draw background
-    this.renderer.drawBg();
+    const theme = resolveStageTheme({ kind: this.currentStageThemeKind });
+    this.renderer.drawBg(theme.bgColor, this.state.car.xM, this.state.car.yM);
 
     const isTouch = isTouchMode();
 
@@ -1488,7 +1542,10 @@ export class Game {
     // Update mouse world position now that camera is set
     this.updateMouseWorldPosition();
 
-    this.renderer.drawGrid({ spacingMeters: 1, majorEvery: 5 });
+    // Only show the world grid when debugging or editing. It obscures the theme read.
+    if (this.showDebugMenu || this.editorMode) {
+      this.renderer.drawGrid({ spacingMeters: 1, majorEvery: 5 });
+    }
 
     // Draw cities BEFORE track so road appears on top
     if (this.track.startCity) {
@@ -1554,10 +1611,50 @@ export class Game {
 
     this.renderer.endCamera();
 
-    // Fog disabled for now
-    // if (this.role === PlayerRole.DRIVER) {
-    //   this.renderer.drawFog(this.state.car.xM, this.state.car.yM, 45); // Blind driver fog
-    // }
+    // Zone-based visibility effects (screen-space overlays). Keep these under HUD.
+    let rainIntensity = 0;
+    let fogIntensity = 0;
+    let eclipseIntensity = 0;
+    let sandIntensity = 0;
+    let electricalIntensity = 0;
+    let activeZoneKinds: string[] = [];
+    let activeZoneIndicators: { kind: TrackZoneKind; intensity01: number }[] = [];
+    if (this.currentStageZones.length > 0) {
+      const proj = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
+      const activeZones = zonesAtSM(this.track.totalLengthM, proj.sM, this.currentStageZones);
+      activeZoneKinds = [...new Set(activeZones.map((z) => z.kind))];
+      activeZoneIndicators = activeZones.map((z) => ({ kind: z.kind, intensity01: z.intensity01 }));
+      rainIntensity = activeZones.filter((z) => z.kind === "rain").reduce((m, z) => Math.max(m, z.intensity01), 0);
+      fogIntensity = activeZones.filter((z) => z.kind === "fog").reduce((m, z) => Math.max(m, z.intensity01), 0);
+      eclipseIntensity = activeZones.filter((z) => z.kind === "eclipse").reduce((m, z) => Math.max(m, z.intensity01), 0);
+      sandIntensity = activeZones.filter((z) => z.kind === "sandstorm").reduce((m, z) => Math.max(m, z.intensity01), 0);
+      electricalIntensity = activeZones.filter((z) => z.kind === "electrical").reduce((m, z) => Math.max(m, z.intensity01), 0);
+    }
+
+    // Desert + temperate maps should never have fog (even if a legacy track definition includes it).
+    if (this.currentStageThemeKind === "desert" || this.currentStageThemeKind === "temperate") fogIntensity = 0;
+
+    // Desert should never have rain (even if a legacy track definition includes it).
+    if (this.currentStageThemeKind === "desert") rainIntensity = 0;
+
+    // Update rain audio (ambient pink-ish noise). Intentionally loud.
+    if (this.audioUnlocked) this.rainAudio.update(rainIntensity);
+
+    if (fogIntensity > 0.05) {
+      // Smaller radius (see less), but lighter gray fog.
+      const radius = 60 - 45 * fogIntensity;
+      this.renderer.drawFog(this.state.car.xM, this.state.car.yM, radius);
+    }
+    if (sandIntensity > 0.05) {
+      const radius = 140 - 80 * sandIntensity;
+      this.renderer.drawFog(this.state.car.xM, this.state.car.yM, radius);
+      this.renderer.drawScreenOverlay(`rgba(170, 120, 55, ${clamp(0.04 + 0.10 * sandIntensity, 0, 0.18)})`);
+    }
+    if (eclipseIntensity > 0.05) {
+      const radius = 95 - 60 * eclipseIntensity;
+      this.renderer.drawFog(this.state.car.xM, this.state.car.yM, radius);
+      this.renderer.drawScreenOverlay(`rgba(0, 0, 0, ${clamp(0.06 + 0.16 * eclipseIntensity, 0, 0.28)})`);
+    }
 
     // Draw crosshair at mouse position (screen space) - Suppressed on Touch
     if (!isTouch) {
@@ -1658,6 +1755,7 @@ export class Game {
       const minimapOffsetX = (isTouch && this.role === PlayerRole.NAVIGATOR)
         ? hudPadding
         : (!isTouch && this.role === PlayerRole.DRIVER ? hudPadding : (width - miniMapSize) * 0.5);
+
       this.renderer.drawMinimap({
         track: this.track,
         carX: this.state.car.xM,
@@ -1670,7 +1768,13 @@ export class Game {
         finish: finishMM,
         offsetX: minimapOffsetX,
         offsetY: height - miniMapSize - ((isTouch && this.role === PlayerRole.NAVIGATOR) ? hudPadding : (isTouch ? 0 : hudPadding)),
-        size: miniMapSize
+        size: miniMapSize,
+        minimapBgColor: theme.minimapBgColor,
+        zones: this.role === PlayerRole.NAVIGATOR ? this.currentStageZones : undefined,
+        activeZones: this.role === PlayerRole.NAVIGATOR ? activeZoneIndicators : undefined,
+        statusTextLines: (this.role === PlayerRole.NAVIGATOR && electricalIntensity > 0.05)
+          ? ["ERROR", "ELECTRICAL STORM"]
+          : undefined
       });
     }
 
@@ -1678,6 +1782,37 @@ export class Game {
     if (this.showDebugMenu) {
       const speedMS = this.speedMS();
       const speedKmH = speedMS * 3.6;
+
+      // Grip calculation (mirror the same logic used in step()).
+      const proj = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
+      const roadHalfWidthM = proj.widthM * 0.5;
+      const offTrack = proj.distanceToCenterlineM > roadHalfWidthM;
+      const trackSeed = this.trackDef.meta?.seed ?? 1;
+      const activeZones = this.currentStageZones.length
+        ? zonesAtSM(this.track.totalLengthM, proj.sM, this.currentStageZones)
+        : [];
+
+      const rainI = activeZones.filter((z) => z.kind === "rain").reduce((m, z) => Math.max(m, z.intensity01), 0);
+      const sandI = activeZones.filter((z) => z.kind === "sandstorm").reduce((m, z) => Math.max(m, z.intensity01), 0);
+      const rainGripMult = 1 - 0.62 * rainI;
+      const sandGripMult = 1 - 0.18 * sandI;
+      const zoneGripMult = clamp(rainGripMult * sandGripMult, 0.55, 1.0);
+
+      const baseSurface = surfaceForTrackSM(
+        this.track.totalLengthM,
+        proj.sM,
+        offTrack,
+        trackSeed,
+        this.currentStageThemeKind
+      );
+      const gripMu = clamp(baseSurface.frictionMu * zoneGripMult, 0.18, 1.8);
+
+      const zoneSummary = this.currentStageZones.length > 0
+        ? this.currentStageZones
+          .map((z) => `${z.kind}@${z.intensity01.toFixed(2)} [${z.start01.toFixed(2)}-${z.end01.toFixed(2)}]`)
+          .join(", ")
+        : "none";
+      const activeSummary = activeZoneKinds.length > 0 ? activeZoneKinds.join(", ") : "none";
       this.renderer.drawPanel({
         x: 12,
         y: 12,
@@ -1687,8 +1822,13 @@ export class Game {
           `t: ${this.state.timeSeconds.toFixed(2)}s`,
           `track: ${this.trackDef.meta?.name ?? "Custom"}${this.trackDef.meta?.seed ? ` (seed ${this.trackDef.meta.seed})` : ""}`,
           `stage: ${this.trackDef.meta?.seed ?? this.proceduralSeed}`,
+          `theme: ${theme.name} (${theme.kind})`,
+          `zones: ${zoneSummary}`,
+          `zones now: ${activeSummary}  rain:${rainIntensity.toFixed(2)} fog:${fogIntensity.toFixed(2)} elec:${electricalIntensity.toFixed(2)}`,
           `camera: ${this.cameraMode}`,
           `speed: ${speedMS.toFixed(2)} m/s (${speedKmH.toFixed(0)} km/h)`,
+          `grip: ${baseSurface.name}${offTrack ? " (offtrack)" : ""}  mu: ${baseSurface.frictionMu.toFixed(2)} x zone ${zoneGripMult.toFixed(2)} = ${gripMu.toFixed(2)}`,
+          `grip factors: rain:${rainI.toFixed(2)} sand:${sandI.toFixed(2)}`,
           `steer: ${this.lastInputState.steer.toFixed(2)}  throttle: ${this.lastInputState.throttle.toFixed(2)}  brake/rev: ${this.lastInputState.brake.toFixed(2)}`,
           `handbrake: ${this.lastInputState.handbrake.toFixed(2)}  gear: ${this.gear}`,
           `yawRate: ${this.state.car.yawRateRadS.toFixed(2)} rad/s`,
@@ -1716,10 +1856,10 @@ export class Game {
 
     if (this.showDebugMenu) {
       const deg = (rad: number) => (rad * 180) / Math.PI;
-      // Tires panel - positioned below Tuning panel (which is at ~280px and ~200px tall)
+      // Tires panel - positioned below Tuning panel (which is at ~312px and ~200px tall)
       this.renderer.drawPanel({
         x: 12,
-        y: 510, // Below Debug (~270px) + Tuning (~200px) + 40px gap
+        y: 542, // Below Debug (~270px) + Tuning (~200px) + 60px gap
         title: "Tires",
         lines: [
           `steerAngle: ${deg(this.state.carTelemetry.steerAngleRad).toFixed(1)}°`,
@@ -1795,6 +1935,28 @@ export class Game {
       this.renderer.drawDamageOverlay({ damage01: this.damage01 });
     }
 
+    // Rain visual effect: blue tint + falling streak noise (over everything).
+    if (rainIntensity > 0.05) {
+      this.renderer.drawScreenOverlay(`rgba(60, 120, 210, ${clamp(0.02 + 0.08 * rainIntensity, 0, 0.12)})`);
+      this.renderer.drawRain({ intensity01: rainIntensity, timeSeconds: this.state.timeSeconds });
+    }
+
+    // Electrical storm: occasional white flashes across the screen.
+    if (electricalIntensity > 0.05) {
+      const t = this.state.timeSeconds;
+      // Slower main pulses, but brighter + more strobey when they hit.
+      const w = 2.0 + 2.2 * electricalIntensity;
+      const mainA = Math.pow(Math.max(0, Math.sin(t * w + 1.7)), 7);
+      const mainB = Math.pow(Math.max(0, Math.sin(t * (w * 0.63) + 0.3)), 8);
+      const main = Math.max(mainA, mainB);
+      const strobe = Math.pow(Math.max(0, Math.sin(t * (22 + 34 * electricalIntensity) + 0.9)), 2);
+      const pulse = clamp(main * (0.35 + 0.85 * strobe), 0, 1);
+      const alpha = clamp(pulse * (0.10 + 0.32 * electricalIntensity), 0, 0.42);
+      if (alpha > 0.01) {
+        this.renderer.drawScreenOverlay(`rgba(255, 255, 255, ${alpha})`);
+      }
+    }
+
     // Minimap
 
 
@@ -1808,7 +1970,10 @@ export class Game {
       ctx.restore();
     }
 
-    if (this.netMode === "host" && this.netWaitForPeer) {
+    // Show a host waiting HUD whenever we're blocking the sim on peer join.
+    // This is keyed off `netWaitForPeer` so the banner still appears even if
+    // `netMode` hasn't flipped to "host" yet (racey in some flows).
+    if (this.netWaitForPeer && this.netMode !== "client") {
       this.renderer.drawCenterText({ text: "WAITING", subtext: "Invite the shooter to join" });
     }
 
@@ -2501,29 +2666,15 @@ export class Game {
 function surfaceFillStyle(surface: Surface): string {
   switch (surface.name) {
     case "tarmac":
-      return "rgba(70, 75, 85, 0.35)"; // Darker gray - asphalt
+      return "rgba(70, 75, 85, 1.0)"; // Darker gray - asphalt (opaque for predictability)
     case "gravel":
-      return "rgba(180, 155, 110, 0.45)"; // Tan/beige - gravel
+      return "rgba(140, 145, 150, 1.0)"; // Gray-ish gravel (opaque)
     case "dirt":
-      return "rgba(140, 100, 70, 0.45)"; // Brown - dirt
+      return "rgba(140, 100, 70, 1.0)"; // Brown - dirt (opaque)
     case "ice":
-      return "rgba(180, 220, 245, 0.50)"; // Light blue - ice
+      return "rgba(180, 220, 245, 1.0)"; // Light blue - ice (opaque)
     case "offtrack":
-      return "rgba(100, 130, 90, 0.25)"; // Green-gray - grass
+      return "rgba(100, 130, 90, 1.0)"; // Green-gray - grass (opaque)
   }
 }
 
-function surfaceShoulderStyle(surface: Surface): string {
-  switch (surface.name) {
-    case "tarmac":
-      return "rgba(50, 55, 65, 0.25)"; // Darker shoulder
-    case "gravel":
-      return "rgba(160, 135, 90, 0.30)"; // Darker gravel
-    case "dirt":
-      return "rgba(120, 80, 50, 0.30)"; // Darker brown
-    case "ice":
-      return "rgba(160, 200, 225, 0.35)"; // Darker ice blue
-    case "offtrack":
-      return "rgba(80, 110, 70, 0.20)"; // Darker grass
-  }
-}

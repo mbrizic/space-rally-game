@@ -25,9 +25,18 @@ type PeerEventMsg =
 type OfferMsg = { type: "offer"; from: string; to: string; sdp: RTCSessionDescriptionInit };
 type AnswerMsg = { type: "answer"; from: string; to: string; sdp: RTCSessionDescriptionInit };
 type IceMsg = { type: "ice"; from: string; to: string; candidate: RTCIceCandidateInit };
+type RestartIceMsg = { type: "restart-ice"; from: string; to: string; reason?: string };
 type ErrorMsg = { type: "error"; code: string; to?: string };
 
-type ServerMsg = WelcomeMsg | PeerEventMsg | OfferMsg | AnswerMsg | IceMsg | ErrorMsg | { type: string;[k: string]: unknown };
+type ServerMsg =
+  | WelcomeMsg
+  | PeerEventMsg
+  | OfferMsg
+  | AnswerMsg
+  | IceMsg
+  | RestartIceMsg
+  | ErrorMsg
+  | { type: string;[k: string]: unknown };
 
 function randId(len: number): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -87,6 +96,44 @@ function wsUrl(room: string, peer: string): string {
   return u.toString();
 }
 
+function resolveSignalHttpOrigin(): string {
+  // Prefer explicit signaling override, otherwise same-origin.
+  const url = new URL(window.location.href);
+  const override = url.searchParams.get("signal") ?? url.searchParams.get("signalWs");
+  if (override) {
+    if (override.startsWith("ws://") || override.startsWith("wss://")) {
+      return override.replace(/^ws/, "http").replace(/\/(ws|api\/ws)\/?$/, "");
+    }
+    if (override.startsWith("http://") || override.startsWith("https://")) {
+      const u = new URL(override);
+      // Strip /ws or /api/ws if provided.
+      u.pathname = u.pathname.replace(/\/(ws|api\/ws)\/?$/, "");
+      u.search = "";
+      return u.toString();
+    }
+  }
+  return window.location.origin;
+}
+
+async function fetchTurnIceServers(peer: string): Promise<RTCIceServer[] | null> {
+  try {
+    const base = resolveSignalHttpOrigin();
+    const u = new URL("/api/turn", base);
+    u.searchParams.set("peer", peer);
+
+    const ctrl = new AbortController();
+    const t = window.setTimeout(() => ctrl.abort(), 1500);
+    const res = await fetch(u.toString(), { signal: ctrl.signal });
+    window.clearTimeout(t);
+    if (!res.ok) return null;
+    const json: any = await res.json();
+    if (!json || json.ok !== true || !Array.isArray(json.iceServers)) return null;
+    return json.iceServers as RTCIceServer[];
+  } catch {
+    return null;
+  }
+}
+
 function resolveSignalHealthUrl(): string {
   const ws = resolveSignalWsEndpoint();
   if (ws.startsWith("ws://") || ws.startsWith("wss://")) {
@@ -129,6 +176,9 @@ export function initNetSession(
   let pingTimer: number | null = null;
   let hostSendTimer: number | null = null;
   let clientSendTimer: number | null = null;
+  let connectWatchdogTimer: number | null = null;
+  let offerRestartCount = 0;
+  let pendingIce: RTCIceCandidateInit[] = [];
   let shootPulse = false;
   let peerReady = false;
 
@@ -177,8 +227,12 @@ export function initNetSession(
   const resetP2p = (): void => {
     if (hostSendTimer) window.clearInterval(hostSendTimer);
     if (clientSendTimer) window.clearInterval(clientSendTimer);
+    if (connectWatchdogTimer) window.clearTimeout(connectWatchdogTimer);
     hostSendTimer = null;
     clientSendTimer = null;
+    connectWatchdogTimer = null;
+    offerRestartCount = 0;
+    pendingIce = [];
     peerReady = false;
     opts?.onPeerDisconnected?.();
     game.setNetShootPulseHandler(null);
@@ -190,9 +244,85 @@ export function initNetSession(
     render();
   };
 
-  const ensurePc = (remotePeer: string): RTCPeerConnection => {
+  const isOfferer = (): boolean => {
+    return !!state.remotePeer && state.peer < state.remotePeer;
+  };
+
+  const flushPendingIce = async (pc0: RTCPeerConnection): Promise<void> => {
+    // Some browsers will reject addIceCandidate until a remote description exists.
+    if (!pc0.remoteDescription) return;
+    if (pendingIce.length === 0) return;
+    const toAdd = pendingIce;
+    pendingIce = [];
+    for (const cand of toAdd) {
+      try {
+        await pc0.addIceCandidate(cand);
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  const doIceRestartAsOfferer = async (reason: string): Promise<void> => {
+    if (!state.remotePeer) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!isOfferer()) return;
+    if (offerRestartCount >= 2) return;
+    offerRestartCount++;
+
+    const pc0 = await ensurePc(state.remotePeer);
+    if (!dc) {
+      // Ensure the offerer owns the datachannel.
+      dc = pc0.createDataChannel("data");
+      wireDc();
+    }
+
+    try {
+      const offer = await pc0.createOffer({ iceRestart: true });
+      await pc0.setLocalDescription(offer);
+      ws.send(JSON.stringify({ type: "offer", to: state.remotePeer, sdp: offer, reason }));
+    } catch {
+      setError("ice restart failed");
+    }
+  };
+
+  const requestIceRestart = (reason: string): void => {
+    if (!state.remotePeer) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (dc?.readyState === "open") return;
+
+    if (isOfferer()) {
+      void doIceRestartAsOfferer(reason);
+    } else {
+      // Ask the offerer to do an ICE-restart offer.
+      try {
+        ws.send(JSON.stringify({ type: "restart-ice", to: state.remotePeer, reason }));
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  const armConnectWatchdog = (): void => {
+    if (connectWatchdogTimer) window.clearTimeout(connectWatchdogTimer);
+    connectWatchdogTimer = window.setTimeout(() => {
+      // If the signaling link is up but the datachannel still isn't open, prod the connection.
+      if (!state.remotePeer) return;
+      if (dc?.readyState === "open") return;
+      requestIceRestart("watchdog");
+    }, 8000);
+  };
+
+  const ensurePc = async (remotePeer: string): Promise<RTCPeerConnection> => {
     if (pc) return pc;
+
+    // Baseline STUN (works for many NATs).
     const iceServers: RTCIceServer[] = [{ urls: ["stun:stun.l.google.com:19302"] }];
+
+    // Optional TURN (coturn) for strict NATs/corporate networks.
+    const turn = await fetchTurnIceServers(state.peer || remotePeer);
+    if (turn && turn.length > 0) iceServers.push(...turn);
+
     pc = new RTCPeerConnection({ iceServers });
 
     pc.onicecandidate = (e) => {
@@ -201,6 +331,14 @@ export function initNetSession(
     };
 
     pc.onconnectionstatechange = () => render();
+
+    pc.oniceconnectionstatechange = () => {
+      render();
+      const s = pc?.iceConnectionState;
+      if (s === "failed") {
+        requestIceRestart("ice-failed");
+      }
+    };
 
     pc.ondatachannel = (e) => {
       dc = e.channel;
@@ -221,6 +359,11 @@ export function initNetSession(
       state.dcState = dc?.readyState ?? "open";
       render();
       if (!dc) return;
+
+      if (connectWatchdogTimer) {
+        window.clearTimeout(connectWatchdogTimer);
+        connectWatchdogTimer = null;
+      }
 
       if (state.mode === "host") {
         game.setNetMode("host");
@@ -333,10 +476,13 @@ export function initNetSession(
   const maybeStartOffer = async (): Promise<void> => {
     if (!state.remotePeer) return;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    const isOfferer = state.peer < state.remotePeer;
-    if (!isOfferer) return;
+    if (!isOfferer()) {
+      // Still arm watchdog so we can request restart if things stall.
+      armConnectWatchdog();
+      return;
+    }
 
-    const pc0 = ensurePc(state.remotePeer);
+    const pc0 = await ensurePc(state.remotePeer);
     if (!dc) {
       dc = pc0.createDataChannel("data");
       wireDc();
@@ -346,6 +492,7 @@ export function initNetSession(
       const offer = await pc0.createOffer();
       await pc0.setLocalDescription(offer);
       ws.send(JSON.stringify({ type: "offer", to: state.remotePeer, sdp: offer }));
+      armConnectWatchdog();
     } catch (e) {
       setError(`offer failed`);
     }
@@ -436,12 +583,17 @@ export function initNetSession(
         state.remotePeer = m.from;
         render();
 
-        const pc0 = ensurePc(m.from);
+        // Reset offer retry counter on new offer.
+        offerRestartCount = 0;
+
+        const pc0 = await ensurePc(m.from);
         try {
           await pc0.setRemoteDescription(m.sdp);
+          await flushPendingIce(pc0);
           const answer = await pc0.createAnswer();
           await pc0.setLocalDescription(answer);
           ws?.send(JSON.stringify({ type: "answer", to: m.from, sdp: answer }));
+          armConnectWatchdog();
         } catch (e) { setError("answer failed"); }
         return;
       }
@@ -449,16 +601,38 @@ export function initNetSession(
       if (msg.type === "answer") {
         const m = msg as AnswerMsg;
         if (m.to !== state.peer) return;
-        const pc0 = ensurePc(m.from);
-        try { await pc0.setRemoteDescription(m.sdp); } catch (e) { setError("answer failed"); }
+        const pc0 = await ensurePc(m.from);
+        try {
+          await pc0.setRemoteDescription(m.sdp);
+          await flushPendingIce(pc0);
+          armConnectWatchdog();
+        } catch (e) {
+          setError("answer failed");
+        }
         return;
       }
 
       if (msg.type === "ice") {
         const m = msg as IceMsg;
         if (m.to !== state.peer) return;
-        const pc0 = ensurePc(m.from);
+        const pc0 = await ensurePc(m.from);
+        if (!pc0.remoteDescription) {
+          pendingIce.push(m.candidate);
+          return;
+        }
         try { await pc0.addIceCandidate(m.candidate); } catch { }
+        return;
+      }
+
+      if (msg.type === "restart-ice") {
+        const m = msg as RestartIceMsg;
+        if (m.to !== state.peer) return;
+        // Only the designated offerer should perform an ICE restart.
+        state.remotePeer = m.from;
+        render();
+        if (isOfferer()) {
+          void doIceRestartAsOfferer(typeof m.reason === "string" ? m.reason : "remote-request");
+        }
         return;
       }
 
@@ -477,6 +651,12 @@ export function initNetSession(
       const key = randId(10);
       storeHostKey(cleanRoom, key);
       setQuery({ room: cleanRoom, host: "1", hostKey: key });
+
+      // Immediately enter host mode and show the waiting HUD.
+      // Previously we only flipped to host once the RTC datachannel opened,
+      // which meant the WAITING banner could fail to appear right after inviting.
+      game.setNetMode("host");
+      game.setNetWaitForPeer(true);
     } else {
       setQuery({ room: cleanRoom });
     }
@@ -487,10 +667,15 @@ export function initNetSession(
     const url = new URL(window.location.href);
     if (state.room) url.searchParams.set("room", state.room);
 
+    // Include hostKey in invite URL so joiner can validate the session.
+    // The joiner will NOT become host (host=1 is removed) but they carry the key
+    // to prove they received a legitimate invite from the host.
+    const storedKey = loadStoredHostKey(state.room);
+    if (storedKey) url.searchParams.set("hostKey", storedKey);
+
     // Ensure copied URL is always a *joiner* link (never a host link).
     // Preserve other params like signaling overrides.
     url.searchParams.delete("host");
-    url.searchParams.delete("hostKey");
     const role = url.searchParams.get("role");
     if (role === "driver") url.searchParams.delete("role");
     try {

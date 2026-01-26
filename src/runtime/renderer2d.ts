@@ -1,5 +1,6 @@
 import { clamp } from "./math";
 import type { City } from "../sim/city";
+import type { TrackZone, TrackZoneKind } from "../sim/stage";
 
 type Camera2D = {
   centerX: number;
@@ -84,7 +85,7 @@ export class Renderer2D {
     return { x: rx + this.camera.centerX, y: ry + this.camera.centerY };
   }
 
-  drawBg(): void {
+  drawBg(bgColor?: string, cameraX?: number, cameraY?: number): void {
     const ctx = this.ctx;
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0); // Identity (pixel space)
@@ -92,10 +93,76 @@ export class Renderer2D {
     // Clear the ENTIRE canvas (in actual device pixels, not CSS pixels)
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-    ctx.fillStyle = "rgba(15, 20, 25, 1)";
+    ctx.fillStyle = bgColor ?? "rgba(15, 20, 25, 1)";
     // Fill the entire canvas (device pixels)
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
+    // Subtle terrain texture so the world doesn't feel like a flat card.
+    // Now in world-space so it moves with the camera.
+    this.drawTerrainDecorations(bgColor ?? "rgba(15, 20, 25, 1)", cameraX ?? 0, cameraY ?? 0);
+
+    ctx.restore();
+  }
+
+  private drawTerrainDecorations(bgColor: string, cameraX: number, cameraY: number): void {
+    const ctx = this.ctx;
+    const parsed = parseRgba(bgColor);
+    if (!parsed) return;
+
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    const seed = hashStringToUint32(bgColor);
+    const rand = mulberry32Local(seed);
+
+    const dark = (k: number, a: number): string => {
+      const r = clampInt(parsed.r * (1 - k));
+      const g = clampInt(parsed.g * (1 - k));
+      const b = clampInt(parsed.b * (1 - k));
+      return `rgba(${r}, ${g}, ${b}, ${a})`;
+    };
+
+    // Camera offset in pixels - move 1:1 with map (top-down view)
+    const ppm = this.camera.pixelsPerMeter;
+    const offX = -cameraX * ppm;
+    const offY = -cameraY * ppm;
+
+    // "Hills": a few big soft blobs along the horizon.
+    // Only darken (no bright highlights) so the scene stays dark.
+    const hillCount = 7;
+    for (let i = 0; i < hillCount; i++) {
+      const baseX = rand() * w * 2;
+      const baseY = (0.35 + rand() * 0.35) * h * 2;
+      const cx = ((baseX + offX) % (w * 2)) - w * 0.5;
+      const cy = ((baseY + offY * 0.5) % (h * 2)) - h * 0.5;
+      const rx = (0.25 + rand() * 0.55) * w;
+      const ry = (0.10 + rand() * 0.25) * h;
+      ctx.fillStyle = dark(0.22 + rand() * 0.10, 0.10);
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rx, ry, (rand() - 0.5) * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Speckle noise: low-frequency dots for texture.
+    const dotCount = Math.floor((w * h) / 22000);
+    for (let i = 0; i < dotCount; i++) {
+      const baseX = rand() * w * 2;
+      const baseY = rand() * h * 2;
+      const x = ((baseX + offX * 1.5) % (w * 1.5)) - w * 0.25;
+      const y = ((baseY + offY * 1.5) % (h * 1.5)) - h * 0.25;
+      const r = 0.6 + rand() * 1.6;
+      ctx.fillStyle = dark(0.26, 0.08);
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  drawScreenOverlay(color: string): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.restore();
   }
 
@@ -1319,6 +1386,10 @@ export class Renderer2D {
     offsetX?: number;
     offsetY?: number;
     size?: number; // Optional custom size
+    minimapBgColor?: string;
+    zones?: TrackZone[];
+    activeZones?: { kind: TrackZoneKind; intensity01: number }[];
+    statusTextLines?: string[];
   }): void {
     const ctx = this.ctx;
     ctx.save();
@@ -1334,8 +1405,30 @@ export class Renderer2D {
     const minimapY = opts.offsetY ?? 280; // Below controls panel (which is ~260px tall)
 
     // Semi-transparent background
-    ctx.fillStyle = "rgba(20, 25, 30, 0.3)";
+    ctx.fillStyle = opts.minimapBgColor ?? "rgba(20, 25, 30, 0.3)";
     ctx.fillRect(minimapX, minimapY, minimapSize, minimapSize);
+
+    // Electrical storm: replace minimap with an error display.
+    if (opts.statusTextLines && opts.statusTextLines.length > 0) {
+      ctx.fillStyle = "rgba(0, 0, 0, 0.70)";
+      ctx.fillRect(minimapX, minimapY, minimapSize, minimapSize);
+
+      ctx.save();
+      ctx.translate(minimapX + minimapSize / 2, minimapY + minimapSize / 2);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = "700 18px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+      ctx.fillStyle = "rgba(255, 80, 80, 0.95)";
+      ctx.fillText(opts.statusTextLines[0], 0, -12);
+
+      ctx.font = "700 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+      ctx.fillStyle = "rgba(245, 248, 255, 0.92)";
+      ctx.fillText(opts.statusTextLines.slice(1).join(" "), 0, 10);
+      ctx.restore();
+
+      ctx.restore();
+      return;
+    }
 
     // No Border - Cleaner look
     // ctx.strokeStyle = "rgba(180, 220, 255, 0.5)";
@@ -1368,13 +1461,28 @@ export class Renderer2D {
         case "tarmac":
           return "rgba(160, 180, 200, 0.85)";
         case "gravel":
-          return "rgba(205, 185, 150, 0.85)"; // sandy
+          return "rgba(175, 180, 190, 0.85)"; // gray-ish gravel
         case "dirt":
           return "rgba(175, 130, 95, 0.85)";
         case "ice":
           return "rgba(150, 220, 255, 0.9)";
         case "offtrack":
           return "rgba(140, 160, 120, 0.6)";
+      }
+    };
+
+    const zoneColorForKind = (kind: TrackZoneKind): string => {
+      switch (kind) {
+        case "rain":
+          return "rgba(80, 160, 255, 0.55)";
+        case "fog":
+          return "rgba(200, 220, 255, 0.45)";
+        case "eclipse":
+          return "rgba(40, 40, 50, 0.55)";
+        case "electrical":
+          return "rgba(175, 110, 255, 0.65)";
+        case "sandstorm":
+          return "rgba(230, 185, 95, 0.55)";
       }
     };
 
@@ -1422,6 +1530,34 @@ export class Renderer2D {
         ctx.moveTo(pts[i].x, pts[i].y);
         ctx.lineTo(pts[0].x, pts[0].y);
         ctx.stroke();
+      }
+
+      // Zone labels (navigator intel) - show label at zone start instead of coloring road
+      const zones: TrackZone[] | undefined = opts.zones;
+      const totalLengthM = typeof opts.track?.totalLengthM === "number" ? (opts.track.totalLengthM as number) : undefined;
+      const cum: number[] | undefined = Array.isArray(opts.track?.cumulativeLengthsM) ? (opts.track.cumulativeLengthsM as number[]) : undefined;
+      if (zones && zones.length > 0 && totalLengthM && cum && cum.length === pts.length) {
+        ctx.save();
+        const labeledZones = new Set<TrackZone>();
+        for (let i = 0; i < pts.length - 1; i++) {
+          const segStart01 = (cum[i] ?? 0) / Math.max(1e-6, totalLengthM);
+          // Find zone that starts at or near this segment
+          for (const z of zones) {
+            if (labeledZones.has(z)) continue;
+            // Label at the segment closest to zone start
+            if (Math.abs(segStart01 - z.start01) < 0.025) {
+              labeledZones.add(z);
+              const labelText = z.kind === "rain" ? "RAIN" : z.kind === "fog" ? "FOG" : z.kind === "electrical" ? "⚡" : z.kind.toUpperCase();
+              const labelColor = z.kind === "rain" ? "rgba(80, 160, 255, 0.95)" : z.kind === "fog" ? "rgba(180, 180, 190, 0.95)" : "rgba(255, 220, 80, 0.95)";
+              ctx.font = `bold ${11 / scale}px sans-serif`;
+              ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+              ctx.fillText(labelText, pts[i].x + 2 / scale, pts[i].y + 1 / scale);
+              ctx.fillStyle = labelColor;
+              ctx.fillText(labelText, pts[i].x, pts[i].y);
+            }
+          }
+        }
+        ctx.restore();
       }
     }
 
@@ -1554,6 +1690,39 @@ export class Renderer2D {
     }
 
     ctx.restore(); // Undo clip and transforms
+
+    // Zone indicators (active-at-car) for quick callouts.
+    if (opts.activeZones && opts.activeZones.length > 0) {
+      const unique: { kind: TrackZoneKind; intensity01: number }[] = [];
+      for (const z of opts.activeZones) {
+        const prev = unique.find((u) => u.kind === z.kind);
+        if (!prev) unique.push({ kind: z.kind, intensity01: z.intensity01 });
+        else prev.intensity01 = Math.max(prev.intensity01, z.intensity01);
+      }
+
+      ctx.save();
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.font = "700 11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+
+      const pad = 6;
+      const baseX = minimapX + pad;
+      let y = minimapY + pad;
+      for (const u of unique.slice(0, 4)) {
+        const swatch = zoneColorForKind(u.kind);
+        ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+        ctx.fillRect(baseX - 3, y - 2, 96, 14);
+
+        ctx.fillStyle = swatch;
+        ctx.fillRect(baseX, y + 2, 9, 9);
+
+        ctx.fillStyle = "rgba(245, 248, 255, 0.92)";
+        const label = `${u.kind.toUpperCase()} ${(u.intensity01 * 100).toFixed(0)}%`;
+        ctx.fillText(label, baseX + 13, y);
+        y += 14;
+      }
+      ctx.restore();
+    }
 
     // Draw Car Indicator (Centered, Rotating to show heading)
     ctx.save();
@@ -1696,11 +1865,12 @@ export class Renderer2D {
 
     const pixelRadius = radiusM * this.camera.pixelsPerMeter;
 
+    // Gray fog (lighter), but with reduced visibility radius.
     const gradient = ctx.createRadialGradient(sx, sy, pixelRadius * 0.2, sx, sy, pixelRadius);
-    gradient.addColorStop(0, "rgba(5, 7, 10, 0)");
-    gradient.addColorStop(0.5, "rgba(5, 7, 10, 0.6)");
-    gradient.addColorStop(0.8, "rgba(5, 7, 10, 0.9)");
-    gradient.addColorStop(1, "rgba(3, 5, 8, 1.0)");
+    gradient.addColorStop(0, "rgba(210, 215, 220, 0)");
+    gradient.addColorStop(0.5, "rgba(190, 195, 200, 0.55)");
+    gradient.addColorStop(0.8, "rgba(175, 180, 186, 0.82)");
+    gradient.addColorStop(1, "rgba(165, 170, 176, 0.94)");
 
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, w, h);
@@ -1710,7 +1880,7 @@ export class Renderer2D {
     // createRadialGradient only works within its outer circle.
 
     // A better way to ensure everything outside is filled:
-    ctx.fillStyle = "rgba(5, 7, 10, 1.0)";
+    ctx.fillStyle = "rgba(165, 170, 176, 0.94)";
     // Top
     ctx.fillRect(0, 0, w, sy - pixelRadius);
     // Bottom
@@ -1722,4 +1892,111 @@ export class Renderer2D {
 
     ctx.restore();
   }
+
+  drawRain(opts: { intensity01: number; timeSeconds: number }): void {
+    const ctx = this.ctx;
+    const intensity = clamp(opts.intensity01, 0, 1);
+    if (intensity < 0.02) return;
+
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+
+    // Falling streaks (screen space) with per-particle randomness.
+    // Deterministic per-particle, animated via time => "particle-y" look without allocations.
+    const count = Math.floor((w * h) / 55000 * (0.30 + intensity * 1.2));
+    const t = opts.timeSeconds;
+
+    const u32 = (n: number): number => (n >>> 0);
+    const hash = (n: number): number => {
+      let x = u32(n);
+      x ^= x >>> 16;
+      x = Math.imul(x, 0x7feb352d);
+      x ^= x >>> 15;
+      x = Math.imul(x, 0x846ca68b);
+      x ^= x >>> 16;
+      return u32(x);
+    };
+    const to01 = (x: number): number => (x >>> 0) / 4294967296;
+
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+    ctx.globalAlpha = 0.22 + 0.34 * intensity;
+
+    const baseSpeed = 900 + 2600 * intensity;
+    for (let i = 0; i < count; i++) {
+      const h0 = hash(i * 3 + 1);
+      const h1 = hash(i * 3 + 2);
+      const h2 = hash(i * 3 + 3);
+      const rx = to01(h0);
+      const ry = to01(h1);
+      const rv = to01(h2);
+
+      const x = rx * (w + 220) - 110;
+      const y0 = ry * (h + 260) - 130;
+      const speed = baseSpeed * (0.65 + 0.7 * rv);
+      const y = ((y0 + t * speed) % (h + 260)) - 130;
+
+      const slant = -0.25 + 0.5 * rx;
+      const len = 10 + 26 * (0.25 + 0.75 * intensity) * (0.4 + 0.6 * rv);
+      const dx = slant * len;
+      const dy = len;
+
+      ctx.lineWidth = 0.8 + 1.2 * (0.2 + 0.8 * intensity) * (0.3 + 0.7 * rv);
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + dx, y + dy);
+      ctx.stroke();
+    }
+
+    // Fine mist specks.
+    ctx.globalAlpha = 0.05 + 0.10 * intensity;
+    ctx.fillStyle = "rgba(250, 252, 255, 0.70)";
+    const speckCount = Math.floor((w * h) / 120000 * (0.15 + intensity * 0.6));
+    const mistSpeed = 320 + 820 * intensity;
+    for (let i = 0; i < speckCount; i++) {
+      const r = to01(hash(i * 2 + 77));
+      const s = to01(hash(i * 2 + 78));
+      const x = r * w;
+      const y = ((s * (h + 80) + t * mistSpeed) % (h + 80)) - 40;
+      ctx.fillRect(x, y, 1, 1);
+    }
+
+    ctx.restore();
+  }
+}
+
+function parseRgba(s: string): { r: number; g: number; b: number; a: number } | null {
+  const m = s.match(/rgba\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([0-9.]+)\s*\)/);
+  if (!m) return null;
+  return {
+    r: clampInt(Number(m[1])),
+    g: clampInt(Number(m[2])),
+    b: clampInt(Number(m[3])),
+    a: Math.max(0, Math.min(1, Number(m[4])))
+  };
+}
+
+function clampInt(v: number): number {
+  return Math.max(0, Math.min(255, Math.round(v)));
+}
+
+function hashStringToUint32(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function mulberry32Local(a: number): () => number {
+  return function () {
+    let t = (a += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }

@@ -1,5 +1,6 @@
 import { mulberry32 } from "./rng";
 import { generateCity, type City } from "./city";
+import { stageMetaFromSeed, type StageThemeKind, type StageThemeRef, type TrackZone, type TrackZoneKind } from "./stage";
 
 export type Vec2 = { x: number; y: number };
 
@@ -18,7 +19,13 @@ export type TrackDefinition = {
   startCity?: City;
   endCity?: City;
   corners?: TrackCornerInfo[]; // Planned corners for pacenotes
-  meta?: { name?: string; seed?: number; source?: "default" | "procedural" | "editor" | "point-to-point" };
+  meta?: {
+    name?: string;
+    seed?: number;
+    source?: "default" | "procedural" | "editor" | "point-to-point";
+    theme?: StageThemeRef;
+    zones?: TrackZone[];
+  };
 };
 
 export type Track = {
@@ -72,14 +79,53 @@ export function parseTrackDefinition(json: string): TrackDefinition | null {
         : undefined;
 
     const meta = v.meta && typeof v.meta === "object" ? (v.meta as any) : undefined;
-    const safeMeta =
-      meta && (meta.name || meta.seed || meta.source)
-        ? {
-            name: typeof meta.name === "string" ? meta.name : undefined,
-            seed: typeof meta.seed === "number" ? meta.seed : undefined,
-            source: meta.source === "default" || meta.source === "procedural" || meta.source === "editor" ? meta.source : undefined
-          }
+
+    const isThemeKind = (k: any): k is StageThemeKind =>
+      k === "temperate" || k === "desert" || k === "arctic";
+    const safeTheme: StageThemeRef | undefined =
+      meta?.theme && typeof meta.theme === "object" && isThemeKind((meta.theme as any).kind)
+        ? { kind: (meta.theme as any).kind as StageThemeKind }
         : undefined;
+
+    const isZoneKind = (k: any): k is TrackZoneKind =>
+      k === "rain" || k === "fog" || k === "eclipse" || k === "electrical" || k === "sandstorm";
+
+    const safeZones: TrackZone[] | undefined = Array.isArray(meta?.zones)
+      ? (meta.zones as any[])
+          .map((z) => {
+            if (!z || typeof z !== "object") return null;
+            if (!isZoneKind((z as any).kind)) return null;
+            const start01 = typeof (z as any).start01 === "number" ? (z as any).start01 : NaN;
+            const end01 = typeof (z as any).end01 === "number" ? (z as any).end01 : NaN;
+            const intensity01 = typeof (z as any).intensity01 === "number" ? (z as any).intensity01 : NaN;
+            if (!Number.isFinite(start01) || !Number.isFinite(end01) || !Number.isFinite(intensity01)) return null;
+            return {
+              kind: (z as any).kind as TrackZoneKind,
+              start01: Math.max(0, Math.min(1, start01)),
+              end01: Math.max(0, Math.min(1, end01)),
+              intensity01: Math.max(0, Math.min(1, intensity01))
+            } satisfies TrackZone;
+          })
+          .filter(Boolean) as TrackZone[]
+      : undefined;
+
+    const hasAnyMeta = !!(
+      meta &&
+      (meta.name || meta.seed || meta.source || safeTheme || (safeZones && safeZones.length > 0))
+    );
+
+    const safeMeta = hasAnyMeta
+      ? {
+          name: typeof meta?.name === "string" ? meta.name : undefined,
+          seed: typeof meta?.seed === "number" ? meta.seed : undefined,
+          source:
+            meta?.source === "default" || meta?.source === "procedural" || meta?.source === "editor" || meta?.source === "point-to-point"
+              ? meta.source
+              : undefined,
+          theme: safeTheme,
+          zones: safeZones
+        }
+      : undefined;
 
     return {
       points,
@@ -146,7 +192,7 @@ export function createDefaultTrackDefinition(): TrackDefinition {
     points,
     baseWidthM,
     segmentWidthsM,
-    meta: { name: "Default", source: "default" }
+    meta: { name: "Default", source: "default", theme: { kind: "temperate" }, zones: [] }
   };
 }
 
@@ -164,6 +210,8 @@ export type ProceduralTrackOptions = {
 
 export function createProceduralTrackDefinition(seed: number, opts?: ProceduralTrackOptions): TrackDefinition {
   const rand = mulberry32(Math.floor(seed) || 1);
+
+  const stageMeta = stageMetaFromSeed(seed);
 
   const controlCount = Math.max(8, Math.floor(opts?.controlPoints ?? 18));
   const baseRadiusM = Math.max(20, opts?.baseRadiusM ?? 60);
@@ -215,7 +263,7 @@ export function createProceduralTrackDefinition(seed: number, opts?: ProceduralT
     points,
     baseWidthM,
     segmentWidthsM,
-    meta: { name: `Procedural ${seed}`, seed, source: "procedural" }
+    meta: { name: `Procedural ${seed}`, seed, source: "procedural", theme: stageMeta.theme, zones: stageMeta.zones }
   };
 }
 
@@ -362,6 +410,8 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
 
 function tryCreatePointToPointTrackDefinition(seed: number): TrackDefinition {
   const rand = mulberry32(Math.floor(seed) || 1);
+
+  const stageMeta = stageMetaFromSeed(seed);
   
   // Track layout:
   // 0-50m: Starting city
@@ -707,7 +757,7 @@ function tryCreatePointToPointTrackDefinition(seed: number): TrackDefinition {
       startCity,
       endCity,
       corners: cornerInfos,
-      meta: { name: `Route ${seed}`, seed, source: "point-to-point" }
+      meta: { name: `Route ${seed}`, seed, source: "point-to-point", theme: stageMeta.theme, zones: stageMeta.zones }
     };
   }
   
@@ -774,7 +824,7 @@ function tryCreatePointToPointTrackDefinition(seed: number): TrackDefinition {
     startCity,
     endCity,
     corners: cornerInfos,
-    meta: { name: `Route ${seed}`, seed, source: "point-to-point" }
+    meta: { name: `Route ${seed}`, seed, source: "point-to-point", theme: stageMeta.theme, zones: stageMeta.zones }
   };
 }
 

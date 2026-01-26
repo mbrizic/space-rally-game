@@ -52,18 +52,21 @@
 ### Phase 1: The "Blind" Prototype (Tech Foundation) ✅
 - [x] **WebRTC Link (Prototype)**: P2P DataChannel + Bun signaling (no `peerjs` yet).
 - [x] **Input Decoupling**: Driver remote controls (steer/throttle/brake/handbrake) + authority rules.
-- [ ] **TURN Fallback**: Add `coturn` + credentials for hard NAT/cellular networks.
+- [x] **TURN Fallback**: Add `coturn` + credentials for hard NAT/cellular networks.
 - [x] **Reconnect / Resume**: Handle tab refresh + persistent host ownership (`host=1` + per-room `hostKey`) + auto-join.
+- [x] **WebRTC Reliability**: Buffer early ICE + allow ICE restart to reduce “refresh to connect” cases.
 - [x] **Fog Mechanic**: Heavy rendering fog for Driver (~45m visibility); clear "Satellite" view for Navigator. (Currently disabled while tuning.)
 
 ### Multiplayer Rules (current)
 - Host is the room creator only (enforced client-side via a per-room `hostKey` stored in localStorage).
-- Invite links never include `host`/`hostKey`.
+- Invite links never include `host=1`.
+- Invite links include `hostKey` so joiners can validate the session; treat it as secret.
 - Host simulation waits for the client to send a `ready` message (not just DC open).
 
 ### Infra Notes (Where things stand)
 - Signaling endpoints: client resolves to `/api/ws` by default (no forced localhost); dev server proxies `/api`.
 - Prod deploy: `deploy-server.sh` assumes Bun at `~/.bun/bin/bun` and PM2 installed in the configured Node/NVM path on the host.
+- TURN deploy: `DEPLOY_ENABLE_TURN=1 ./deploy-server.sh prod` uploads `turn/` and runs coturn via docker compose.
 
 ### Phase 2: Navigation & Information Warfare
 - [ ] **Navigator HUD**:
@@ -83,9 +86,6 @@
 - Client is “render-only” (does not simulate), so the experience depends on snapshot rate + smoothing.
 - Audio is not synced.
 - Particles are synced as events (not full particle state), to keep bandwidth reasonable.
-
-## Bugs
-- drift should maybe start earlier?
 
 ### Backlog (P3/P4 Ideas)
 - more tactile feedback - vibration on steering, indicating grip level?

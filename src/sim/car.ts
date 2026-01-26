@@ -99,7 +99,7 @@ export function defaultCarParams(): CarParams {
     brakeForceN: 19000,
     handbrakeForceN: 7000,
     handbrakeRearGripScale: 0.55,
-    driveBiasFront: 0.30, // 30% front, 70% rear (mostly RWD)
+    driveBiasFront: 0.35, // 35% front, 65% rear (mostly RWD)
     brakeBiasFront: 0.65,
     // Shorter relaxation => less "springy" snap, still enough transient for flicks.
     relaxationLengthFrontM: 0.7,
@@ -146,6 +146,11 @@ export function stepCar(
   environment?: { frictionMu?: number; rollingResistanceN?: number; aeroDragNPerMS2?: number }
 ): { state: CarState; telemetry: CarTelemetry } {
   const surfaceMu = environment?.frictionMu ?? params.frictionMu;
+  
+  // On low-grip surfaces, cornering stiffness drops dramatically (tires respond less to slip angle).
+  // This makes ice/rain feel "floaty" and unpredictable rather than just slow.
+  // Blend: high-grip surfaces (mu~1.2) get full stiffness; ice (mu~0.1) gets ~15% stiffness.
+  const stiffnessScale = clamp(0.1 + 0.75 * (surfaceMu / 1.2), 0.1, 1.0);
 
   const steerInput = clamp(controls.steer, -1, 1);
   const throttle = clamp(controls.throttle, -1, 1);
@@ -268,14 +273,14 @@ export function stepCar(
   const lateralForceFrontN =
     lowSpeedForceFade *
     clamp(
-      -params.corneringStiffnessFrontNPerRad * alphaFrontRad,
+      -params.corneringStiffnessFrontNPerRad * stiffnessScale * alphaFrontRad,
       -lateralCapFrontN,
       lateralCapFrontN
     );
   const lateralForceRearN =
     lowSpeedForceFade *
     clamp(
-      -params.corneringStiffnessRearNPerRad * rearGripScale * alphaRearRad,
+      -params.corneringStiffnessRearNPerRad * stiffnessScale * rearGripScale * alphaRearRad,
       -lateralCapRearN,
       lateralCapRearN
     );
@@ -301,8 +306,10 @@ export function stepCar(
 
   // Approximate pneumatic trail / aligning torque: damps yaw-rate at speed without directly
   // killing lateral velocity. This reduces post-handbrake wobble while keeping motion physical-ish.
+  // IMPORTANT: Scale with grip so ice/rain let the car keep spinning once it starts.
   const alignScale = clamp(speedMS / Math.max(0.5, params.aligningYawDampingSpeedMS), 0, 1);
-  const mzAlign = -state.yawRateRadS * Math.max(0, params.aligningYawDampingNmPerRadS) * alignScale;
+  const alignGripScale = clamp(0.05 + 0.95 * (surfaceMu / 1.2), 0.05, 1.0);
+  const mzAlign = -state.yawRateRadS * Math.max(0, params.aligningYawDampingNmPerRadS) * alignScale * alignGripScale;
   dr += mzAlign / iz;
 
   let nextVx = state.vxMS + dvx * dtSeconds;
@@ -312,8 +319,11 @@ export function stepCar(
 
   // Low-speed stability only. (Any high-speed "assist" should be optional and explicit.)
   const lowSpeedStability = clamp(1 - speedMS / 3, 0, 1);
-  const yawDampingPerS = Math.max(0, params.yawDampingPerS) * lowSpeedStability;
-  const lateralDampingPerS = Math.max(0, params.lateralDampingPerS) * lowSpeedStability;
+  // On low-grip surfaces, drastically reduce damping so the car keeps sliding once it breaks loose.
+  // This makes ice/rain feel chaotic and unpredictable - you MUST slow down.
+  const gripDampingScale = clamp(0.05 + 0.95 * (surfaceMu / 1.2), 0.05, 1.0);
+  const yawDampingPerS = Math.max(0, params.yawDampingPerS) * lowSpeedStability * gripDampingScale;
+  const lateralDampingPerS = Math.max(0, params.lateralDampingPerS) * lowSpeedStability * gripDampingScale;
   const dampYaw = Math.exp(-yawDampingPerS * dtSeconds);
   const dampLat = Math.exp(-lateralDampingPerS * dtSeconds);
   const nextVyDamped = nextVy * dampLat;

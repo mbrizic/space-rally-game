@@ -75,4 +75,13 @@ describe("surface types", () => {
     expect(end.name).toBeDefined();
     expect(overEnd.name).toBeDefined();
   });
+
+  it("desert theme never produces ice", () => {
+    const totalLength = 1400;
+    const trackSeed = 424242;
+    for (let s = 0; s < totalLength; s += 7) {
+      const surface = surfaceForTrackSM(totalLength, s, false, trackSeed, "desert");
+      expect(surface.name).not.toBe("ice");
+    }
+  });
 });

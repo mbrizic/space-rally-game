@@ -18,7 +18,7 @@
 - 🛠️ **Track editor** - Create custom stages (press `T`)
 
 
-## The "Blind Rally" Co-Op Mode (Under Construction)
+## The "Blind Rally" Co-Op Mode
 
 This will be a **2-player mobile app experience**. Two players, two phones, one car.
 
@@ -30,14 +30,20 @@ It's a high-stakes asymmetric cooperative race designed for local play:
 
 Ideally played in the same room for maximum shouting and adrenaline.
 
-### Multiplayer (current prototype)
+### Multiplayer (current)
 
 - Click **MULTIPLAYER** to create a room (you become the host/driver).
 - The game copies an invite link to your clipboard; send it to Player 2.
 - Player 2 opens the link and joins immediately (no start menu).
 - The host simulation **waits** until Player 2 is connected and "ready".
 
-Host links include a private `hostKey` and should not be shared; use the in-game **DISCONNECT** button to return to singleplayer.
+Invite links include a private `hostKey` (used to prevent host spoofing) and should be treated as secret. Use the in-game **DISCONNECT** button to return to singleplayer.
+
+Notes:
+- The connection is **P2P WebRTC** when possible.
+- For strict NAT/corporate/cellular networks, the game supports **TURN (coturn)** relay as a fallback.
+
+See `MULTIPLAYER.md` for the full architecture + deployment notes.
 
 ## Stage Seeds (How Tracks Work)
 

@@ -11,9 +11,7 @@
     "deploy": "./deploy.sh test",
     "deploy:test": "./deploy.sh test",
     "deploy:prod": "./deploy.sh prod",
-    "deploy-server": "./deploy-server.sh test",
-    "deploy-server:test": "./deploy-server.sh test",
-    "deploy-server:prod": "./deploy-server.sh prod"
+    "deploy-server": "./deploy-server.sh prod"
   },
   "devDependencies": {
     "typescript": "^5.4.5",

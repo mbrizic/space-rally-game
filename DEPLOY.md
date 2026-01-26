@@ -106,11 +106,61 @@ Authentication / Signaling server is a Bun app.
 ./deploy-server.sh prod
 ```
 
+See `MULTIPLAYER.md` for the full multiplayer + TURN setup.
+
 ### Prerequisites on Server
 
 1. **Bun** installed (`curl -fsSL https://bun.sh/install | bash`)
 2. **PM2** installed (`npm install -g pm2`) for process management
 3. **Nginx** reverse proxy setup (optional but recommended for SSL)
+
+### TURN (coturn) Relay (Optional, Recommended)
+
+TURN is only used when peers cannot establish a direct P2P connection.
+
+#### What you need
+
+- Signaling server env vars:
+    - `TURN_URLS` (comma-separated)
+    - `TURN_SHARED_SECRET` (must match coturn’s `static-auth-secret`)
+- Coturn running on the server (Docker) using the config in `turn/`.
+
+Recommended: put TURN exports in `~/.profile` (same user that runs pm2/docker) so non-interactive deploys can read them.
+
+Example:
+
+```bash
+echo "export TURN_SHARED_SECRET='...long random...'" >> ~/.profile
+echo "export TURN_URLS='turn:spacerally.supercollider.hr:3478?transport=udp,turn:spacerally.supercollider.hr:3478?transport=tcp'" >> ~/.profile
+source ~/.profile
+```
+
+#### Deploy with TURN enabled
+
+From your local machine:
+
+```bash
+DEPLOY_ENABLE_TURN=1 ./deploy-server.sh prod
+```
+
+If Docker permissions are a problem, ensure the deploy user is in the `docker` group (then re-login):
+
+```bash
+sudo usermod -aG docker mbrizic
+# logout/login or reconnect SSH
+```
+
+#### Firewall
+
+Open these ports on the server (and in your cloud/provider firewall if applicable):
+
+- `3478/udp`
+- `3478/tcp`
+- relay UDP range (see `turn/turnserver.conf`), e.g.:
+
+```bash
+sudo ufw allow 49160:49260/udp
+```
 
 ### Nginx Config for WebSocket (WSS)
 

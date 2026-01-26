@@ -4,15 +4,49 @@ export type Surface = {
   rollingResistanceN: number;
 };
 
+export type StageThemeKind = "temperate" | "desert" | "arctic";
+
 // Simple pseudo-random function for surface generation
 function surfaceRand(seed: number): number {
   const x = Math.sin(seed) * 10000;
   return x - Math.floor(x);
 }
 
-export function surfaceForTrackSM(totalLengthM: number, sM: number, offTrack: boolean, trackSeed?: number): Surface {
+function offtrackSurfaceForTheme(themeKind?: StageThemeKind): Surface {
+  switch (themeKind) {
+    case "desert":
+      return { name: "offtrack", frictionMu: 0.62, rollingResistanceN: 320 };
+    case "arctic":
+      return { name: "offtrack", frictionMu: 0.35, rollingResistanceN: 280 };
+    case "temperate":
+    default:
+      return { name: "offtrack", frictionMu: 0.55, rollingResistanceN: 300 };
+  }
+}
+
+function surfaceWeightsForTheme(themeKind?: StageThemeKind): { tarmac: number; gravel: number; dirt: number; ice: number } {
+  switch (themeKind) {
+    case "desert":
+      return { tarmac: 0.36, gravel: 0.40, dirt: 0.24, ice: 0.0 };
+    case "arctic":
+      return { tarmac: 0.26, gravel: 0.22, dirt: 0.18, ice: 0.34 };
+    case "temperate":
+    default:
+      // Temperate should feel less "sandy" overall.
+      // Note: dirt is currently treated as gravel (see below), so keep dirt weight low.
+      return { tarmac: 0.50, gravel: 0.18, dirt: 0.07, ice: 0.25 };
+  }
+}
+
+export function surfaceForTrackSM(
+  totalLengthM: number,
+  sM: number,
+  offTrack: boolean,
+  trackSeed?: number,
+  themeKind?: StageThemeKind
+): Surface {
   if (offTrack) {
-    return { name: "offtrack", frictionMu: 0.55, rollingResistanceN: 950 };
+    return offtrackSurfaceForTheme(themeKind);
   }
 
   const t = (sM % totalLengthM) / totalLengthM;
@@ -29,23 +63,27 @@ export function surfaceForTrackSM(totalLengthM: number, sM: number, offTrack: bo
   // Randomly pick surface type for this segment based on seed + segment index
   const surfaceRandom = surfaceRand(seed * 2.3 + segmentIdx * 7.1);
   
-  // Weight the probabilities: more tarmac and gravel, less ice
+  const w = surfaceWeightsForTheme(themeKind);
+  const totalW = Math.max(1e-6, w.tarmac + w.gravel + w.dirt + w.ice);
+  const tW = w.tarmac / totalW;
+  const gW = w.gravel / totalW;
+  const dW = w.dirt / totalW;
+  const iW = w.ice / totalW;
+
   let surfaceName: "tarmac" | "gravel" | "dirt" | "ice";
-  if (surfaceRandom < 0.35) {
+  if (surfaceRandom < tW) {
     surfaceName = "tarmac";
-  } else if (surfaceRandom < 0.65) {
+  } else if (surfaceRandom < tW + gW) {
     surfaceName = "gravel";
-  } else if (surfaceRandom < 0.85) {
+  } else if (surfaceRandom < tW + gW + dW) {
     surfaceName = "dirt";
   } else {
-    // Ice patches are shorter: if we're in an ice segment, further subdivide it
-    // and only make it ice for the first half of the subdivision
-    const iceSubRandom = surfaceRand(seed * 3.7 + segmentIdx * 11.3);
-    if (iceSubRandom < 0.5) {
-      surfaceName = "ice";
-    } else {
-      // Fallback to tarmac if the ice patch is "skipped" for brevity
+    // Ice patches are shorter: if we're in an ice segment, further subdivide it.
+    if (iW <= 1e-6) {
       surfaceName = "tarmac";
+    } else {
+      const iceSubRandom = surfaceRand(seed * 3.7 + segmentIdx * 11.3);
+      surfaceName = iceSubRandom < 0.5 ? "ice" : "tarmac";
     }
   }
   
@@ -56,9 +94,11 @@ export function surfaceForTrackSM(totalLengthM: number, sM: number, offTrack: bo
     case "gravel":
       return { name: "gravel", frictionMu: 0.88 + surfaceRand(seed + segmentIdx) * 0.06, rollingResistanceN: 420 + surfaceRand(seed * 1.7 + segmentIdx) * 40 };
     case "dirt":
-      return { name: "dirt", frictionMu: 0.78 + surfaceRand(seed + segmentIdx) * 0.08, rollingResistanceN: 500 + surfaceRand(seed * 1.9 + segmentIdx) * 40 };
+      // Treat dirt as gravel (visual + feel). This keeps surface predictability while
+      // avoiding a separate "dirt" identity.
+      return { name: "gravel", frictionMu: 0.88 + surfaceRand(seed + segmentIdx) * 0.06, rollingResistanceN: 420 + surfaceRand(seed * 1.7 + segmentIdx) * 40 };
     case "ice":
-      // Slipperier ice: lower mu and slightly lower rolling resistance.
-      return { name: "ice", frictionMu: 0.22 + surfaceRand(seed + segmentIdx) * 0.06, rollingResistanceN: 120 + surfaceRand(seed * 2.1 + segmentIdx) * 20 };
+      // Ice: good acceleration to allow chaos, but stiffness/damping scaling makes it slidey.
+      return { name: "ice", frictionMu: 0.55 + surfaceRand(seed + segmentIdx) * 0.10, rollingResistanceN: 80 + surfaceRand(seed * 2.1 + segmentIdx) * 20 };
   }
 }

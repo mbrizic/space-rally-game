@@ -26,6 +26,10 @@ Env vars:
 HTTP:
 - `GET /health` → `ok`
 
+Optional (TURN support):
+- `GET /api/turn?peer=<PEER_ID>` → `{ ok: true, iceServers: [...] }`
+  - Enabled only when env vars are set (see below)
+
 WebSocket:
 - `GET /ws?room=<ROOM>&peer=<PEER_ID>`
 
@@ -37,6 +41,8 @@ Common message shapes:
 - `{"type":"ice","to":"peerB","candidate":{...}}`
 - `{"type":"ping","t":123}`
 
+The server does not interpret most message types beyond basic routing. This means client-side control messages (e.g. `restart-ice`) can be added without changing the server, as long as they include `to`.
+
 Server adds:
 - `from` (sender peer id)
 - `room` (room code)
@@ -44,6 +50,17 @@ Server adds:
 Server events:
 - `{"type":"peer-joined","peer":"peerX"}`
 - `{"type":"peer-left","peer":"peerX"}`
+
+## TURN (coturn) integration
+
+Some peers cannot connect P2P due to strict NAT/corporate/cellular constraints.
+
+This server can mint **ephemeral TURN credentials** (TURN REST API pattern) for a coturn instance configured with `static-auth-secret`.
+
+Env vars:
+- `TURN_URLS` (comma-separated), e.g.
+  - `turn:spacerally.supercollider.hr:3478?transport=udp,turn:spacerally.supercollider.hr:3478?transport=tcp`
+- `TURN_SHARED_SECRET` (must match coturn’s `static-auth-secret`)
 
 ## Nginx (/api proxy)
 
