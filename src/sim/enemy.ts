@@ -27,7 +27,13 @@ let nextEnemyId = 1;
 /**
  * Create a new enemy
  */
-export function createEnemy(x: number, y: number, trackSegmentHint: number, type: EnemyType = EnemyType.ZOMBIE): Enemy {
+export function createEnemy(
+  x: number,
+  y: number,
+  trackSegmentHint: number,
+  type: EnemyType = EnemyType.ZOMBIE,
+  opts?: { wanderAngle?: number }
+): Enemy {
   const isTank = type === EnemyType.TANK;
   const health = isTank ? 5 : 1;
   const radius = isTank ? 0.9 : 0.6;
@@ -42,7 +48,7 @@ export function createEnemy(x: number, y: number, trackSegmentHint: number, type
     health,
     maxHealth: health,
     radius,
-    wanderAngle: Math.random() * Math.PI * 2,
+    wanderAngle: typeof opts?.wanderAngle === "number" ? opts.wanderAngle : Math.random() * Math.PI * 2,
     timeAlive: 0,
     trackSegmentHint
   };
@@ -181,7 +187,7 @@ export function generateEnemies(track: Track, opts?: { seed?: number; count?: nu
 
     if (!tooClose) {
       const enemyType = rand() < 0.2 ? EnemyType.TANK : EnemyType.ZOMBIE;
-      enemies.push(createEnemy(x, y, nextEnemyAt, enemyType));
+      enemies.push(createEnemy(x, y, nextEnemyAt, enemyType, { wanderAngle: rand() * Math.PI * 2 }));
     }
 
     // Schedule next enemy

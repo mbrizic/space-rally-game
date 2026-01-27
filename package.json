@@ -8,12 +8,14 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "deploy": "./deploy.sh test",
     "deploy:test": "./deploy.sh test",
     "deploy:prod": "./deploy.sh prod",
     "deploy-server": "./deploy-server.sh prod"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "^2.1.9",
     "typescript": "^5.4.5",
     "vite": "^5.4.11",
     "vitest": "^2.1.8"

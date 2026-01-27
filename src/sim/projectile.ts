@@ -36,8 +36,10 @@ export function createProjectile(
   const distance = Math.hypot(dx, dy);
 
   // Normalize and apply speed
-  const vx = (dx / distance) * speed;
-  const vy = (dy / distance) * speed;
+  // Guard against a zero-length aim vector (can happen if aim snaps onto muzzle).
+  const safeDistance = distance > 1e-9 ? distance : 1;
+  const vx = (dx / safeDistance) * speed;
+  const vy = (dy / safeDistance) * speed;
 
   return {
     id: nextProjectileId++,
