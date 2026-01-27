@@ -14,7 +14,7 @@ import {
 } from "../sim/track";
 import { surfaceForTrackSM, type Surface } from "../sim/surface";
 import { resolveStageTheme, stageMetaFromSeed, zonesAtSM, type StageThemeKind, type TrackZone, type TrackZoneKind } from "../sim/stage";
-import { generateTrees, generateWaterBodies, type CircleObstacle, type WaterBody } from "../sim/props";
+import { generateDebris, generateTrees, generateWaterBodies, pointToSegmentDistance, type CircleObstacle, type DebrisObstacle, type WaterBody } from "../sim/props";
 import { DriftDetector, DriftState, type DriftInfo } from "../sim/drift";
 import { createEngineState, defaultEngineParams, stepEngine, rpmFraction, shiftUp, shiftDown, type EngineState } from "../sim/engine";
 import { ParticlePool, getParticleConfig } from "./particles";
@@ -25,7 +25,7 @@ import { EffectsAudio } from "../audio/audio-effects";
 import { RainAudio } from "../audio/audio-rain";
 import type { TuningPanel } from "./tuning";
 import { ProjectilePool } from "../sim/projectile";
-import { EnemyPool, generateEnemies } from "../sim/enemy";
+import { EnemyPool, EnemyType, generateEnemies } from "../sim/enemy";
 import { createWeaponState, WeaponState, WeaponType } from "../sim/weapons";
 
 function isTouchMode(): boolean {
@@ -61,16 +61,18 @@ export class Game {
   private shootHeld = false;
   private netMode: "solo" | "host" | "client" = "solo";
   private netWaitForPeer = false;
-  private netRemoteEnemies: { id: number; x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank"; health?: number; maxHealth?: number }[] | null = null;
+  private netRemoteEnemies: { id: number; x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank" | "colossus"; health?: number; maxHealth?: number }[] | null = null;
   private netRemoteProjectiles: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age?: number; maxAge?: number }[] | null = null;
+  private netRemoteEnemyProjectiles: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age?: number; maxAge?: number }[] | null = null;
   private netRemoteNavigator: { aimX: number; aimY: number; shootHeld: boolean; shootPulse: boolean; weaponIndex: number } | null = null;
   private netRemoteDriver: InputState | null = null;
   private netStatusLines: string[] = [];
   // Damage events from client navigator to host (client-authoritative shooting)
-  private netClientDamageEvents: { enemyId: number; damage: number; killed: boolean; x: number; y: number; isTank: boolean }[] = [];
+  private netClientDamageEvents: { enemyId: number; damage: number; killed: boolean; x: number; y: number; isTank: boolean; enemyType?: "zombie" | "tank" | "colossus"; radiusM?: number }[] = [];
+  private netDebrisDestroyedIds: number[] = [];
   private netParticleEvents: (
     | { type: "emit"; opts: { x: number; y: number; vx: number; vy: number; lifetime: number; sizeM: number; color: string; count?: number } }
-    | { type: "enemyDeath"; x: number; y: number; isTank: boolean }
+    | { type: "enemyDeath"; x: number; y: number; isTank: boolean; radiusM?: number }
   )[] = [];
   // Audio events to sync between host and client
   private netAudioEvents: { effect: "gunshot" | "explosion" | "impact" | "checkpoint"; volume: number; pitch: number }[] = [];
@@ -93,6 +95,7 @@ export class Game {
   private trackSegmentSurfaceNames: ("tarmac" | "gravel" | "dirt" | "ice" | "offtrack")[] = [];
   private trees: CircleObstacle[] = [];
   private waterBodies: WaterBody[] = [];
+  private debris: DebrisObstacle[] = [];
   private checkpointSM: number[] = [];
   private nextCheckpointIndex = 0;
   private insideActiveGate = false;
@@ -142,6 +145,7 @@ export class Game {
   // Continuous audio state for network sync
   private continuousAudioState = { engineRpm: 0, engineThrottle: 0, slideIntensity: 0, surfaceName: "tarmac" as string };
   private running = false;
+  private controlsLocked = false;
   private proceduralSeed = 20260124;
   private totalDistanceM = 0; // Total distance driven across all sessions
   private lastSaveTime = 0; // For periodic localStorage saves
@@ -154,6 +158,15 @@ export class Game {
   private weapons: WeaponState[] = [];
   private currentWeaponIndex = 0;
   private enemyKillCount = 0; // Track kills for scoring
+
+  private colossusFirePhase = 0;
+
+  private enemyProjectiles: { x: number; y: number; vx: number; vy: number; age: number; maxAge: number }[] = [];
+  private colossusShotCooldownS = 0;
+  private colossusShotPhase = 0;
+
+  private lastDebrisWarnId: number | null = null;
+  private lastDebrisWarnAtSeconds = -999;
 
   // Simple frame timing breakdown (shown in debug menu).
   // Raw instantaneous values for internal tracking.
@@ -385,6 +398,7 @@ export class Game {
     if (mode !== "client") {
       this.netRemoteEnemies = null;
       this.netRemoteProjectiles = null;
+      this.netRemoteEnemyProjectiles = null;
       this.netClientTargetCar = null;
       this.netClientLastRenderMs = 0;
     }
@@ -403,7 +417,7 @@ export class Game {
     // No longer used - client handles shooting locally
   }
 
-  public getAndClearClientDamageEvents(): { enemyId: number; damage: number; killed: boolean; x: number; y: number; isTank: boolean }[] {
+  public getAndClearClientDamageEvents(): { enemyId: number; damage: number; killed: boolean; x: number; y: number; isTank: boolean; enemyType?: "zombie" | "tank" | "colossus"; radiusM?: number }[] {
     return this.netClientDamageEvents.splice(0, this.netClientDamageEvents.length);
   }
 
@@ -418,15 +432,18 @@ export class Game {
     this.netRemoteProjectiles = projectiles;
   }
 
-  public applyRemoteDamageEvents(events: { enemyId: number; damage: number; killed: boolean; x: number; y: number; isTank: boolean }[]): void {
+  public applyRemoteDamageEvents(events: { enemyId: number; damage: number; killed: boolean; x: number; y: number; isTank: boolean; enemyType?: "zombie" | "tank" | "colossus"; radiusM?: number }[]): void {
     for (const ev of events) {
       if (ev.killed) {
         // Kill the enemy and create death particles
+        const enemy = this.enemyPool.getAll().find((e) => e.id === ev.enemyId) ?? null;
+        const isTank = enemy?.type === EnemyType.TANK ? true : ev.isTank;
+        const radiusM = enemy?.radius ?? ev.radiusM ?? (isTank ? 0.9 : 0.6);
         this.enemyPool.damage(ev.enemyId, 999); // Ensure death
         this.enemyKillCount++;
-        this.createEnemyDeathParticles(ev.x, ev.y, ev.isTank);
+        this.createEnemyDeathParticles(ev.x, ev.y, isTank, radiusM);
         // Queue particle event for syncing back to client (client already sees it locally, but keeps host in sync)
-        this.netParticleEvents.push({ type: "enemyDeath", x: ev.x, y: ev.y, isTank: ev.isTank });
+        this.netParticleEvents.push({ type: "enemyDeath", x: ev.x, y: ev.y, isTank, radiusM });
       } else {
         // Just damage
         this.enemyPool.damage(ev.enemyId, ev.damage);
@@ -458,12 +475,14 @@ export class Game {
   public applyNetSnapshot(snapshot: {
     t: number;
     car: { xM: number; yM: number; headingRad: number; vxMS: number; vyMS: number; yawRateRadS: number; steerAngleRad: number; alphaFrontRad: number; alphaRearRad: number };
-    enemies?: { id: number; x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank"; health?: number; maxHealth?: number }[];
+    enemies?: { id: number; x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank" | "colossus"; health?: number; maxHealth?: number }[];
     projectiles?: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age?: number; maxAge?: number }[];
+    enemyProjectiles?: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age?: number; maxAge?: number }[];
     particleEvents?: (
       | { type: "emit"; opts: { x: number; y: number; vx: number; vy: number; lifetime: number; sizeM: number; color: string; count?: number } }
-      | { type: "enemyDeath"; x: number; y: number; isTank: boolean }
+      | { type: "enemyDeath"; x: number; y: number; isTank: boolean; radiusM?: number }
     )[];
+    debrisDestroyed?: number[];
     audioEvents?: { effect: "gunshot" | "explosion" | "impact" | "checkpoint"; volume: number; pitch: number }[];
     continuousAudio?: { engineRpm: number; engineThrottle: number; slideIntensity: number; surfaceName: string };
     raceActive?: boolean;
@@ -491,6 +510,14 @@ export class Game {
 
     if (snapshot.enemies) this.netRemoteEnemies = snapshot.enemies.map((e) => ({ ...e }));
     if (snapshot.projectiles) this.netRemoteProjectiles = snapshot.projectiles.map((p) => ({ ...p }));
+    if (snapshot.enemyProjectiles) this.netRemoteEnemyProjectiles = snapshot.enemyProjectiles.map((p) => ({ ...p }));
+    if (snapshot.debrisDestroyed && snapshot.debrisDestroyed.length) {
+      const destroyed = new Set(snapshot.debrisDestroyed);
+      this.debris = this.debris.filter((d) => !destroyed.has(d.id));
+      if (this.lastDebrisWarnId !== null && destroyed.has(this.lastDebrisWarnId)) {
+        this.lastDebrisWarnId = null;
+      }
+    }
     if (snapshot.particleEvents) {
       for (const ev of snapshot.particleEvents) {
         if (!ev) continue;
@@ -507,7 +534,7 @@ export class Game {
             count: o.count
           });
         } else if (ev.type === "enemyDeath") {
-          this.createEnemyDeathParticles(ev.x, ev.y, ev.isTank);
+          this.createEnemyDeathParticles(ev.x, ev.y, ev.isTank, ev.radiusM);
         }
       }
     }
@@ -528,7 +555,10 @@ export class Game {
     }
     if (typeof snapshot.raceActive === "boolean") this.raceActive = snapshot.raceActive;
     if (typeof snapshot.raceStartTimeSeconds === "number") this.raceStartTimeSeconds = snapshot.raceStartTimeSeconds;
-    if (typeof snapshot.raceFinished === "boolean") this.raceFinished = snapshot.raceFinished;
+    if (typeof snapshot.raceFinished === "boolean") {
+      this.raceFinished = snapshot.raceFinished;
+      if (this.raceFinished) this.controlsLocked = true;
+    }
     if (snapshot.finishTimeSeconds !== undefined) this.finishTimeSeconds = snapshot.finishTimeSeconds;
     if (typeof snapshot.damage01 === "number") {
       this.damage01 = clamp(snapshot.damage01, 0, 1);
@@ -602,7 +632,8 @@ export class Game {
   }
 
   public getInputStateExternal(): InputState {
-    return this.lastInputState;
+    if (!this.controlsLocked) return this.lastInputState;
+    return { steer: 0, throttle: 0, brake: 0, handbrake: 0, shoot: false, fromKeyboard: false };
   }
 
   private setRole(role: PlayerRole, force = false): void {
@@ -965,12 +996,14 @@ export class Game {
   public getNetSnapshot(): {
     t: number;
     car: { xM: number; yM: number; headingRad: number; vxMS: number; vyMS: number; yawRateRadS: number; steerAngleRad: number; alphaFrontRad: number; alphaRearRad: number };
-    enemies: { id: number; x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank"; health?: number; maxHealth?: number }[];
+    enemies: { id: number; x: number; y: number; radius: number; vx: number; vy: number; type?: string; health?: number; maxHealth?: number }[];
     projectiles: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age: number; maxAge: number }[];
+    enemyProjectiles: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age: number; maxAge: number }[];
     particleEvents: (
       | { type: "emit"; opts: { x: number; y: number; vx: number; vy: number; lifetime: number; sizeM: number; color: string; count?: number } }
-      | { type: "enemyDeath"; x: number; y: number; isTank: boolean }
+      | { type: "enemyDeath"; x: number; y: number; isTank: boolean; radiusM?: number }
     )[];
+    debrisDestroyed: number[];
     audioEvents: { effect: "gunshot" | "explosion" | "impact" | "checkpoint"; volume: number; pitch: number }[];
     continuousAudio: { engineRpm: number; engineThrottle: number; slideIntensity: number; surfaceName: string };
     raceActive: boolean;
@@ -1008,7 +1041,18 @@ export class Game {
         age: p.age,
         maxAge: p.maxAge
       })),
+      enemyProjectiles: this.enemyProjectiles.map((p) => ({
+        x: p.x,
+        y: p.y,
+        vx: p.vx,
+        vy: p.vy,
+        color: "rgba(255, 120, 40, 0.95)",
+        size: 0.34,
+        age: p.age,
+        maxAge: p.maxAge
+      })),
       particleEvents: this.netParticleEvents.splice(0, this.netParticleEvents.length),
+      debrisDestroyed: this.netDebrisDestroyedIds.splice(0, this.netDebrisDestroyedIds.length),
       audioEvents: this.netAudioEvents.splice(0, this.netAudioEvents.length),
       continuousAudio: { ...this.continuousAudioState },
       raceActive: this.raceActive,
@@ -1283,7 +1327,7 @@ export class Game {
     ];
 
     const treeSeed = Math.floor(def.meta?.seed ?? 20260123);
-    this.trees = generateTrees(this.track, { seed: treeSeed });
+    this.trees = generateTrees(this.track, { seed: treeSeed, themeKind: themeRef.kind });
     this.waterBodies = generateWaterBodies(this.track, { seed: treeSeed + 777 });
     const enemies = generateEnemies(this.track, { seed: treeSeed + 1337 });
     this.enemyPool.setEnemies(enemies);
@@ -1352,6 +1396,12 @@ export class Game {
     // Always update inputs so net-clients can send them.
     this.lastInputState = this.input.getState();
 
+    // After finish (or other hard locks), ignore controls entirely.
+    if (this.controlsLocked) {
+      this.lastInputState = { steer: 0, throttle: 0, brake: 0, handbrake: 0, shoot: false, fromKeyboard: false };
+      this.shootHeld = false;
+    }
+
     // Client navigator handles their own projectiles (client-authoritative shooting)
     if (this.netMode === "client") {
       this.stepClientProjectiles(dtSeconds);
@@ -1366,7 +1416,7 @@ export class Game {
 
     this.applyTuning();
 
-    const inputsEnabled = this.damage01 < 1;
+    const inputsEnabled = this.damage01 < 1 && !this.controlsLocked;
     const rawInput = this.lastInputState;
 
     // Split input by role - although keyboard allows both for solo testing, 
@@ -1578,6 +1628,9 @@ export class Game {
     this.particlePool.update(dtSeconds);
     this.projectilePool.update(dtSeconds);
     this.enemyPool.update(dtSeconds, this.track);
+    this.emitColossusFire(dtSeconds);
+    this.shootColossusFireballs(dtSeconds);
+    this.updateEnemyProjectiles(dtSeconds);
     this.checkProjectileCollisions();
 
     // Decay camera shake
@@ -1605,7 +1658,11 @@ export class Game {
     const projectionFinal = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
     this.updateCheckpointsAndRace(projectionFinal);
 
+    this.updateDebrisWarnings(projectionFinal);
+
     this.resolveTreeCollisions();
+    this.updateDebris(dtSeconds);
+    this.resolveDebrisCollisions();
     this.resolveBuildingCollisions();
     this.resolveEnemyCollisions();
     this.checkWaterHazards(dtSeconds);
@@ -1651,6 +1708,16 @@ export class Game {
           if (typeof p.age === "number") p.age += dt;
         }
         this.netRemoteProjectiles = this.netRemoteProjectiles.filter((p) =>
+          typeof p.age === "number" && typeof p.maxAge === "number" ? p.age < p.maxAge : true
+        );
+      }
+      if (this.netRemoteEnemyProjectiles) {
+        for (const p of this.netRemoteEnemyProjectiles) {
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          if (typeof p.age === "number") p.age += dt;
+        }
+        this.netRemoteEnemyProjectiles = this.netRemoteEnemyProjectiles.filter((p) =>
           typeof p.age === "number" && typeof p.maxAge === "number" ? p.age < p.maxAge : true
         );
       }
@@ -1816,6 +1883,7 @@ export class Game {
     }
     this.renderer.drawWater(this.waterBodies);
     this.renderer.drawTrees(this.trees);
+    this.renderer.drawDebris(this.debris);
     const enemiesToDraw = this.netMode === "client" && this.netRemoteEnemies ? this.netRemoteEnemies : this.enemyPool.getActive();
     this.renderer.drawEnemies(enemiesToDraw);
     this.renderer.drawParticles(this.particlePool.getActiveParticles());
@@ -1828,16 +1896,31 @@ export class Game {
       headingRad: start.headingRad,
       widthM: startProj.widthM
     });
+
+    // Draw finish line (always visible)
+    const finishSM = this.checkpointSM[this.checkpointSM.length - 1];
+    const finish = pointOnTrack(this.track, finishSM);
+    const finishProj = projectToTrack(this.track, finish.p);
+    this.renderer.drawFinishLine({
+      x: finish.p.x,
+      y: finish.p.y,
+      headingRad: finish.headingRad,
+      widthM: finishProj.widthM
+    });
+
     // Draw active checkpoint if race isn't finished
     if (this.nextCheckpointIndex < this.checkpointSM.length) {
-      const activeGate = pointOnTrack(this.track, this.checkpointSM[this.nextCheckpointIndex]);
-      const activeGateProj = projectToTrack(this.track, activeGate.p);
-      this.renderer.drawCheckpointLine({
-        x: activeGate.p.x,
-        y: activeGate.p.y,
-        headingRad: activeGate.headingRad,
-        widthM: activeGateProj.widthM
-      });
+      const isFinishNext = this.nextCheckpointIndex === this.checkpointSM.length - 1;
+      if (!isFinishNext) {
+        const activeGate = pointOnTrack(this.track, this.checkpointSM[this.nextCheckpointIndex]);
+        const activeGateProj = projectToTrack(this.track, activeGate.p);
+        this.renderer.drawCheckpointLine({
+          x: activeGate.p.x,
+          y: activeGate.p.y,
+          headingRad: activeGate.headingRad,
+          widthM: activeGateProj.widthM
+        });
+      }
     }
     this.renderer.drawCar({
       x: this.state.car.xM,
@@ -1847,6 +1930,24 @@ export class Game {
       rollOffsetM: this.visualRollOffsetM,
       pitchOffsetM: this.visualPitchOffsetM
     });
+
+    // Draw enemy fireballs (circular, distinct from bullet tracers)
+    const fireballsToDraw = (this.netMode === "client" && this.netRemoteEnemyProjectiles && this.netRemoteEnemyProjectiles.length > 0)
+      ? this.netRemoteEnemyProjectiles.map((p) => ({
+        x: p.x,
+        y: p.y,
+        color: p.color || "rgba(255, 120, 40, 0.95)",
+        size: (p.size !== undefined ? p.size : 0.55)
+      }))
+      : (this.netMode !== "client" && this.enemyProjectiles.length > 0)
+        ? this.enemyProjectiles.map((p) => ({
+          x: p.x,
+          y: p.y,
+          color: "rgba(255, 120, 40, 0.95)",
+          size: 0.55
+        }))
+        : [];
+    if (fireballsToDraw.length > 0) this.renderer.drawFireballs(fireballsToDraw);
 
     // Draw projectiles (bullets)
     // Client navigator uses their own local projectiles (client-authoritative shooting)
@@ -1871,6 +1972,9 @@ export class Game {
 
     // Zone-based visibility effects (screen-space overlays). Keep these under HUD.
     const proj = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
+
+    // Client navigator doesn't run `step()`, so emit deterministic cues here too.
+    this.updateDebrisWarnings(proj);
 
     let rainIntensity = 0;
     let fogIntensity = 0;
@@ -1901,8 +2005,9 @@ export class Game {
     if (this.audioUnlocked) this.rainAudio.update(rainIntensity);
 
     if (fogIntensity > 0.05) {
-      // Larger radius for more gradual visibility falloff
-      const radius = 90 - 55 * fogIntensity;
+      // Slightly denser fog without extra perf cost: just adjust parameters.
+      const fogI = clamp(fogIntensity * 1.18, 0, 1);
+      const radius = clamp(92 - 65 * fogI, 24, 92);
       this.renderer.drawFog(this.state.car.xM, this.state.car.yM, radius);
     }
     if (sandIntensity > 0.05) {
@@ -2007,8 +2112,10 @@ export class Game {
     if (canShowMinimap) {
       // Minimap warnings (driver hinting). Keep these simple; full zone intel is for the navigator.
       const warningTextLines: string[] = [];
-      const rainLookaheadM = 220;
+      const calloutsEnabled = proj.sM >= this.checkpointSM[0];
+      const rainLookaheadM = 50;
       const narrowLookaheadM = 50;
+      const debrisLookaheadM = 50;
       const loops = this.track.points.length > 2
         ? Math.hypot(
           this.track.points[0].x - this.track.points[this.track.points.length - 1].x,
@@ -2022,45 +2129,59 @@ export class Game {
         return d;
       };
 
-      // Upcoming rain
-      const rainActive = activeZoneKinds.includes("rain");
-      if (rainActive) {
-        warningTextLines.push("RAIN");
-      } else if (this.currentStageZones.length > 0) {
-        let best = Infinity;
-        for (const z of this.currentStageZones) {
-          if (z.kind !== "rain") continue;
-          const target = z.start01 * this.track.totalLengthM;
-          const d = forwardDistM(target);
-          if (d >= 0 && d <= rainLookaheadM) best = Math.min(best, d);
-        }
-        if (Number.isFinite(best) && best <= rainLookaheadM) {
-          warningTextLines.push(`RAIN IN ${Math.round(best)}m`);
-        }
-      }
-
-      // Upcoming narrow road segments (based on per-segment width profile)
-      if (this.track.segmentWidthsM && this.track.segmentWidthsM.length > 0) {
-        const base = this.track.widthM;
-        // Only warn for VERY narrow segments (avoid spamming on mild squeezes).
-        const narrowThreshold = base * 0.64;
-        const currentW = this.track.segmentWidthsM[proj.segmentIndex] ?? base;
-        if (currentW <= narrowThreshold) {
-          warningTextLines.push("NARROW ROAD");
-        } else {
+      if (calloutsEnabled) {
+        // Upcoming rain
+        const rainActive = activeZoneKinds.includes("rain");
+        if (rainActive) {
+          warningTextLines.push("RAIN");
+        } else if (this.currentStageZones.length > 0) {
           let best = Infinity;
-          for (let i = 0; i < this.track.segmentWidthsM.length; i++) {
-            const idx = loops ? (proj.segmentIndex + i) % this.track.segmentWidthsM.length : proj.segmentIndex + i;
-            if (idx < 0 || idx >= this.track.segmentWidthsM.length) break;
-            const w = this.track.segmentWidthsM[idx] ?? base;
-            if (w >= narrowThreshold) continue;
-            const segStart = this.track.cumulativeLengthsM[idx] ?? 0;
-            const d = forwardDistM(segStart);
-            if (d > narrowLookaheadM && !loops) break;
-            if (d >= 0 && d <= narrowLookaheadM) best = Math.min(best, d);
+          for (const z of this.currentStageZones) {
+            if (z.kind !== "rain") continue;
+            const target = z.start01 * this.track.totalLengthM;
+            const d = forwardDistM(target);
+            if (d >= 0 && d <= rainLookaheadM) best = Math.min(best, d);
           }
-          if (Number.isFinite(best) && best <= narrowLookaheadM) {
-            warningTextLines.push(`NARROW IN ${Math.round(best)}m`);
+          if (Number.isFinite(best) && best <= rainLookaheadM) {
+            warningTextLines.push(`RAIN IN ${Math.round(best)}m`);
+          }
+        }
+
+        // Upcoming narrow road segments (based on per-segment width profile)
+        if (this.track.segmentWidthsM && this.track.segmentWidthsM.length > 0) {
+          const base = this.track.widthM;
+          // Only warn for VERY narrow segments (avoid spamming on mild squeezes).
+          const narrowThreshold = base * 0.64;
+          const currentW = this.track.segmentWidthsM[proj.segmentIndex] ?? base;
+          if (currentW <= narrowThreshold) {
+            warningTextLines.push("NARROW ROAD");
+          } else {
+            let best = Infinity;
+            for (let i = 0; i < this.track.segmentWidthsM.length; i++) {
+              const idx = loops ? (proj.segmentIndex + i) % this.track.segmentWidthsM.length : proj.segmentIndex + i;
+              if (idx < 0 || idx >= this.track.segmentWidthsM.length) break;
+              const w = this.track.segmentWidthsM[idx] ?? base;
+              if (w >= narrowThreshold) continue;
+              const segStart = this.track.cumulativeLengthsM[idx] ?? 0;
+              const d = forwardDistM(segStart);
+              if (d > narrowLookaheadM && !loops) break;
+              if (d >= 0 && d <= narrowLookaheadM) best = Math.min(best, d);
+            }
+            if (Number.isFinite(best) && best <= narrowLookaheadM) {
+              warningTextLines.push(`NARROW IN ${Math.round(best)}m`);
+            }
+          }
+        }
+
+        // Upcoming debris
+        if (this.debris.length > 0) {
+          let best = Infinity;
+          for (const d of this.debris) {
+            const dist = forwardDistM(d.sM);
+            if (dist >= 0 && dist <= debrisLookaheadM) best = Math.min(best, dist);
+          }
+          if (Number.isFinite(best) && best <= debrisLookaheadM) {
+            warningTextLines.push(`DEBRIS IN ${Math.round(best)}m`);
           }
         }
       }
@@ -2074,13 +2195,18 @@ export class Game {
         ? hudPadding
         : (!isTouch && this.role === PlayerRole.DRIVER ? hudPadding : (width - miniMapSize) * 0.5);
 
+      const minimapEnemies = (this.netMode === "client" && this.netRemoteEnemies)
+        ? this.netRemoteEnemies
+        : this.enemyPool.getActive();
+
       this.renderer.drawMinimap({
         track: this.track,
         carX: this.state.car.xM,
         carY: this.state.car.yM,
         carHeading: this.state.car.headingRad,
         waterBodies: this.waterBodies,
-        enemies: this.enemyPool.getActive(),
+        enemies: minimapEnemies,
+        debris: this.debris,
         segmentSurfaceNames: this.trackSegmentSurfaceNames,
         start: startMM,
         finish: finishMM,
@@ -2274,19 +2400,20 @@ export class Game {
     }
 
     // Electrical storm: occasional white flashes across the screen.
+    // Tone down: lower peak alpha and reduce the strobe aggressiveness.
     if (electricalIntensity > 0.05) {
       const t = this.state.timeSeconds;
-      // Slower main pulses, but brighter + more strobey when they hit.
-      const w = 2.0 + 2.2 * electricalIntensity;
-      const mainA = Math.pow(Math.max(0, Math.sin(t * w + 1.7)), 7);
-      const mainB = Math.pow(Math.max(0, Math.sin(t * (w * 0.63) + 0.3)), 8);
+      const elec = clamp(electricalIntensity * 0.55, 0, 1);
+
+      const w = 1.6 + 1.6 * elec;
+      const mainA = Math.pow(Math.max(0, Math.sin(t * w + 1.7)), 6);
+      const mainB = Math.pow(Math.max(0, Math.sin(t * (w * 0.70) + 0.3)), 7);
       const main = Math.max(mainA, mainB);
-      const strobe = Math.pow(Math.max(0, Math.sin(t * (22 + 34 * electricalIntensity) + 0.9)), 2);
-      const pulse = clamp(main * (0.35 + 0.85 * strobe), 0, 1);
-      const alpha = clamp(pulse * (0.10 + 0.32 * electricalIntensity), 0, 0.42);
-      if (alpha > 0.01) {
-        this.renderer.drawScreenOverlay(`rgba(255, 255, 255, ${alpha})`);
-      }
+
+      const strobe = Math.pow(Math.max(0, Math.sin(t * (14 + 14 * elec) + 0.9)), 1.6);
+      const pulse = clamp(main * (0.30 + 0.55 * strobe), 0, 1);
+      const alpha = clamp(pulse * (0.05 + 0.16 * elec), 0, 0.22);
+      if (alpha > 0.01) this.renderer.drawScreenOverlay(`rgba(255, 255, 255, ${alpha})`);
     }
 
     // Minimap
@@ -2501,6 +2628,7 @@ export class Game {
     this.raceStartTimeSeconds = this.state.timeSeconds;
     this.raceFinished = false;
     this.finishTimeSeconds = null;
+    this.controlsLocked = false;
     this.damage01 = 0;
     this.wreckedTimeSeconds = null;
     this.state.car.steerAngleRad = 0;
@@ -2512,11 +2640,361 @@ export class Game {
     this.particleAccumulator = 0;
     this.cameraRotationRad = this.cameraMode === "runner" ? -spawn.headingRad - Math.PI / 2 : 0;
     this.enemyKillCount = 0;
+    this.enemyProjectiles = [];
+    this.colossusShotCooldownS = 0;
+    this.colossusShotPhase = 0;
+    this.netDebrisDestroyedIds = [];
 
     // Respawn enemies when resetting (regenerate from track)
     const treeSeed = Math.floor(this.trackDef.meta?.seed ?? 20260123);
     const enemies = generateEnemies(this.track, { seed: treeSeed + 1337 });
     this.enemyPool.setEnemies(enemies);
+
+    // Deterministic on-road debris (biome-tuned)
+    this.debris = generateDebris(this.track, { seed: treeSeed + 3333, themeKind: this.currentStageThemeKind });
+  }
+
+  private wrapDeltaSForward(fromSM: number, toSM: number): number {
+    const L = this.track.totalLengthM;
+    let d = toSM - fromSM;
+    while (d < 0) d += L;
+    while (d >= L) d -= L;
+    return d;
+  }
+
+  private updateDebrisWarnings(proj: TrackProjection): void {
+    if (!this.debris.length) return;
+    // Only the navigator should get this cue.
+    if (this.role !== PlayerRole.NAVIGATOR) return;
+    // No callouts until after leaving the start city.
+    if (proj.sM < this.checkpointSM[0]) return;
+
+    const nowS = proj.sM;
+    let best: DebrisObstacle | null = null;
+    let bestDelta = Infinity;
+
+    for (const d of this.debris) {
+      if (d.integrity01 <= 0.05) continue;
+      const delta = this.wrapDeltaSForward(nowS, d.sM);
+      if (delta < 1) continue;
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        best = d;
+      }
+    }
+
+    // Only warn when it's close: within ~50m ahead.
+    if (!best || bestDelta < 6 || bestDelta > 50) return;
+    if (this.lastDebrisWarnId === best.id && (this.state.timeSeconds - this.lastDebrisWarnAtSeconds) < 4.0) return;
+
+    this.lastDebrisWarnId = best.id;
+    this.lastDebrisWarnAtSeconds = this.state.timeSeconds;
+    this.showNotification(`DEBRIS IN ${Math.round(bestDelta)}m`);
+  }
+
+  private resolveDebrisCollisions(): void {
+    if (this.debris.length === 0) return;
+    if (this.damage01 >= 1) return;
+    // Host/solo sim only; clients receive debrisDestroyed + particle events.
+    if (this.netMode === "client") return;
+
+    const carRadius = 0.85;
+    const speed = this.speedMS();
+
+    const destroyedIds: number[] = [];
+
+    for (const d of this.debris) {
+      const integrity = clamp(d.integrity01, 0, 1);
+      if (integrity <= 0.02) continue;
+
+      // Match renderer scaling.
+      const scaleL = 0.35 + 0.65 * integrity;
+      const scaleW = 0.55 + 0.45 * integrity;
+      const halfL = d.lengthM * 0.5 * scaleL;
+      const halfW = d.widthM * 0.5 * scaleW;
+
+      const cosR = Math.cos(d.rotationRad);
+      const sinR = Math.sin(d.rotationRad);
+      const ax = d.x - cosR * halfL;
+      const ay = d.y - sinR * halfL;
+      const bx = d.x + cosR * halfL;
+      const by = d.y + sinR * halfL;
+
+      const dist = pointToSegmentDistance(this.state.car.xM, this.state.car.yM, ax, ay, bx, by);
+      const minDist = carRadius + halfW;
+      if (dist >= minDist) continue;
+
+      // Closest point on segment.
+      const dx = bx - ax;
+      const dy = by - ay;
+      const lenSq = dx * dx + dy * dy;
+      const t = lenSq > 1e-9
+        ? Math.max(0, Math.min(1, ((this.state.car.xM - ax) * dx + (this.state.car.yM - ay) * dy) / lenSq))
+        : 0;
+      const cx = ax + dx * t;
+      const cy = ay + dy * t;
+
+      const nx0 = this.state.car.xM - cx;
+      const ny0 = this.state.car.yM - cy;
+      const nLen = Math.max(1e-6, Math.hypot(nx0, ny0));
+      const nx = nx0 / nLen;
+      const ny = ny0 / nLen;
+
+      // Tiny destabilization, but don't bounce/stop the car.
+      const cosH = Math.cos(this.state.car.headingRad);
+      const sinH = Math.sin(this.state.car.headingRad);
+      const sideSign = Math.sign(nx * sinH - ny * cosH) || 1;
+      const twist = clamp(speed / 28, 0, 1);
+      this.state.car.yawRateRadS += sideSign * (0.44 + 0.95 * twist);
+      this.state.car.vxMS *= 0.962;
+      this.state.car.vyMS *= 0.962;
+      if (speed > 14) {
+        this.damage01 = clamp(this.damage01 + 0.0025 * twist, 0, 1);
+      }
+
+      // Shatter into splinters immediately.
+      const burst = Math.floor(42 + 105 * twist);
+      for (let i = 0; i < burst; i++) {
+        const jitter = Math.sin((d.id + 1) * 0.17 + i * 1.23) * 0.65;
+        const dirX0 = nx * 0.85 + (-ny) * jitter;
+        const dirY0 = ny * 0.85 + nx * jitter;
+        const dirLen = Math.max(1e-6, Math.hypot(dirX0, dirY0));
+        const dirX = dirX0 / dirLen;
+        const dirY = dirY0 / dirLen;
+        const sp = (1.4 + 3.8 * twist) * (0.65 + 0.55 * (0.5 + 0.5 * Math.sin(i * 2.3 + d.id * 0.09)));
+        const col = i % 4 === 0
+          ? "rgba(190, 135, 95, 0.92)"
+          : (i % 4 === 1 ? "rgba(145, 100, 70, 0.88)" : (i % 4 === 2 ? "rgba(110, 78, 52, 0.90)" : "rgba(90, 65, 45, 0.82)"));
+        this.emitParticles({
+          x: cx,
+          y: cy,
+          vx: dirX * sp,
+          vy: dirY * sp,
+          lifetime: 0.26 + 0.28 * twist,
+          sizeM: 0.12 + 0.22 * (0.5 + 0.5 * Math.sin(i * 1.7 + 0.2)),
+          color: col,
+          count: 1
+        });
+      }
+
+      d.integrity01 = 0;
+      destroyedIds.push(d.id);
+      if (this.netMode === "host") {
+        this.netDebrisDestroyedIds.push(d.id);
+      }
+    }
+
+    if (destroyedIds.length) {
+      const destroyed = new Set(destroyedIds);
+      this.debris = this.debris.filter((d) => !destroyed.has(d.id));
+    }
+  }
+
+  private updateDebris(dtSeconds: number): void {
+    if (!this.debris.length) return;
+    if (dtSeconds <= 0) return;
+
+    // Only host/solo sim. Client doesn't run physics.
+    if (this.netMode === "client") return;
+
+    const linDamp = Math.exp(-dtSeconds * 1.25);
+    const angDamp = Math.exp(-dtSeconds * 1.8);
+    const maxSpeed = 5.5;
+    const maxAng = 2.8;
+    for (const d of this.debris) {
+      if (!d.isDynamic) continue;
+
+      // Clamp so collisions don't launch debris unrealistically fast.
+      const v = Math.hypot(d.vx, d.vy);
+      if (v > maxSpeed) {
+        const s = maxSpeed / Math.max(1e-6, v);
+        d.vx *= s;
+        d.vy *= s;
+      }
+      d.angularVelRadS = clamp(d.angularVelRadS, -maxAng, maxAng);
+
+      d.x += d.vx * dtSeconds;
+      d.y += d.vy * dtSeconds;
+      d.rotationRad += d.angularVelRadS * dtSeconds;
+      d.vx *= linDamp;
+      d.vy *= linDamp;
+      d.angularVelRadS *= angDamp;
+      if ((Math.abs(d.vx) + Math.abs(d.vy)) < 0.05 && Math.abs(d.angularVelRadS) < 0.05) {
+        d.vx = 0;
+        d.vy = 0;
+        d.angularVelRadS = 0;
+        // Keep it dynamic (it moved) but now at rest.
+      }
+    }
+  }
+
+  private emitColossusFire(dtSeconds: number): void {
+    // Client doesn't run sim.
+    if (this.netMode === "client") return;
+    if (dtSeconds <= 0) return;
+
+    const colossi = this.enemyPool.getActive().filter((e) => e.type === EnemyType.COLOSSUS);
+    if (colossi.length === 0) return;
+
+    // Deterministic phase accumulator.
+    this.colossusFirePhase += dtSeconds;
+
+    for (const c of colossi) {
+      const h = c.wanderAngle;
+      const cosH = Math.cos(h);
+      const sinH = Math.sin(h);
+      const nx = -sinH;
+      const ny = cosH;
+
+      // ~30-55 particles/sec depending on size.
+      const rate = 32 + c.radius * 5;
+      const want = rate * dtSeconds;
+      let count = Math.floor(want);
+      const frac = want - count;
+      // Deterministic "fractional" extra based on id + phase.
+      const gate = 0.5 + 0.5 * Math.sin((this.colossusFirePhase + c.id * 0.017) * 11.0);
+      if (frac > gate) count++;
+      if (count <= 0) continue;
+
+      // Emit from a couple of "vents" near the front half.
+      for (let i = 0; i < count; i++) {
+        const t = this.colossusFirePhase * 2.2 + i * 0.9 + c.id * 0.01;
+        const side = Math.sin(t * 3.1);
+        const along = 0.35 + 0.25 * Math.sin(t * 2.3);
+        const radial = 0.40 + 0.20 * Math.sin(t * 4.7);
+
+        const px = c.x + cosH * (c.radius * along) + nx * (c.radius * 0.35 * side);
+        const py = c.y + sinH * (c.radius * along) + ny * (c.radius * 0.35 * side);
+
+        const vx = cosH * (1.2 + 1.6 * radial) + nx * (side * 0.8);
+        const vy = sinH * (1.2 + 1.6 * radial) + ny * (side * 0.8);
+
+        const hot = 0.5 + 0.5 * Math.sin(t * 5.0);
+        const color = hot > 0.6 ? "rgba(255, 210, 80, 0.95)" : "rgba(255, 120, 40, 0.92)";
+        this.emitParticles({
+          x: px,
+          y: py,
+          vx,
+          vy,
+          lifetime: 0.55 + 0.25 * radial,
+          sizeM: 0.18 + 0.18 * radial,
+          color,
+          count: 1
+        });
+      }
+    }
+  }
+
+  private shootColossusFireballs(dtSeconds: number): void {
+    // Client doesn't run sim.
+    if (this.netMode === "client") return;
+    if (dtSeconds <= 0) return;
+    if (this.damage01 >= 1) return;
+    if (this.raceFinished) return;
+
+    // Deterministic phase accumulator for firing patterns.
+    this.colossusShotPhase += dtSeconds;
+
+    this.colossusShotCooldownS = Math.max(0, this.colossusShotCooldownS - dtSeconds);
+    if (this.colossusShotCooldownS > 0) return;
+
+    const colossi = this.enemyPool.getActive().filter((e) => e.type === EnemyType.COLOSSUS);
+    if (colossi.length === 0) return;
+
+    // Choose the closest colossus to keep attacks predictable.
+    let best = colossi[0];
+    let bestD2 = Infinity;
+    for (const c of colossi) {
+      const dx = this.state.car.xM - c.x;
+      const dy = this.state.car.yM - c.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        best = c;
+      }
+    }
+
+    const dx = this.state.car.xM - best.x;
+    const dy = this.state.car.yM - best.y;
+    const dist = Math.max(1e-6, Math.hypot(dx, dy));
+
+    // Don't shoot from extremely far away.
+    if (dist > 260) {
+      this.colossusShotCooldownS = 0.55;
+      return;
+    }
+
+    const baseAngle = Math.atan2(dy, dx);
+    // Wide, deterministic spread so it doesn't track accurately.
+    const spreadMaxRad = 0.55;
+    const spreadA = Math.sin((this.colossusShotPhase + best.id * 0.013) * 3.9);
+    const spreadB = Math.sin((this.colossusShotPhase + best.id * 0.071) * 7.1);
+    const spreadRad = (0.55 * spreadA + 0.45 * spreadB) * spreadMaxRad;
+    const aimAngle = baseAngle + spreadRad;
+    const dirX = Math.cos(aimAngle);
+    const dirY = Math.sin(aimAngle);
+
+    const speed = 18;
+    const spawnX = best.x + dirX * (best.radius * 0.85);
+    const spawnY = best.y + dirY * (best.radius * 0.85);
+    this.enemyProjectiles.push({ x: spawnX, y: spawnY, vx: dirX * speed, vy: dirY * speed, age: 0, maxAge: 3.2 });
+
+    // Slower cadence overall (still somewhat distance-based).
+    const dist01 = clamp(dist / 240, 0, 1);
+    this.colossusShotCooldownS = 1.45 + 1.65 * dist01;
+    this.playNetEffect("explosion", 0.22, 0.85);
+  }
+
+  private updateEnemyProjectiles(dtSeconds: number): void {
+    if (this.netMode === "client") return;
+    if (this.enemyProjectiles.length === 0) return;
+
+    for (const p of this.enemyProjectiles) {
+      p.x += p.vx * dtSeconds;
+      p.y += p.vy * dtSeconds;
+      p.age += dtSeconds;
+
+      // Simple collision against car.
+      const dx = p.x - this.state.car.xM;
+      const dy = p.y - this.state.car.yM;
+      const d = Math.hypot(dx, dy);
+      if (d < 1.05 && this.damage01 < 1) {
+        // Fireballs should hurt a bit, but mostly destabilize handling.
+        this.damage01 = clamp(this.damage01 + 0.06, 0, 1);
+
+        // Destabilize: yaw kick + slight speed loss.
+        const cosH = Math.cos(this.state.car.headingRad);
+        const sinH = Math.sin(this.state.car.headingRad);
+        // Tangential direction around car (right-hand).
+        const tx = -dy / Math.max(1e-6, d);
+        const ty = dx / Math.max(1e-6, d);
+        // Determine which side of the car relative to forward vector.
+        const fx = cosH;
+        const fy = sinH;
+        const side = Math.sign((dx / Math.max(1e-6, d)) * fy - (dy / Math.max(1e-6, d)) * fx) || 1;
+        const speedMS = this.speedMS();
+        const kick = 0.25 + 0.55 * clamp(speedMS / 26, 0, 1);
+        this.state.car.yawRateRadS += side * kick;
+        this.state.car.vxMS *= 0.965;
+        this.state.car.vyMS *= 0.965;
+        this.playNetEffect("impact", 0.9, 0.85);
+        this.cameraShakeX = (dx / Math.max(1e-6, d)) * 0.55;
+        this.cameraShakeY = (dy / Math.max(1e-6, d)) * 0.55;
+        this.emitParticles({
+          x: p.x,
+          y: p.y,
+          vx: tx * 0.8,
+          vy: ty * 0.8,
+          lifetime: 0.28,
+          sizeM: 0.22,
+          color: "rgba(255, 155, 70, 0.95)",
+          count: 16
+        });
+        p.age = p.maxAge + 1;
+      }
+    }
+
+    this.enemyProjectiles = this.enemyProjectiles.filter((p) => p.age < p.maxAge);
   }
 
   private updateCheckpointsAndRace(proj: TrackProjection): void {
@@ -2545,8 +3023,20 @@ export class Game {
       } else if (this.nextCheckpointIndex === this.checkpointSM.length - 1) {
         // Finish line!
         this.raceFinished = true;
+        this.raceActive = false;
         this.finishTimeSeconds = this.state.timeSeconds - this.raceStartTimeSeconds;
         this.nextCheckpointIndex = this.checkpointSM.length; // Move past last checkpoint
+
+        // Hard stop: freeze the car exactly at the line and ignore controls.
+        this.controlsLocked = true;
+        this.lastInputState = { steer: 0, throttle: 0, brake: 0, handbrake: 0, shoot: false, fromKeyboard: false };
+        this.state.car.vxMS = 0;
+        this.state.car.vyMS = 0;
+        this.state.car.yawRateRadS = 0;
+        this.state.car.steerAngleRad = 0;
+        this.state.car.alphaFrontRad = 0;
+        this.state.car.alphaRearRad = 0;
+
         const time = this.finishTimeSeconds.toFixed(2);
         this.showNotification(`FINISH! Time: ${time}s`);
         this.playNetEffect("checkpoint", 1.0); // Louder for finish
@@ -2862,7 +3352,9 @@ export class Game {
             killed,
             x: enemy.x,
             y: enemy.y,
-            isTank
+            isTank,
+            enemyType: enemy.type,
+            radiusM: enemy.radius
           });
           
           // Update local enemy health for visual feedback
@@ -2870,7 +3362,7 @@ export class Game {
           
           if (killed) {
             // Show death particles locally
-            this.createEnemyDeathParticles(enemy.x, enemy.y, isTank);
+            this.createEnemyDeathParticles(enemy.x, enemy.y, isTank, enemy.radius);
           } else {
             // Small hit particles
             this.particlePool.emit({
@@ -2987,9 +3479,9 @@ export class Game {
           if (damagedEnemy && damagedEnemy.health <= 0) {
             this.enemyKillCount++;
             // Create massive particle burst on death
-            this.createEnemyDeathParticles(enemy.x, enemy.y, enemy.type === "tank");
+            this.createEnemyDeathParticles(enemy.x, enemy.y, enemy.type === "tank", enemy.radius);
             if (this.netMode === "host") {
-              this.netParticleEvents.push({ type: "enemyDeath", x: enemy.x, y: enemy.y, isTank: enemy.type === "tank" });
+              this.netParticleEvents.push({ type: "enemyDeath", x: enemy.x, y: enemy.y, isTank: enemy.type === "tank", radiusM: enemy.radius });
             }
           } else {
             // Smaller visual feedback for hits that don't kill
@@ -3021,29 +3513,50 @@ export class Game {
     }
   }
 
-  private createEnemyDeathParticles(x: number, y: number, isTank: boolean = false): void {
+  private createEnemyDeathParticles(x: number, y: number, isTank: boolean = false, radiusM?: number): void {
+    // Deterministic local RNG (avoid Math.random for net-consistent visuals).
+    const xi = Math.floor(x * 1000);
+    const yi = Math.floor(y * 1000);
+    const ri = Math.floor((radiusM ?? (isTank ? 0.9 : 0.6)) * 1000);
+    let rngState = ((xi * 374761393) ^ (yi * 668265263) ^ (ri * 2147483647) ^ (isTank ? 0x1badf00d : 0x9e3779b9)) >>> 0;
+    const rand01 = (): number => {
+      // xorshift32
+      let x = (rngState >>> 0) || 0x12345678;
+      x ^= x << 13;
+      x ^= x >>> 17;
+      x ^= x << 5;
+      rngState = x >>> 0;
+      return rngState / 4294967296;
+    };
+
+    const rBase = Math.max(0.55, radiusM ?? (isTank ? 0.95 : 0.7));
     let particleCount: number;
     let speedMin: number;
     let speedRange: number;
 
     if (isTank) {
       // MASSIVE explosion for tanks
-      particleCount = 200 + Math.floor(Math.random() * 100); // 200-300 particles
+      particleCount = 200 + Math.floor(rand01() * 100); // 200-300 particles
       speedMin = 4;
       speedRange = 8; // 4-12 m/s
     } else {
       // High density for zombies
-      particleCount = 80 + Math.floor(Math.random() * 50); // 80-130 particles
+      particleCount = 80 + Math.floor(rand01() * 50); // 80-130 particles
       speedMin = 2;
       speedRange = 5; // 2-7 m/s
     }
 
     for (let i = 0; i < particleCount; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const speed = speedMin + Math.random() * speedRange;
+      const angle = rand01() * Math.PI * 2;
+      const speed = speedMin + rand01() * speedRange;
+
+      // Spawn across the full body, not from the center.
+      const r = rBase * (0.55 + 0.45 * rand01());
+      const px = x + Math.cos(angle) * r;
+      const py = y + Math.sin(angle) * r;
 
       // Vary particle colors for more visual interest
-      const colorVariant = Math.random();
+      const colorVariant = rand01();
       let color;
       if (colorVariant < 0.7) {
         color = "rgba(180, 50, 50, 0.85)"; // Dark red
@@ -3054,12 +3567,12 @@ export class Game {
       }
 
       this.particlePool.emit({
-        x,
-        y,
+        x: px,
+        y: py,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
-        sizeM: 0.12 + Math.random() * 0.25, // 0.12-0.37m (varied sizes)
-        lifetime: 0.7 + Math.random() * 0.6, // Short-lived (was 600s persistent)
+        sizeM: 0.12 + rand01() * 0.25, // 0.12-0.37m (varied sizes)
+        lifetime: 0.7 + rand01() * 0.6, // Short-lived (was 600s persistent)
         color
       });
     }
@@ -3085,16 +3598,20 @@ export class Game {
         // Push car away
         const nx = dx / dist;
         const ny = dy / dist;
-        this.state.car.xM += nx * overlap * 0.4;
-        this.state.car.yM += ny * overlap * 0.4;
+        const isTank = enemy.type === "tank";
+        const isColossus = enemy.type === "colossus";
+        const push = isColossus ? 0.95 : 0.4;
+        this.state.car.xM += nx * overlap * push;
+        this.state.car.yM += ny * overlap * push;
 
         // Type-specific physics
-        const isTank = enemy.type === "tank";
+        // Colossus should feel like a catastrophic collision.
         // Tanks should feel less like immovable walls
-        const speedReduction = isTank ? 0.78 : 0.77;
-        const distortionMultiplier = isTank ? 0.25 : 0.18;
-        // More collision HP: reduce damage from enemy impacts
-        const damageRate = isTank ? 0.03 : 0.01;
+        const speedReduction = isColossus ? 0.55 : (isTank ? 0.78 : 0.77);
+        const distortionMultiplier = isColossus ? 0.65 : (isTank ? 0.25 : 0.18);
+        // Damage from enemy impacts
+        const damageRate = isColossus ? 0.11 : (isTank ? 0.03 : 0.01);
+        const baseDamage = isColossus ? 0.18 : 0;
 
         this.state.car.vxMS *= speedReduction;
         this.state.car.vyMS *= speedReduction;
@@ -3102,21 +3619,31 @@ export class Game {
         const lateralImpact = (this.state.car.vyMS * nx - this.state.car.vxMS * ny) * distortionMultiplier;
         this.state.car.yawRateRadS += lateralImpact;
 
-        this.damage01 = clamp(this.damage01 + impact * damageRate, 0, 1);
+        const contactSeverity = isColossus ? Math.max(impact, overlap * 4.0) : impact;
+        this.damage01 = clamp(this.damage01 + baseDamage + contactSeverity * damageRate, 0, 1);
 
         // Camera shake
-        const shakeIntensity = Math.min(impact * (isTank ? 0.5 : 0.25), 2.5);
-        this.cameraShakeX = (Math.random() - 0.5) * shakeIntensity;
-        this.cameraShakeY = (Math.random() - 0.5) * shakeIntensity;
-        this.collisionFlashAlpha = Math.min(impact * (isTank ? 0.15 : 0.08), 0.5);
+        const shakeIntensity = Math.min(contactSeverity * (isColossus ? 0.85 : (isTank ? 0.5 : 0.25)), 3.2);
+        if (isColossus) {
+          // Deterministic shove-based shake for the boss.
+          this.cameraShakeX = nx * shakeIntensity * 0.55;
+          this.cameraShakeY = ny * shakeIntensity * 0.55;
+        } else {
+          this.cameraShakeX = (Math.random() - 0.5) * shakeIntensity;
+          this.cameraShakeY = (Math.random() - 0.5) * shakeIntensity;
+        }
+        this.collisionFlashAlpha = Math.min(contactSeverity * (isColossus ? 0.22 : (isTank ? 0.15 : 0.08)), 0.65);
 
-        // Kill/Damage enemy on impact (usually kills zombies immediately)
-        const damaged = this.enemyPool.damage(enemy.id, isTank ? 1.0 : 1.0);
-        if (damaged && damaged.health <= 0) {
-          this.enemyKillCount++;
-          this.createEnemyDeathParticles(enemy.x, enemy.y, isTank);
-          if (this.netMode === "host") {
-            this.netParticleEvents.push({ type: "enemyDeath", x: enemy.x, y: enemy.y, isTank });
+        // Kill/Damage enemy on impact (usually kills zombies immediately).
+        // The colossus should not be damaged by touching the car.
+        if (!isColossus) {
+          const damaged = this.enemyPool.damage(enemy.id, 1.0);
+          if (damaged && damaged.health <= 0) {
+            this.enemyKillCount++;
+              this.createEnemyDeathParticles(enemy.x, enemy.y, isTank, enemy.radius);
+            if (this.netMode === "host") {
+                this.netParticleEvents.push({ type: "enemyDeath", x: enemy.x, y: enemy.y, isTank, radiusM: enemy.radius });
+            }
           }
         }
 

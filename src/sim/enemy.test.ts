@@ -46,10 +46,13 @@ describe("enemies", () => {
       expect(e.trackSegmentHint).toBeLessThan(track.totalLengthM);
 
       // Types are constrained to known enums.
-      expect([EnemyType.ZOMBIE, EnemyType.TANK]).toContain(e.type);
+      expect([EnemyType.ZOMBIE, EnemyType.TANK, EnemyType.COLOSSUS]).toContain(e.type);
 
       // Health/radius align with type.
-      if (e.type === EnemyType.TANK) {
+      if (e.type === EnemyType.COLOSSUS) {
+        expect(e.maxHealth).toBe(42);
+        expect(e.radius).toBeGreaterThan(2.5);
+      } else if (e.type === EnemyType.TANK) {
         expect(e.maxHealth).toBe(5);
         expect(e.radius).toBeCloseTo(0.9, 6);
       } else {

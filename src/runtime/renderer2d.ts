@@ -515,6 +515,44 @@ export class Renderer2D {
     ctx.restore();
   }
 
+  drawFinishLine(opts: { x: number; y: number; headingRad: number; widthM: number }): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.translate(opts.x, opts.y);
+    ctx.rotate(opts.headingRad);
+
+    const half = opts.widthM * 0.5;
+    const bandHalfThickness = 0.65; // thick, very visible
+
+    // Dark base band.
+    ctx.fillStyle = "rgba(0,0,0,0.7)";
+    ctx.fillRect(-bandHalfThickness, -half, bandHalfThickness * 2, half * 2);
+
+    // Checkered pattern.
+    const cell = 0.55;
+    const cols = Math.max(1, Math.floor((bandHalfThickness * 2) / cell));
+    const rows = Math.max(1, Math.floor((half * 2) / cell));
+    const startX = -bandHalfThickness;
+    const startY = -half;
+    for (let iy = 0; iy < rows; iy++) {
+      for (let ix = 0; ix < cols; ix++) {
+        const isWhite = (ix + iy) % 2 === 0;
+        ctx.fillStyle = isWhite ? "rgba(255,255,255,0.92)" : "rgba(0,0,0,0.55)";
+        ctx.fillRect(startX + ix * cell, startY + iy * cell, cell, cell);
+      }
+    }
+
+    // Glow outline.
+    ctx.strokeStyle = "rgba(255, 220, 90, 0.75)";
+    ctx.lineWidth = 0.22;
+    ctx.beginPath();
+    ctx.moveTo(0, -half);
+    ctx.lineTo(0, half);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
   drawArrow(opts: { x: number; y: number; dx: number; dy: number; color: string; label?: string }): void {
     const ctx = this.ctx;
     const len = Math.hypot(opts.dx, opts.dy);
@@ -644,7 +682,77 @@ export class Renderer2D {
     ctx.restore();
   }
 
-  drawEnemies(enemies: { x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank"; health?: number; maxHealth?: number }[]): void {
+  drawDebris(debris: { x: number; y: number; lengthM: number; widthM: number; rotationRad: number; integrity01?: number }[]): void {
+    const ctx = this.ctx;
+    ctx.save();
+
+    const pad = this.getViewRadiusWorldMeters(8);
+    const cx = this.camera.centerX;
+    const cy = this.camera.centerY;
+    const rSq = pad * pad;
+
+    for (const d of debris) {
+      const dxC = d.x - cx;
+      const dyC = d.y - cy;
+      if (dxC * dxC + dyC * dyC > rSq) continue;
+
+      const integrity = d.integrity01 === undefined ? 1 : Math.max(0, Math.min(1, d.integrity01));
+      if (integrity <= 0.02) continue;
+
+      ctx.save();
+      ctx.translate(d.x, d.y);
+      ctx.rotate(d.rotationRad);
+
+      // As debris breaks, shrink it visually (and slightly fade it).
+      const scaleL = 0.35 + 0.65 * integrity;
+      const scaleW = 0.55 + 0.45 * integrity;
+      const halfL = d.lengthM * 0.5 * scaleL;
+      const halfW = d.widthM * 0.5 * scaleW;
+
+      // Base log (darker, closer to tree/trunk palette)
+      const a = 0.35 + 0.57 * integrity;
+      ctx.fillStyle = `rgba(110, 75, 50, ${a.toFixed(3)})`;
+      ctx.strokeStyle = `rgba(50, 35, 20, ${a.toFixed(3)})`;
+      ctx.lineWidth = 0.06;
+
+      // Capsule / rounded rectangle.
+      ctx.beginPath();
+      ctx.moveTo(-halfL + halfW, -halfW);
+      ctx.lineTo(halfL - halfW, -halfW);
+      ctx.arc(halfL - halfW, 0, halfW, -Math.PI / 2, Math.PI / 2);
+      ctx.lineTo(-halfL + halfW, halfW);
+      ctx.arc(-halfL + halfW, 0, halfW, Math.PI / 2, -Math.PI / 2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Bark lines (variable count based on length)
+      ctx.strokeStyle = "rgba(65, 45, 28, 0.55)";
+      ctx.lineWidth = 0.045;
+      const n = Math.max(2, Math.min(7, Math.round(d.lengthM * 0.95)));
+      for (let i = 0; i < n; i++) {
+        const t = -halfL + (i + 0.65) * (d.lengthM / (n + 1));
+        ctx.beginPath();
+        ctx.moveTo(t, -halfW * 0.85);
+        ctx.lineTo(t, halfW * 0.85);
+        ctx.stroke();
+      }
+
+      // Subtle highlight strip for depth
+      ctx.strokeStyle = "rgba(170, 130, 95, 0.22)";
+      ctx.lineWidth = 0.03;
+      ctx.beginPath();
+      ctx.moveTo(-halfL * 0.85, -halfW * 0.35);
+      ctx.lineTo(halfL * 0.85, -halfW * 0.35);
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+
+  drawEnemies(enemies: { id?: number; x: number; y: number; radius: number; vx: number; vy: number; type?: string; health?: number; maxHealth?: number }[]): void {
     const ctx = this.ctx;
     ctx.save();
 
@@ -662,6 +770,12 @@ export class Renderer2D {
       ctx.translate(enemy.x, enemy.y);
 
       const isTank = enemy.type === "tank";
+      const isColossus = enemy.type === "colossus";
+
+      // Use velocity to orient large enemies.
+      const vLen = Math.hypot(enemy.vx, enemy.vy);
+      const heading = vLen > 0.2 ? Math.atan2(enemy.vy, enemy.vx) : 0;
+      if (isColossus) ctx.rotate(heading);
 
       // Select base colors based on type
       let bodyColor = "rgba(80, 100, 70, 0.9)"; // Greenish gray (Zombie)
@@ -674,13 +788,21 @@ export class Renderer2D {
         outlineColor = "rgba(50, 40, 60, 0.95)";
       }
 
+      if (isColossus) {
+        bodyColor = "rgba(45, 45, 55, 0.92)";
+        headColor = "rgba(60, 55, 70, 0.96)";
+        outlineColor = "rgba(20, 15, 25, 0.98)";
+      }
+
       ctx.fillStyle = bodyColor;
       ctx.strokeStyle = outlineColor;
-      ctx.lineWidth = isTank ? 0.12 : 0.08;
+      ctx.lineWidth = isColossus ? 0.20 : isTank ? 0.12 : 0.08;
 
       // Body shape
       ctx.beginPath();
-      if (isTank) {
+      if (isColossus) {
+        ctx.ellipse(0, 0, enemy.radius * 1.25, enemy.radius * 0.85, 0, 0, Math.PI * 2);
+      } else if (isTank) {
         // Tanks are beefier (more elliptical/broad)
         ctx.ellipse(0, 0, enemy.radius * 0.9, enemy.radius, 0, 0, Math.PI * 2);
       } else {
@@ -689,27 +811,78 @@ export class Renderer2D {
       ctx.fill();
       ctx.stroke();
 
+      if (isColossus) {
+        // Limbs (4) + tail segments for a "dragon-like" silhouette.
+        const limbR = enemy.radius * 0.22;
+        const limbX = enemy.radius * 0.65;
+        const limbY = enemy.radius * 0.55;
+        ctx.fillStyle = "rgba(35, 35, 45, 0.95)";
+        ctx.strokeStyle = outlineColor;
+        ctx.lineWidth = 0.14;
+
+        const limbPoints = [
+          { x: -limbX, y: -limbY },
+          { x: limbX, y: -limbY },
+          { x: -limbX, y: limbY },
+          { x: limbX, y: limbY }
+        ];
+        for (const lp of limbPoints) {
+          ctx.beginPath();
+          ctx.arc(lp.x, lp.y, limbR, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+
+        // Tail
+        const tailSegments = 6;
+        for (let i = 0; i < tailSegments; i++) {
+          const t = (i + 1) / tailSegments;
+          const x = -enemy.radius * (0.9 + t * 1.6);
+          const y = Math.sin((performance.now() / 1000) * 2 + t * 4) * enemy.radius * 0.10;
+          const r = enemy.radius * (0.18 * (1 - t) + 0.05);
+          ctx.beginPath();
+          ctx.arc(x, y, r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+
+        // Fire glow / embers
+        const tNow = performance.now() / 1000;
+        const flicker = 0.45 + 0.25 * Math.sin(tNow * 8.5) + 0.15 * Math.sin(tNow * 13.2);
+        ctx.globalCompositeOperation = "lighter";
+        ctx.fillStyle = `rgba(255, 90, 30, ${0.18 * flicker})`;
+        ctx.beginPath();
+        ctx.ellipse(enemy.radius * 0.2, 0, enemy.radius * 1.2, enemy.radius * 0.9, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = `rgba(255, 200, 70, ${0.10 * flicker})`;
+        ctx.beginPath();
+        ctx.ellipse(enemy.radius * 0.4, -enemy.radius * 0.15, enemy.radius * 0.8, enemy.radius * 0.6, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalCompositeOperation = "source-over";
+      }
+
       // Head
       ctx.fillStyle = headColor;
       ctx.beginPath();
-      ctx.arc(0, -enemy.radius * 0.6, enemy.radius * (isTank ? 0.4 : 0.35), 0, Math.PI * 2);
+      ctx.arc(isColossus ? enemy.radius * 0.55 : 0, -enemy.radius * 0.6, enemy.radius * (isColossus ? 0.55 : isTank ? 0.4 : 0.35), 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
 
       // Eyes - Red for both
       const eyeY = -enemy.radius * 0.65;
-      const eyeOffset = enemy.radius * (isTank ? 0.2 : 0.15);
-      const eyeSize = isTank ? 0.12 : 0.08;
+      const eyeOffset = enemy.radius * (isColossus ? 0.22 : isTank ? 0.2 : 0.15);
+      const eyeSize = isColossus ? 0.16 : isTank ? 0.12 : 0.08;
 
       ctx.fillStyle = "rgba(200, 50, 50, 0.9)";
       ctx.beginPath();
-      ctx.arc(-eyeOffset, eyeY, eyeSize, 0, Math.PI * 2);
-      ctx.arc(eyeOffset, eyeY, eyeSize, 0, Math.PI * 2);
+      const eyeX = isColossus ? enemy.radius * 0.55 : 0;
+      ctx.arc(eyeX - eyeOffset, eyeY, eyeSize, 0, Math.PI * 2);
+      ctx.arc(eyeX + eyeOffset, eyeY, eyeSize, 0, Math.PI * 2);
       ctx.fill();
 
       // Health bar for Tanks or wounded enemies
-      if (enemy.health !== undefined && enemy.maxHealth !== undefined && (isTank || enemy.health < enemy.maxHealth)) {
-        const barWidth = enemy.radius * 1.5;
+      if (enemy.health !== undefined && enemy.maxHealth !== undefined && (isTank || isColossus || enemy.health < enemy.maxHealth)) {
+        const barWidth = enemy.radius * (isColossus ? 2.8 : 1.5);
         const barHeight = 0.15;
         const barY = -enemy.radius * 1.4;
 
@@ -866,6 +1039,38 @@ export class Renderer2D {
       ctx.moveTo(tailX, tailY);
       ctx.lineTo(proj.x, proj.y);
       ctx.stroke();
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+
+  drawFireballs(projectiles: { x: number; y: number; color?: string; size?: number }[]): void {
+    const ctx = this.ctx;
+    ctx.save();
+
+    for (const p of projectiles) {
+      const r = p.size !== undefined ? p.size : 0.55;
+      const outer = p.color || "rgba(255, 120, 40, 0.95)";
+
+      // Outer glow
+      ctx.save();
+      ctx.fillStyle = outer;
+      ctx.shadowColor = outer;
+      ctx.shadowBlur = 1.6;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r * 1.35, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // Hot core
+      ctx.save();
+      ctx.fillStyle = "rgba(255, 245, 220, 0.98)";
+      ctx.shadowColor = "rgba(255, 220, 140, 0.95)";
+      ctx.shadowBlur = 0.9;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r * 0.55, 0, Math.PI * 2);
+      ctx.fill();
       ctx.restore();
     }
 
@@ -1463,6 +1668,7 @@ export class Renderer2D {
     carHeading: number;
     waterBodies?: { x: number; y: number; radiusX: number; radiusY: number; rotation: number }[];
     enemies?: { x: number; y: number; type?: string }[];
+    debris?: { x: number; y: number; lengthM: number; rotationRad: number; integrity01?: number }[];
     segmentSurfaceNames?: ("tarmac" | "gravel" | "dirt" | "ice" | "offtrack")[];
     start?: { x: number; y: number };
     finish?: { x: number; y: number };
@@ -1506,7 +1712,11 @@ export class Renderer2D {
         const y = i * 14;
         ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
         ctx.fillText(text, 1, y + 1);
-        ctx.fillStyle = text.includes("RAIN") ? "rgba(120, 190, 255, 0.95)" : "rgba(255, 245, 220, 0.95)";
+        ctx.fillStyle = text.includes("RAIN")
+          ? "rgba(120, 190, 255, 0.95)"
+          : text.includes("DEBRIS")
+            ? "rgba(255, 165, 80, 0.95)"
+            : "rgba(255, 245, 220, 0.95)";
         ctx.fillText(text, 0, y);
       }
 
@@ -1676,11 +1886,54 @@ export class Renderer2D {
       }
     }
 
+    // Draw debris (logs)
+    if (opts.debris) {
+      ctx.strokeStyle = "rgba(130, 85, 55, 0.85)";
+      ctx.lineWidth = 2.4 / scale;
+      for (const d of opts.debris) {
+        const integrity = d.integrity01 === undefined ? 1 : Math.max(0, Math.min(1, d.integrity01));
+        if (integrity <= 0.05) continue;
+        const halfL = Math.min(4.5, Math.max(1.0, d.lengthM * (0.35 + 0.65 * integrity))) * 0.5;
+        const cosR = Math.cos(d.rotationRad);
+        const sinR = Math.sin(d.rotationRad);
+        const ax = d.x - cosR * halfL;
+        const ay = d.y - sinR * halfL;
+        const bx = d.x + cosR * halfL;
+        const by = d.y + sinR * halfL;
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(bx, by);
+        ctx.stroke();
+      }
+    }
+
     // Draw enemies
     if (opts.enemies) {
       for (const enemy of opts.enemies) {
+        const isColossus = enemy.type === "colossus";
         const isTank = enemy.type === "tank";
-        if (isTank) {
+        if (isColossus) {
+          const r = 11 / scale;
+          ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+          ctx.beginPath();
+          ctx.arc(enemy.x, enemy.y, r, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.strokeStyle = "rgba(255, 160, 80, 0.92)";
+          ctx.lineWidth = 2.6 / scale;
+          ctx.beginPath();
+          ctx.arc(enemy.x, enemy.y, r, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.font = `bold ${16 / scale}px monospace`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.lineWidth = 2.8 / scale;
+          ctx.strokeStyle = "rgba(0, 0, 0, 0.95)";
+          ctx.strokeText("B", enemy.x, enemy.y);
+          ctx.fillStyle = "rgba(255, 245, 235, 0.95)";
+          ctx.fillText("B", enemy.x, enemy.y);
+        } else if (isTank) {
           // More prominent tank marker
           const r = 7 / scale;
           ctx.fillStyle = "rgba(40, 0, 0, 0.55)";
@@ -1975,8 +2228,8 @@ export class Renderer2D {
     // Simplified gradient with fewer stops for better performance
     const gradient = ctx.createRadialGradient(sx, sy, pixelRadius * 0.2, sx, sy, gradientRadius);
     gradient.addColorStop(0, "rgba(185, 190, 195, 0)");
-    gradient.addColorStop(0.6, "rgba(175, 180, 186, 0.6)");
-    gradient.addColorStop(1, "rgba(165, 170, 176, 0.92)");
+    gradient.addColorStop(0.6, "rgba(175, 180, 186, 0.72)");
+    gradient.addColorStop(1, "rgba(165, 170, 176, 0.96)");
 
     // Draw gradient over entire screen (gradient naturally fades)
     ctx.fillStyle = gradient;
@@ -1985,7 +2238,7 @@ export class Renderer2D {
     // Only fill outside if gradient doesn't cover screen
     const halfDiag = Math.sqrt(w * w + h * h) * 0.5;
     if (gradientRadius < halfDiag) {
-      ctx.fillStyle = "rgba(165, 170, 176, 0.92)";
+      ctx.fillStyle = "rgba(165, 170, 176, 0.96)";
       ctx.beginPath();
       ctx.rect(0, 0, w, h);
       ctx.arc(sx, sy, gradientRadius, 0, Math.PI * 2, true);

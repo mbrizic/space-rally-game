@@ -1,4 +1,5 @@
 import { mulberry32 } from "./rng";
+import type { StageThemeKind } from "./stage";
 import type { Track, Vec2 } from "./track";
 
 export type CircleObstacle = {
@@ -7,6 +8,24 @@ export type CircleObstacle = {
   x: number;
   y: number;
   r: number;
+};
+
+export type DebrisObstacle = {
+  id: number;
+  kind: "debris";
+  // Approx track position for warnings and deterministic placement.
+  sM: number;
+  x: number;
+  y: number;
+  lengthM: number;
+  widthM: number;
+  rotationRad: number;
+  // 1 = intact, 0 = destroyed (used for visuals + collision size).
+  integrity01: number;
+  vx: number;
+  vy: number;
+  angularVelRadS: number;
+  isDynamic: boolean;
 };
 
 export type WaterBody = {
@@ -18,18 +37,20 @@ export type WaterBody = {
   rotation: number; // Radians
 };
 
-export function generateTrees(track: Track, opts?: { seed?: number }): CircleObstacle[] {
+export function generateTrees(track: Track, opts?: { seed?: number; themeKind?: StageThemeKind }): CircleObstacle[] {
   const seed = opts?.seed ?? 1337;
   const rand = mulberry32(seed);
 
+  const themeKind: StageThemeKind = opts?.themeKind ?? "temperate";
+
   const trees: CircleObstacle[] = [];
-  const spacingM = 12;
+  const spacingM = themeKind === "rainforest" ? 8 : (themeKind === "arctic" ? 14 : 12);
   const roadHalfWidthM = track.widthM * 0.5;
-  const minOffsetM = roadHalfWidthM + 1.2;
-  const maxOffsetM = roadHalfWidthM + 4.2;
+  const minOffsetM = roadHalfWidthM + (themeKind === "rainforest" ? 1.0 : 1.2);
+  const maxOffsetM = roadHalfWidthM + (themeKind === "rainforest" ? 5.2 : 4.2);
   
   // Minimum distance from tree to ANY track segment (not just local one)
-  const minDistanceToAnyRoad = roadHalfWidthM + 3.0; // Increased from 1.5m to 3m
+  const minDistanceToAnyRoad = roadHalfWidthM + (themeKind === "rainforest" ? 2.6 : 3.0);
 
   let id = 1;
   for (let s = 0; s < track.totalLengthM; s += spacingM) {
@@ -38,18 +59,20 @@ export function generateTrees(track: Track, opts?: { seed?: number }): CircleObs
     // Don't place too close to start.
     if (s < 18) continue;
 
-    const sideCount = 2;
+    const sideCount = themeKind === "rainforest" ? 4 : 2;
     for (let side = 0; side < sideCount; side++) {
-      const sign = side === 0 ? -1 : 1;
+      const sign = sideCount === 4 ? (side < 2 ? -1 : 1) : (side === 0 ? -1 : 1);
+      const row = sideCount === 4 ? (side % 2) : 0; // rainforest: inner/outer row per side
       const jitterAlong = (rand() - 0.5) * 10;
       const jitterOut = (rand() - 0.5) * 1.2;
-      const offset = clamp(minOffsetM + rand() * (maxOffsetM - minOffsetM) + jitterOut, minOffsetM, maxOffsetM);
+      const rowBoost = row === 1 ? (roadHalfWidthM * 0.45 + 1.2) : 0;
+      const offset = clamp(minOffsetM + rand() * (maxOffsetM - minOffsetM) + rowBoost + jitterOut, minOffsetM, maxOffsetM + rowBoost);
 
       const tx = -normal.y;
       const ty = normal.x;
       const x = p.x + normal.x * sign * offset + tx * jitterAlong;
       const y = p.y + normal.y * sign * offset + ty * jitterAlong;
-      const r = 0.9 + rand() * 0.6;
+      const r = (themeKind === "rainforest" ? 1.0 : 0.9) + rand() * (themeKind === "rainforest" ? 0.8 : 0.6);
 
       // CHECK AGAINST ENTIRE TRACK: Ensure tree isn't too close to any other road segment
       let tooCloseToRoad = false;
@@ -218,4 +241,105 @@ export function generateWaterBodies(track: Track, opts?: { seed?: number }): Wat
   }
 
   return waterBodies;
+}
+
+/**
+ * Generate debris (fallen logs) on the road.
+ * These do not deal damage, but destabilize the car if hit at speed.
+ */
+export function generateDebris(track: Track, opts?: { seed?: number; themeKind?: StageThemeKind }): DebrisObstacle[] {
+  const seed = opts?.seed ?? 9090;
+  const rand = mulberry32(seed);
+
+  const themeKind: StageThemeKind = opts?.themeKind ?? "temperate";
+
+  const debris: DebrisObstacle[] = [];
+  const roadHalfWidthM = track.widthM * 0.5;
+
+  // Place debris clusters with biome tuning.
+  // Rainforest: more debris. Arctic: less debris.
+  const minSpacing = themeKind === "rainforest" ? 80 : (themeKind === "arctic" ? 180 : 120);
+  const maxSpacing = themeKind === "rainforest" ? 160 : (themeKind === "arctic" ? 320 : 220);
+  let nextAt = 100 + rand() * 80;
+  let id = 1;
+
+  for (let s = nextAt; s < track.totalLengthM - 140; s = nextAt) {
+    // Skip near start/end.
+    if (s < 120 || s > track.totalLengthM - 180) {
+      nextAt = s + minSpacing;
+      continue;
+    }
+
+    const { p, normal } = pointAndNormalOnTrack(track, s);
+    const tx = -normal.y;
+    const ty = normal.x;
+
+    // Logs per cluster.
+    const count = themeKind === "rainforest"
+      ? (3 + Math.floor(rand() * 6))
+      : (themeKind === "arctic" ? (1 + Math.floor(rand() * 3)) : (2 + Math.floor(rand() * 5)));
+
+    const tangentAngle = Math.atan2(ty, tx);
+
+    // Occasionally place a true "blocker" log roughly perpendicular to the road, near center.
+    const hasBlocker = rand() < 0.28;
+
+    for (let i = 0; i < count; i++) {
+      const isBlocker = hasBlocker && i === 0;
+
+      // Keep mostly on-road, but with variation.
+      const lateral = isBlocker
+        ? (rand() * 2 - 1) * (roadHalfWidthM * 0.10)
+        : (rand() * 2 - 1) * (roadHalfWidthM * 0.65);
+      const along = isBlocker ? (rand() - 0.5) * 6 : (rand() - 0.5) * 18;
+
+      const x = p.x + normal.x * lateral + tx * along;
+      const y = p.y + normal.y * lateral + ty * along;
+
+      // Rotation styles: along-road, diagonal, and perpendicular blockers.
+      const styleRoll = rand();
+      const crossish = isBlocker || styleRoll < 0.18;
+      const diagonal = !crossish && styleRoll < 0.34;
+
+      let rotationRad = tangentAngle;
+      if (crossish) {
+        rotationRad = tangentAngle + Math.PI / 2;
+      } else if (diagonal) {
+        const sign = rand() < 0.5 ? -1 : 1;
+        rotationRad = tangentAngle + sign * (Math.PI / 4);
+      }
+
+      // Jitter (smaller for blockers so they read as deliberate road blocks).
+      const jitter = (rand() - 0.5) * (crossish ? 0.35 : 0.85);
+      rotationRad += jitter;
+
+      // Size.
+      const lengthM = isBlocker
+        ? (track.widthM * (1.05 + rand() * 0.35))
+        : (2.4 + rand() * 3.4); // 2.4-5.8m
+      const widthM = isBlocker
+        ? (0.28 + rand() * 0.32)
+        : (0.22 + rand() * 0.30); // 0.22-0.52m
+
+      debris.push({
+        id: id++,
+        kind: "debris",
+        sM: s,
+        x,
+        y,
+        lengthM,
+        widthM,
+        rotationRad,
+        integrity01: 1,
+        vx: 0,
+        vy: 0,
+        angularVelRadS: 0,
+        isDynamic: false
+      });
+    }
+
+    nextAt = s + minSpacing + rand() * (maxSpacing - minSpacing);
+  }
+
+  return debris;
 }

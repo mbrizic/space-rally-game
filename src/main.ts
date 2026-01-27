@@ -33,6 +33,14 @@ const net = initNetSession(game, {
     }
     try { game.stop(); } catch { }
     game.setNetWaitForPeer(true);
+
+    if (typeof setReconnectUi === "function" && lastMp) {
+      setReconnectUi("shown", `RECONNECT (${lastMp.code})`);
+      if (startMenuSub) startMenuSub.textContent = "Disconnected. Tap RECONNECT to retry.";
+    } else if (typeof setReconnectUi === "function") {
+      setReconnectUi("hidden");
+      if (startMenuSub) startMenuSub.textContent = "Disconnected.";
+    }
   }
 });
 
@@ -115,10 +123,14 @@ const joinForm = document.getElementById("mp-join-form") as HTMLDivElement | nul
 const hostBox = document.getElementById("mp-host") as HTMLDivElement | null;
 const hostCodeEl = document.getElementById("mp-code") as HTMLDivElement | null;
 const mpErrorEl = document.getElementById("mp-error") as HTMLDivElement | null;
+const mpReconnectRow = document.getElementById("mp-reconnect") as HTMLDivElement | null;
+const mpReconnectBtn = document.getElementById("btn-reconnect") as HTMLButtonElement | null;
 const netPanel = document.getElementById("net-panel") as HTMLDivElement | null;
 const mobileOverlay = document.getElementById("mobile-overlay") as HTMLDivElement | null;
 const exitFsBtn = document.getElementById("fullscreen-toggle") as HTMLButtonElement | null;
 const startMenuSub = document.getElementById("start-menu-sub") as HTMLDivElement | null;
+
+let lastMp: { mode: "host" | "client"; code: string } | null = null;
 
 // Hide the old corner invite UI by default; we'll show it only in multiplayer.
 if (netPanel) netPanel.style.display = "none";
@@ -170,6 +182,11 @@ const setMpError = (msg: string | null): void => {
   mpErrorEl.textContent = msg ?? "";
 };
 
+const setReconnectUi = (mode: "hidden" | "shown", label?: string): void => {
+  if (mpReconnectRow) mpReconnectRow.style.display = mode === "shown" ? "flex" : "none";
+  if (mpReconnectBtn && label) mpReconnectBtn.textContent = label;
+};
+
 const setJoinUi = (mode: "collapsed" | "expanded"): void => {
   if (joinCtaRow) joinCtaRow.style.display = mode === "collapsed" ? "flex" : "none";
   if (joinForm) joinForm.style.display = mode === "expanded" ? "block" : "none";
@@ -215,6 +232,7 @@ const beginSolo = (): void => {
   setMpError(null);
   pendingMultiplayerStart = null;
   setJoinUi("collapsed");
+  setReconnectUi("hidden");
   game.unlockAudioFromUserGesture();
   if (looksTouch && wantsFullscreen) void enterFullscreenLandscape();
   void finalizeStart({ multiplayer: false });
@@ -223,6 +241,7 @@ const beginSolo = (): void => {
 const beginHost = async (): Promise<void> => {
   setMpError(null);
   pendingMultiplayerStart = { mode: "host", started: false };
+  setReconnectUi("hidden");
 
   if (hostBox) hostBox.style.display = "none";
   setJoinUi("collapsed");
@@ -237,6 +256,7 @@ const beginHost = async (): Promise<void> => {
   if (startMenuSub) startMenuSub.textContent = "Creating room…";
   try {
     const code = await net.host();
+    lastMp = { mode: "host", code };
     if (hostBox) hostBox.style.display = "block";
     if (hostCodeEl) hostCodeEl.textContent = code;
     if (startMenuSub) startMenuSub.textContent = "Waiting for gunner to join…";
@@ -249,6 +269,7 @@ const beginHost = async (): Promise<void> => {
 const beginJoin = async (): Promise<void> => {
   setMpError(null);
   pendingMultiplayerStart = { mode: "client", started: false };
+  setReconnectUi("hidden");
 
   if (hostBox) hostBox.style.display = "none";
   setJoinUi("expanded");
@@ -256,11 +277,14 @@ const beginJoin = async (): Promise<void> => {
   game.unlockAudioFromUserGesture();
   if (looksTouch && wantsFullscreen) void enterFullscreenLandscape();
 
-  const code = (joinCodeInput?.value ?? "").trim();
-  if (!/^\d{4}$/.test(code.replace(/\D/g, ""))) {
+  const raw = (joinCodeInput?.value ?? "").trim();
+  const code = raw.replace(/\D/g, "").slice(0, 4);
+  if (!/^\d{4}$/.test(code)) {
     setMpError("Enter a 4-digit code.");
     return;
   }
+
+  lastMp = { mode: "client", code };
 
   if (startMenuSub) startMenuSub.textContent = "Joining room…";
   game.setNetWaitForPeer(true);
@@ -276,6 +300,44 @@ const beginJoin = async (): Promise<void> => {
     if (startMenuSub) startMenuSub.textContent = "";
   }
 };
+
+const attemptReconnect = async (): Promise<void> => {
+  if (!lastMp) {
+    setMpError("No previous multiplayer session.");
+    return;
+  }
+
+  setMpError(null);
+  pendingMultiplayerStart = { mode: lastMp.mode, started: false };
+
+  if (hostBox) hostBox.style.display = "none";
+  setJoinUi("collapsed");
+
+  if (startMenuSub) startMenuSub.textContent = "Reconnecting…";
+  game.setNetWaitForPeer(true);
+
+  try {
+    if (lastMp.mode === "host") {
+      await net.reconnectHost(lastMp.code);
+      if (hostBox) hostBox.style.display = "block";
+      if (hostCodeEl) hostCodeEl.textContent = lastMp.code;
+      if (startMenuSub) startMenuSub.textContent = "Waiting for gunner to join…";
+    } else {
+      await net.reconnectClient(lastMp.code);
+      if (startMenuSub) startMenuSub.textContent = "Connected. Waiting for host…";
+    }
+  } catch (e: any) {
+    const msg = String(e?.message ?? e);
+    if (msg === "ROOM_NOT_FOUND") setMpError("Room not found (expired?).");
+    else setMpError("Reconnect failed.");
+    if (startMenuSub) startMenuSub.textContent = "";
+  }
+};
+
+mpReconnectBtn?.addEventListener("click", (e) => {
+  e.preventDefault();
+  void attemptReconnect();
+});
 
 // If the user rotates after start, best-effort re-lock to landscape.
 window.addEventListener("orientationchange", () => {
@@ -297,12 +359,14 @@ hostDriverBtn?.addEventListener("click", (e) => {
 joinCtaBtn?.addEventListener("click", (e) => {
   e.preventDefault();
   setMpError(null);
+  setReconnectUi("hidden");
   setJoinUi("expanded");
 });
 
 joinBackBtn?.addEventListener("click", (e) => {
   e.preventDefault();
   setMpError(null);
+  setReconnectUi("hidden");
   setJoinUi("collapsed");
 });
 

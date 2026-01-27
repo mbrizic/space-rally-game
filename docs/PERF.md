@@ -88,16 +88,21 @@ In rough “cost/benefit” order:
 - Move CPU-heavy sim work off the main thread (Web Worker)
 - Add an optional WebGL renderer path (Canvas2D can become CPU-bound with lots of particles)
 
-### WASM
+### WASM + WebGPU
 
-Compiling parts of the simulation to WebAssembly can help *if* we keep the JS↔WASM boundary coarse-grained.
+See **[WEBGPU_WASM.md](WEBGPU_WASM.md)** for detailed implementation plans covering:
 
-Best candidates:
-- Physics stepping
-- Track projection / geometry helpers
+- **WebGPU particle system**: Move particles to GPU compute/render for 10x+ capacity
+- **WASM physics**: Compile car/enemy/track simulation to Rust for 2-3x speedup
 
-Tradeoffs:
-- More complexity (tooling, debugging)
-- Performance wins depend heavily on data layout + minimizing boundary crossings
+Key principle: establish baselines first (this harness + browser FPS bench), then measure improvements.
 
-If/when we do this, we should first lock down perf baselines (this harness + the browser FPS bench).
+**Quick summary of best candidates for WASM:**
+- Physics stepping (`stepCar`)
+- Track projection / geometry helpers (`projectToTrack`)
+- Enemy AI batched updates (`stepEnemy` × N)
+
+**WebGPU is best for:**
+- Particle simulation (compute shader)
+- Particle rendering (instanced draw calls)
+- Future: full 2D renderer with batching

@@ -41,6 +41,11 @@ export function createProjectile(
   const vx = (dx / safeDistance) * speed;
   const vy = (dy / safeDistance) * speed;
 
+  // Range limit: despawn after ~50m of travel.
+  const bulletRangeM = 50;
+  const safeSpeed = Math.max(1e-6, Math.abs(speed));
+  const maxAge = bulletRangeM / safeSpeed;
+
   return {
     id: nextProjectileId++,
     x,
@@ -48,7 +53,7 @@ export function createProjectile(
     vx,
     vy,
     age: 0,
-    maxAge: 5.0, // Despawn after 5 seconds
+    maxAge,
     damage,
     color,
     size

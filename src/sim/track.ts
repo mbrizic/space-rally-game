@@ -177,7 +177,7 @@ export function createDefaultTrackDefinition(): TrackDefinition {
     { x: 38, y: 28 },
     { x: 30, y: 18 }
   ];
-  const baseWidthM = 7.5;
+  const baseWidthM = 7.0;
 
   // Denser sampling makes the track smoother while keeping projection/collision simple.
   const points = sampleClosedCatmullRom(controlPoints, 10);
@@ -189,9 +189,9 @@ export function createDefaultTrackDefinition(): TrackDefinition {
 
     let widthMultiplier = 1.0;
     if ((s > 0.20 && s < 0.25) || (s > 0.45 && s < 0.50) || (s > 0.70 && s < 0.75)) {
-      widthMultiplier = 0.65;
+      widthMultiplier = 0.62;
     } else if ((s > 0.10 && s < 0.15) || (s > 0.35 && s < 0.40) || (s > 0.85 && s < 0.90)) {
-      widthMultiplier = 1.4;
+      widthMultiplier = 1.25;
     }
 
     segmentWidthsM.push(baseWidthM * widthMultiplier);
@@ -225,7 +225,7 @@ export function createProceduralTrackDefinition(seed: number, opts?: ProceduralT
   const controlCount = Math.max(8, Math.floor(opts?.controlPoints ?? 18));
   const baseRadiusM = Math.max(20, opts?.baseRadiusM ?? 60);
   const radiusJitterM = Math.max(0, opts?.radiusJitterM ?? 28);
-  const baseWidthM = Math.max(6, opts?.baseWidthM ?? 7.5);
+  const baseWidthM = Math.max(6, opts?.baseWidthM ?? 7.0);
   const samplesPerSegment = Math.max(6, Math.floor(opts?.samplesPerSegment ?? 9));
 
   const phase1 = rand() * Math.PI * 2;
@@ -259,14 +259,14 @@ export function createProceduralTrackDefinition(seed: number, opts?: ProceduralT
       0.18 * Math.sin(s * Math.PI * 2 * 2 + phase1) +
       0.08 * Math.sin(s * Math.PI * 2 * 4 + phase2);
     widthMult += (rand() - 0.5) * 0.02;
-    widthMult = clamp(widthMult, 0.70, 1.40);
+    widthMult = clamp(widthMult, 0.68, 1.28);
 
     for (const c of squeezeCenters) {
       const d = circular01Distance(s, c);
-      if (d < 0.030) widthMult *= lerp(0.70, 1, d / 0.030);
+      if (d < 0.030) widthMult *= lerp(0.66, 1, d / 0.030);
     }
 
-    rawWidthsM.push(baseWidthM * clamp(widthMult, 0.60, 1.50));
+    rawWidthsM.push(baseWidthM * clamp(widthMult, 0.58, 1.32));
   }
   // Smooth the widths to avoid jarring transitions
   const segmentWidthsM = smoothWidths(rawWidthsM, 7);
@@ -693,7 +693,7 @@ function tryCreatePointToPointTrackDefinition(seed: number): TrackDefinition {
     const startRoadAngle = Math.atan2(startDirNorm.y, startDirNorm.x);
     const endRoadAngle = Math.atan2(newEndDirNorm.y, newEndDirNorm.x);
   
-    const baseWidthM = 7.5;
+    const baseWidthM = 7.0;
     
     // Width variance - smooth sinusoidal change with minimal per-segment noise
     const rawWidthsM: number[] = [];
@@ -701,7 +701,7 @@ function tryCreatePointToPointTrackDefinition(seed: number): TrackDefinition {
       const t = i / allPoints.length;
       // Slower sine wave for gradual transitions, reduced random noise
       let widthMult = 1 + 0.15 * Math.sin(t * Math.PI * 3) + (rand() - 0.5) * 0.04;
-      widthMult = clamp(widthMult, 0.75, 1.25);
+      widthMult = clamp(widthMult, 0.72, 1.20);
       rawWidthsM.push(baseWidthM * widthMult);
     }
     // Smooth the widths to avoid sudden jumps
@@ -737,7 +737,7 @@ function tryCreatePointToPointTrackDefinition(seed: number): TrackDefinition {
   const startRoadAngle = Math.atan2(startDirNorm.y, startDirNorm.x);
   const endRoadAngle = Math.atan2(endDirNorm.y, endDirNorm.x);
   
-  const baseWidthM = 7.5;
+  const baseWidthM = 7.0;
   
   // Width variance - smooth sinusoidal change with minimal per-segment noise
   const rawWidthsM: number[] = [];
@@ -745,7 +745,7 @@ function tryCreatePointToPointTrackDefinition(seed: number): TrackDefinition {
     const t = i / allPoints.length;
     // Slower sine wave for gradual transitions, reduced random noise
     let widthMult = 1 + 0.15 * Math.sin(t * Math.PI * 3) + (rand() - 0.5) * 0.04;
-    widthMult = clamp(widthMult, 0.75, 1.25);
+    widthMult = clamp(widthMult, 0.72, 1.20);
     rawWidthsM.push(baseWidthM * widthMult);
   }
   // Smooth the widths to avoid sudden jumps

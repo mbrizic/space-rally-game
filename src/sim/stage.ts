@@ -138,8 +138,8 @@ export function stageMetaFromSeed(seed: number): { theme: StageThemeRef; zones: 
   // Rain happens 0-1 times per map, covering 20-35% of the track.
   // Fog is a weather zone that reduces visibility (arctic: very common for testing, temperate: moderate).
   const hasRain = theme.allowsRain && rand() < 0.65; // 65% chance of rain zone
-  // Fog: arctic 85% for testing, temperate 35%, others 4%
-  const fogChance = themeRef.kind === "arctic" ? 0.85 : themeRef.kind === "temperate" ? 0.35 : 0.04;
+  // Fog: arctic is intentionally common; bump slightly for more frequent arctic fog.
+  const fogChance = themeRef.kind === "arctic" ? 0.92 : themeRef.kind === "temperate" ? 0.35 : 0.04;
   const hasFog = theme.allowsFog && rand() < fogChance;
   const hasElectrical = theme.allowsElectrical && rand() < 0.06; // 6% chance electrical
 

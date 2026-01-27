@@ -2,9 +2,13 @@ import { mulberry32 } from "./rng";
 import type { Track } from "./track";
 import { pointOnTrack } from "./track";
 
+// Temporary gameplay tuning: disable the balrog/colossus spawn.
+const ENABLE_COLOSSUS = false;
+
 export enum EnemyType {
   ZOMBIE = "zombie",
-  TANK = "tank"
+  TANK = "tank",
+  COLOSSUS = "colossus"
 }
 
 export type Enemy = {
@@ -35,6 +39,19 @@ function nextRand01(state: number): { state: number; r: number } {
   return { state: s, r: s / 4294967296 };
 }
 
+function wrapAngleRad(a: number): number {
+  // Wrap to [-pi, pi)
+  const twoPi = Math.PI * 2;
+  a = ((a % twoPi) + twoPi) % twoPi;
+  if (a >= Math.PI) a -= twoPi;
+  return a;
+}
+
+function lerpAngleRad(from: number, to: number, t: number): number {
+  const d = wrapAngleRad(to - from);
+  return wrapAngleRad(from + d * t);
+}
+
 /**
  * Create a new enemy
  */
@@ -46,8 +63,9 @@ export function createEnemy(
   opts?: { wanderAngle?: number; wanderRngState?: number; id?: number }
 ): Enemy {
   const isTank = type === EnemyType.TANK;
-  const health = isTank ? 5 : 1;
-  const radius = isTank ? 0.9 : 0.6;
+  const isColossus = type === EnemyType.COLOSSUS;
+  const health = isColossus ? 42 : isTank ? 5 : 1;
+  const radius = isColossus ? 4.5 : isTank ? 0.9 : 0.6;
 
   const id = typeof opts?.id === "number" ? Math.floor(opts.id) : nextEnemyId++;
   if (id >= nextEnemyId) nextEnemyId = id + 1;
@@ -91,17 +109,58 @@ export function createEnemy(
 export function stepEnemy(enemy: Enemy, dtSeconds: number, track: Track): Enemy {
   if (enemy.health <= 0) return enemy;
 
+  if (enemy.type === EnemyType.COLOSSUS) {
+    // The colossus is a road-blocking mini-boss. It crawls along the road toward the start.
+    const prevX = enemy.x;
+    const prevY = enemy.y;
+
+    const speed = 1.3; // m/s (slower, more avoidable)
+    const L = track.totalLengthM;
+    let s = enemy.trackSegmentHint - speed * dtSeconds;
+    while (s < 0) s += L;
+    while (s >= L) s -= L;
+
+    const { p, headingRad } = pointOnTrack(track, s);
+    const normal = { x: -Math.sin(headingRad), y: Math.cos(headingRad) };
+
+    // Small deterministic sway for a "living" feel.
+    const sway = Math.sin(enemy.timeAlive * 0.7) * (track.widthM * 0.06);
+    const x = p.x + normal.x * sway;
+    const y = p.y + normal.y * sway;
+
+    const vx = (x - prevX) / Math.max(1e-6, dtSeconds);
+    const vy = (y - prevY) / Math.max(1e-6, dtSeconds);
+
+    // Facing: towards movement direction (towards start = reverse track heading).
+    const face = headingRad + Math.PI;
+
+    return {
+      ...enemy,
+      x,
+      y,
+      vx,
+      vy,
+      wanderAngle: face,
+      timeAlive: enemy.timeAlive + dtSeconds,
+      trackSegmentHint: s
+    };
+  }
+
   // Faster zombies, slower tanks
   const speed = enemy.type === EnemyType.ZOMBIE ? 2.8 : 0.8;
 
-  // Find nearest point on track to bias movement toward road
-  const searchStart = Math.max(0, enemy.trackSegmentHint - 20);
-  const searchEnd = Math.min(track.totalLengthM, enemy.trackSegmentHint + 20);
+  // Find nearest point on track to bias movement toward road.
+  // IMPORTANT: the track is effectively a loop (pointOnTrack wraps), so this search must also wrap
+  // or enemies can "lose" the road near the seam and wander forever.
+  const L = track.totalLengthM;
+  const hint = ((enemy.trackSegmentHint % L) + L) % L;
+  const searchWindowM = 60;
+  const stepM = 5;
   let closestDist = Infinity;
-  let closestS = enemy.trackSegmentHint;
+  let closestS = hint;
 
-  // Simple search for nearest track point (could be optimized)
-  for (let s = searchStart; s < searchEnd; s += 5) {
+  for (let off = -searchWindowM; off <= searchWindowM; off += stepM) {
+    const s = ((hint + off) % L + L) % L;
     const { p } = pointOnTrack(track, s);
     const dist = Math.hypot(enemy.x - p.x, enemy.y - p.y);
     if (dist < closestDist) {
@@ -110,36 +169,38 @@ export function stepEnemy(enemy: Enemy, dtSeconds: number, track: Track): Enemy 
     }
   }
 
-  const { p: trackPoint } = pointOnTrack(track, closestS);
+  const { p: trackPoint, headingRad: trackHeadingRad } = pointOnTrack(track, closestS);
 
   // Calculate direction to road
   const toRoadX = trackPoint.x - enemy.x;
   const toRoadY = trackPoint.y - enemy.y;
   const distToRoad = Math.hypot(toRoadX, toRoadY);
 
-  // Bias toward road if we're far from it
-  let roadBias = 0;
+  // When on the road, steer mostly along the road (tangent), not straight toward the centerline.
+  // When near/off the edge, bias back toward the road center.
   const roadHalfWidth = track.widthM * 0.5;
-  if (distToRoad > roadHalfWidth + 2) {
-    // Far from road - strong bias to return
-    roadBias = 0.7;
-  } else if (distToRoad > roadHalfWidth * 0.5) {
-    // Getting off road - medium bias
-    roadBias = 0.4;
-  } else {
-    // On road - weak bias (more random)
-    roadBias = 0.15;
-  }
+  const toCenterAngle = Math.atan2(toRoadY, toRoadX);
 
-  const roadAngle = Math.atan2(toRoadY, toRoadX);
+  const tangentF = wrapAngleRad(trackHeadingRad);
+  const tangentB = wrapAngleRad(trackHeadingRad + Math.PI);
+  const dF = Math.abs(wrapAngleRad(tangentF - enemy.wanderAngle));
+  const dB = Math.abs(wrapAngleRad(tangentB - enemy.wanderAngle));
+  const tangentAngle = dF <= dB ? tangentF : tangentB;
 
-  // Random wander component (deterministic)
+  // 0 when comfortably on-road, 1 when off-road.
+  const edgeStart = roadHalfWidth * 0.75;
+  const return01 = Math.max(0, Math.min(1, (distToRoad - edgeStart) / 4.5));
+
+  // Random wander (deterministic). Strongest near the road center.
   const n = nextRand01(enemy.wanderRngState);
-  const wanderChange = (n.r - 0.5) * 0.5;
-  const wanderAngle = enemy.wanderAngle + wanderChange;
+  const wanderStrength = 0.85 * (1 - 0.88 * return01);
+  const wanderChange = (n.r - 0.5) * wanderStrength;
+  let wanderAngle = wrapAngleRad(enemy.wanderAngle + wanderChange);
+  // Keep wander roughly aligned with the road direction.
+  wanderAngle = lerpAngleRad(wanderAngle, tangentAngle, 0.38);
 
-  // Blend road bias with wander
-  const targetAngle = roadAngle * roadBias + wanderAngle * (1 - roadBias);
+  const returnBias = 0.94 * return01;
+  const targetAngle = lerpAngleRad(wanderAngle, toCenterAngle, returnBias);
 
   const vx = Math.cos(targetAngle) * speed;
   const vy = Math.sin(targetAngle) * speed;
@@ -226,6 +287,26 @@ export function generateEnemies(track: Track, opts?: { seed?: number; count?: nu
 
     // Schedule next enemy
     nextEnemyAt += sampleSpacing();
+  }
+
+  // Add a single road-blocking colossus (mini-boss) per stage.
+  // Deterministic position/shape via the seeded RNG.
+  if (ENABLE_COLOSSUS) {
+    const idBase = (seed >>> 0) * 1000;
+    const bossId = idBase + 999;
+    const sMin = 220;
+    const sMax = Math.max(sMin + 1, track.totalLengthM - 260);
+    let sBoss = sMin + rand() * (sMax - sMin);
+    // Prefer later in the stage.
+    sBoss = Math.min(sMax, Math.max(sMin, sBoss * 0.85 + (track.totalLengthM * 0.55) * 0.15));
+
+    const { p } = pointOnTrack(track, sBoss);
+    const boss = createEnemy(p.x, p.y, sBoss, EnemyType.COLOSSUS, { id: bossId, wanderRngState: Math.floor(rand() * 0xffffffff) >>> 0 });
+    // Make it fill the road width.
+    boss.radius = track.widthM * 0.55;
+    boss.maxHealth = 42;
+    boss.health = 42;
+    enemies.push(boss);
   }
 
   return enemies;

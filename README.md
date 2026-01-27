@@ -16,6 +16,8 @@
 - 🏁 **Procedural tracks** - Generate rally stages (press `N` for a new one)
 - 💨 **Drift scoring** - Show off your Scandinavian flicks
 - 🛠️ **Track editor** - Create custom stages (press `T`)
+- 🪵 **Road debris hazards** - Deterministic fallen logs that destabilize (no damage) + navigator callouts when close
+- 🔥 **Colossus boss** - A huge enemy that chases you and shoots fireballs
 
 
 ## The Co-Op Mode
@@ -43,7 +45,11 @@ Notes:
 - The connection is **P2P WebRTC** when possible.
 - For strict NAT/corporate/cellular networks, the game supports **TURN (coturn)** relay as a fallback.
 
-See [MULTIPLAYER.md](MULTIPLAYER.md) for the full architecture + deployment notes.
+Quality-of-life:
+- If the connection drops, the UI offers a simple **Reconnect** action.
+- The Debug panel includes basic **network stats** (RTT + snapshot rate) for troubleshooting.
+
+See [docs/MULTIPLAYER.md](docs/MULTIPLAYER.md) for the full architecture + deployment notes.
 
 ## Stage Seeds (How Tracks Work)
 
@@ -65,16 +71,15 @@ npm test
 npm run perf:run
 ```
 
-See `PERF.md` for details.
-See [PERF.md](PERF.md) for details.
+See [docs/PERF.md](docs/PERF.md) for details.
 ## Lore
 
-See `LORE.md` for story tone, premise, and co-op role hooks (including volatile cargo).
+See [docs/LORE.md](docs/LORE.md) for story tone, premise, and co-op role hooks (including volatile cargo).
 You’re two contractors driving a “delivery platform” for **SCRAPS** (*Salvage Contracts & Risk-Adjusted Procurement Service*), trying to keep cargo stable and meet deadlines while the world politely falls apart.
 
 Tagline vibe: “Space is hard. Shipping shouldn’t be.”
 
-More story tone + future hooks live in [LORE.md](LORE.md).
+More story tone + future hooks live in [docs/LORE.md](docs/LORE.md).
 ## Deployment
 
 ```bash
@@ -82,7 +87,7 @@ npm run deploy        # defaults to test
 npm run deploy:prod   # only when explicitly requested
 ```
 
-See `DEPLOY.md` for details.
+See [docs/DEPLOY.md](docs/DEPLOY.md) for details.
 
 Note: the production build is configured to work from subfolders (e.g. `/test/`) via `vite.config.ts`.
 

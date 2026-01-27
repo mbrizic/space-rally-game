@@ -45,7 +45,7 @@ export function createWeaponStats(type: WeaponType): WeaponStats {
             return {
                 name: "Rifle",
                 type: WeaponType.RIFLE,
-                damage: 3.5,
+                damage: 5.2,
                 fireInterval: 0.6,
                 projectileSpeed: 350,
                 projectileCount: 1,

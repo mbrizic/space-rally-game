@@ -41,6 +41,10 @@ Common message shapes:
 - `{"type":"ice","to":"peerB","candidate":{...}}`
 - `{"type":"ping","t":123}`
 
+Signaling keepalive / RTT:
+- Client → server: `{"type":"ping","t":123}`
+- Server → client: `{"type":"pong","echo":123,"t":1700000000000}`
+
 The server does not interpret most message types beyond basic routing. This means client-side control messages (e.g. `restart-ice`) can be added without changing the server, as long as they include `to`.
 
 Server adds:

@@ -11,6 +11,14 @@ type NetState = {
   mode: "offline" | "host" | "client";
 };
 
+type NetStats = {
+  wsRttMs: number | null;
+  wsRttEmaMs: number | null;
+  dcRxHz: number | null;
+  dcTxHz: number | null;
+  dcLastRxAtMs: number | null;
+};
+
 type WelcomeMsg = {
   type: "welcome";
   room: string;
@@ -123,6 +131,8 @@ export function initNetSession(
 ): {
   host: () => Promise<string>;
   join: (roomCode: string) => Promise<void>;
+  reconnectHost: (roomCode: string) => Promise<void>;
+  reconnectClient: (roomCode: string) => Promise<void>;
   disconnect: () => void;
   isPeerReady: () => boolean;
 } {
@@ -142,6 +152,7 @@ export function initNetSession(
   let pc: RTCPeerConnection | null = null;
   let dc: RTCDataChannel | null = null;
   let pingTimer: number | null = null;
+  let statsTimer: number | null = null;
   let hostSendTimer: number | null = null;
   let clientSendTimer: number | null = null;
   let connectWatchdogTimer: number | null = null;
@@ -149,15 +160,33 @@ export function initNetSession(
   let pendingIce: RTCIceCandidateInit[] = [];
   let peerReady = false;
 
+  const stats: NetStats = {
+    wsRttMs: null,
+    wsRttEmaMs: null,
+    dcRxHz: null,
+    dcTxHz: null,
+    dcLastRxAtMs: null
+  };
+
+  let wsPingSentAtMs: number | null = null;
+  let dcRxCount = 0;
+  let dcTxCount = 0;
+
   let hostRole: PlayerRole = PlayerRole.DRIVER;
   let clientRole: PlayerRole = PlayerRole.NAVIGATOR;
 
   const render = (): void => {
+    const rtt = stats.wsRttEmaMs ?? stats.wsRttMs;
+    const rxAgeMs = stats.dcLastRxAtMs ? Math.max(0, Date.now() - stats.dcLastRxAtMs) : null;
     const lines = [
       `mode: ${state.mode}`,
       `room: ${state.room || "-"}`,
       `ws: ${state.wsConnected ? "up" : "down"}`,
       `p2p: ${state.dcState}`,
+      rtt !== null ? `rtt: ${Math.round(rtt)}ms (signal)` : "",
+      stats.dcRxHz !== null ? `snap rx: ${stats.dcRxHz.toFixed(1)} Hz` : "",
+      stats.dcTxHz !== null ? `snap tx: ${stats.dcTxHz.toFixed(1)} Hz` : "",
+      rxAgeMs !== null ? `last rx: ${(rxAgeMs / 1000).toFixed(1)}s` : "",
       state.lastError ? `err: ${state.lastError}` : ""
     ].filter(Boolean);
 
@@ -174,12 +203,19 @@ export function initNetSession(
     if (hostSendTimer) window.clearInterval(hostSendTimer);
     if (clientSendTimer) window.clearInterval(clientSendTimer);
     if (connectWatchdogTimer) window.clearTimeout(connectWatchdogTimer);
+    if (statsTimer) window.clearInterval(statsTimer);
     hostSendTimer = null;
     clientSendTimer = null;
     connectWatchdogTimer = null;
+    statsTimer = null;
     offerRestartCount = 0;
     pendingIce = [];
     peerReady = false;
+    stats.dcRxHz = null;
+    stats.dcTxHz = null;
+    stats.dcLastRxAtMs = null;
+    dcRxCount = 0;
+    dcTxCount = 0;
     opts?.onPeerDisconnected?.();
     game.setNetShootPulseHandler(null);
     try { dc?.close(); } catch { }
@@ -306,6 +342,19 @@ export function initNetSession(
       render();
       if (!dc) return;
 
+      if (statsTimer) window.clearInterval(statsTimer);
+      // Update snapshot rates once per second.
+      statsTimer = window.setInterval(() => {
+        // Host sends 30Hz snapshots; client sends 30Hz nav/driver messages.
+        const rx = dcRxCount;
+        const tx = dcTxCount;
+        dcRxCount = 0;
+        dcTxCount = 0;
+        stats.dcRxHz = rx;
+        stats.dcTxHz = tx;
+        render();
+      }, 1000);
+
       if (connectWatchdogTimer) {
         window.clearTimeout(connectWatchdogTimer);
         connectWatchdogTimer = null;
@@ -322,6 +371,7 @@ export function initNetSession(
           if (!dc || dc.readyState !== "open") return;
           try {
             dc.send(JSON.stringify({ type: "state", ...game.getNetSnapshot() }));
+            dcTxCount += 1;
           } catch { }
         }, 33);
 
@@ -354,13 +404,13 @@ export function initNetSession(
               // Send projectile positions for rendering on host
               projectiles: projectiles.length > 0 ? projectiles : undefined
             };
-            try { dc.send(JSON.stringify(payload)); } catch { }
+            try { dc.send(JSON.stringify(payload)); dcTxCount += 1; } catch { }
           } else if (game.getRoleExternal() === PlayerRole.DRIVER) {
             const payload = {
               type: "driver",
               input: game.getInputStateExternal()
             };
-            try { dc.send(JSON.stringify(payload)); } catch { }
+            try { dc.send(JSON.stringify(payload)); dcTxCount += 1; } catch { }
           }
         }, 33);
 
@@ -379,6 +429,12 @@ export function initNetSession(
       if (typeof e.data !== "string") return;
       let msg: any;
       try { msg = JSON.parse(e.data); } catch { return; }
+
+      // Snapshot stats
+      stats.dcLastRxAtMs = Date.now();
+      if (typeof msg?.type === "string") {
+        if (msg.type === "state") dcRxCount += 1;
+      }
 
       if (msg?.type === "ready" && state.mode === "host") {
         peerReady = true;
@@ -502,8 +558,12 @@ export function initNetSession(
       setError(null);
       render();
       if (pingTimer) window.clearInterval(pingTimer);
+      // Initial ping for fast RTT.
+      wsPingSentAtMs = Date.now();
+      try { ws?.send(JSON.stringify({ type: "ping", t: wsPingSentAtMs })); } catch { }
       pingTimer = window.setInterval(() => {
-        try { ws?.send(JSON.stringify({ type: "ping", t: Date.now() })); } catch { }
+        wsPingSentAtMs = Date.now();
+        try { ws?.send(JSON.stringify({ type: "ping", t: wsPingSentAtMs })); } catch { }
       }, 10_000);
     };
 
@@ -512,6 +572,7 @@ export function initNetSession(
       render();
       if (pingTimer) window.clearInterval(pingTimer);
       pingTimer = null;
+      wsPingSentAtMs = null;
       resetP2p();
     };
 
@@ -536,6 +597,18 @@ export function initNetSession(
     ws.onmessage = async (ev) => {
       let msg: ServerMsg;
       try { msg = JSON.parse(String(ev.data)) as ServerMsg; } catch { return; }
+
+      if (msg.type === "pong") {
+        const echo = typeof (msg as any).echo === "number" ? (msg as any).echo : null;
+        const sentAt = echo ?? wsPingSentAtMs;
+        if (typeof sentAt === "number") {
+          const rttMs = Math.max(0, Date.now() - sentAt);
+          stats.wsRttMs = rttMs;
+          stats.wsRttEmaMs = stats.wsRttEmaMs === null ? rttMs : (stats.wsRttEmaMs * 0.8 + rttMs * 0.2);
+          render();
+        }
+        return;
+      }
 
       if (msg.type === "error") {
         const code = (msg as ErrorMsg).code;
@@ -666,6 +739,33 @@ export function initNetSession(
     render();
   };
 
+  const reconnectHost = async (roomCode: string): Promise<void> => {
+    hostRole = PlayerRole.DRIVER;
+    clientRole = PlayerRole.NAVIGATOR;
+
+    state.mode = "host";
+    game.setNetMode("host");
+    game.setRoleExternal(hostRole);
+    game.setNetWaitForPeer(true);
+
+    const code = normalize4DigitCode(roomCode);
+    if (!code) throw new Error("BAD_CODE");
+
+    // Prefer re-joining an existing room (create=0). If it expired, recreate it.
+    try {
+      await connectWithMode(code, false);
+      return;
+    } catch (e: any) {
+      if (String(e?.message ?? e) !== "ROOM_NOT_FOUND") throw e;
+    }
+
+    await connectWithMode(code, true);
+  };
+
+  const reconnectClient = async (roomCode: string): Promise<void> => {
+    await join(roomCode);
+  };
+
   const host = async (): Promise<string> => {
     hostRole = PlayerRole.DRIVER;
     clientRole = PlayerRole.NAVIGATOR;
@@ -702,5 +802,5 @@ export function initNetSession(
   };
 
   render();
-  return { host, join, disconnect, isPeerReady: () => peerReady };
+  return { host, join, reconnectHost, reconnectClient, disconnect, isPeerReady: () => peerReady };
 }
