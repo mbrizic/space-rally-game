@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .DS_Store
+# Ignore perf run artifacts while keeping the append-only history file tracked
+perf/runs/
 .context/
 tsconfig.tsbuildinfo
 coverage

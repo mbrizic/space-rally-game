@@ -1,0 +1,10 @@
+# Space Rally perf history
+#
+# This file is append-only. Each run adds one TSV row.
+# Tip: filter by PERF_LABEL or compare two commits.
+#
+# Columns:
+# dateIso	commit	label	node	buildMs	distBytes	trackPointOnTrack_nsPerCall	enemyStep_nsPerStep
+
+dateIso	commit	label	node	buildMs	distBytes	trackPointOnTrack_nsPerCall	enemyStep_nsPerStep
+2026-01-27T11:02:31.342Z	f508a9e	default	v18.17.0	1612	167375	151	1685

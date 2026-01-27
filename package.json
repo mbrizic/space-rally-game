@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "perf:run": "vitest run --config vitest.perf.config.ts",
     "deploy": "./deploy.sh test",
     "deploy:test": "./deploy.sh test",
     "deploy:prod": "./deploy.sh prod",
