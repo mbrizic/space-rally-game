@@ -31,6 +31,14 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 
 - [ ] Ensure enemy placement remains deterministic and purely seed-driven (esp. clusters/gaps) (details: `MULTIPLAYER.md`)
 
+## Performance
+
+- [x] Add perf harness (build time, dist size, sim microbench) + history log (details: `PERF.md`)
+- [x] Perf logs include % delta vs previous run (details: `PERF.md`)
+- [ ] Rendering perf benchmark (browser): record + deterministic playback + Playwright runner (details: `PERF.md`)
+- [ ] Add perf parameter sweep runner (fog/rain/particles presets → FPS + frame-time stats) (details: `PERF.md`)
+- [ ] Monitor bundle gzip sizes (main JS + total assets) (details: `PERF.md`)
+
 ## Feel / UX / Polish
 
 - [ ] Tune surfaces + audio feel (gravel slide vs drift intensity, ice feel)

@@ -60,7 +60,12 @@ npm install
 npm run dev
 npm run build
 npm test
+
+# Perf harness
+npm run perf:run
 ```
+
+See `PERF.md` for details.
 
 ## Deployment
 
