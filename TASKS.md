@@ -16,6 +16,7 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 - [ ] Improve client playback smoothing / reduce drift (details: `MULTIPLAYER_PLAYBACK.md`)
 - [ ] Add a simple reconnect UX (detect disconnect → show "reconnect" CTA) (details: `MULTIPLAYER.md`)
 - [ ] Add basic network debug overlay / stats (RTT, snapshot rate, mode) (details: `MULTIPLAYER.md`)
+- [ ] Add a multiplayer integration test (connect host+client, assert handshake/ready + basic message flow) (details: `MULTIPLAYER.md`)
 - [x] Audio strategy for multiplayer: Client plays local engine/skid audio based on host-synced state
 
 ## Co-op Mode
