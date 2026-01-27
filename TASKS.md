@@ -53,7 +53,7 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 
 - [ ] Player 3 (Engineer): power distribution (shield/engine/weapons) + damage control
 - [ ] Player 4 (Intel/Hacker): forward-scout drone + tagging/hacking gates
-- [ ] Weather: sandstorms (visibility), rain (traction), electrical storms (electronics/minimap), in progress
 - [ ] Bullet time: cooperative slowdown mechanics
 - [ ] Extra co-driver cues: visual pings, callout macros, “danger” meter
 - [ ] Optional idea: navigator ping/marker system (map click → driver-world marker) (details: `COOP_MODE.md`)
+- [ ] Boss fights - ultra big enemy on the stage that shoots at players - they leave the car and then the game becomes a top-down shooter until they get rid of him (will need to implement completely different, Crimsonland-like gameplay)

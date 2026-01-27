@@ -43,7 +43,7 @@ Notes:
 - The connection is **P2P WebRTC** when possible.
 - For strict NAT/corporate/cellular networks, the game supports **TURN (coturn)** relay as a fallback.
 
-See `MULTIPLAYER.md` for the full architecture + deployment notes.
+See [MULTIPLAYER.md](MULTIPLAYER.md) for the full architecture + deployment notes.
 
 ## Stage Seeds (How Tracks Work)
 
@@ -66,7 +66,15 @@ npm run perf:run
 ```
 
 See `PERF.md` for details.
+See [PERF.md](PERF.md) for details.
+## Lore
 
+See `LORE.md` for story tone, premise, and co-op role hooks (including volatile cargo).
+You’re two contractors driving a “delivery platform” for **SCRAPS** (*Salvage Contracts & Risk-Adjusted Procurement Service*), trying to keep cargo stable and meet deadlines while the world politely falls apart.
+
+Tagline vibe: “Space is hard. Shipping shouldn’t be.”
+
+More story tone + future hooks live in [LORE.md](LORE.md).
 ## Deployment
 
 ```bash
