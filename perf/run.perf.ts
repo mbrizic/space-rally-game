@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
+import zlib from "node:zlib";
 
 import { createProceduralTrackDefinition, createTrackFromDefinition, pointOnTrack } from "../src/sim/track";
 import { generateEnemies, stepEnemy } from "../src/sim/enemy";
@@ -22,11 +23,51 @@ function sumDirBytes(dir: string): number {
   return total;
 }
 
+function listFilesRecursive(dir: string): string[] {
+  const out: string[] = [];
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) out.push(...listFilesRecursive(p));
+    else if (e.isFile()) out.push(p);
+  }
+  return out;
+}
+
+function gzipBytesOfFile(filePath: string): number {
+  const buf = fs.readFileSync(filePath);
+  return zlib.gzipSync(buf, { level: 9 }).byteLength;
+}
+
+function resolveEntryJsFromDist(distDir: string): string | null {
+  const htmlPath = path.join(distDir, "index.html");
+  if (fs.existsSync(htmlPath)) {
+    const html = fs.readFileSync(htmlPath, "utf8");
+    const m = html.match(/<script[^>]+src="([^"]+)"[^>]*>\s*<\/script>/i);
+    if (m?.[1]) {
+      const src = m[1].replace(/^\//, "");
+      const p = path.join(distDir, src);
+      if (fs.existsSync(p)) return p;
+    }
+  }
+
+  const assetsDir = path.join(distDir, "assets");
+  if (!fs.existsSync(assetsDir)) return null;
+  const files = fs.readdirSync(assetsDir);
+  const js = files
+    .filter((f) => f.endsWith(".js") && !f.endsWith(".map"))
+    .map((f) => path.join(assetsDir, f));
+  if (js.length === 0) return null;
+  // Heuristic: main chunk is usually the largest JS file.
+  js.sort((a, b) => fs.statSync(b).size - fs.statSync(a).size);
+  return js[0] ?? null;
+}
+
 function nsPerOp(totalNs: number, ops: number): number {
   return totalNs / Math.max(1, ops);
 }
 
-const BASE_COLUMNS = [
+const MIN_COLUMNS = [
   "dateIso",
   "commit",
   "label",
@@ -37,9 +78,17 @@ const BASE_COLUMNS = [
   "enemyStep_nsPerStep"
 ] as const;
 
+const BASE_COLUMNS = [
+  ...MIN_COLUMNS,
+  "distGzipBytes",
+  "entryJsGzipBytes"
+] as const;
+
 const PCT_COLUMNS = [
   "buildMs_pct",
   "distBytes_pct",
+  "distGzipBytes_pct",
+  "entryJsGzipBytes_pct",
   "trackPointOnTrack_nsPerCall_pct",
   "enemyStep_nsPerStep_pct"
 ] as const;
@@ -118,17 +167,23 @@ function toNumber(v: string | undefined): number {
 function computePctColumns(curr: BaseRow, prev: BaseRow | null): Pick<FullRow, (typeof PCT_COLUMNS)[number]> {
   const buildMs = toNumber(curr.buildMs);
   const distBytes = toNumber(curr.distBytes);
+  const distGzipBytes = toNumber(curr.distGzipBytes);
+  const entryJsGzipBytes = toNumber(curr.entryJsGzipBytes);
   const trackNs = toNumber(curr.trackPointOnTrack_nsPerCall);
   const enemyNs = toNumber(curr.enemyStep_nsPerStep);
 
   const prevBuildMs = prev ? toNumber(prev.buildMs) : NaN;
   const prevDistBytes = prev ? toNumber(prev.distBytes) : NaN;
+  const prevDistGzipBytes = prev ? toNumber(prev.distGzipBytes) : NaN;
+  const prevEntryJsGzipBytes = prev ? toNumber(prev.entryJsGzipBytes) : NaN;
   const prevTrackNs = prev ? toNumber(prev.trackPointOnTrack_nsPerCall) : NaN;
   const prevEnemyNs = prev ? toNumber(prev.enemyStep_nsPerStep) : NaN;
 
   return {
     buildMs_pct: pctChange(buildMs, prevBuildMs),
     distBytes_pct: pctChange(distBytes, prevDistBytes),
+    distGzipBytes_pct: pctChange(distGzipBytes, prevDistGzipBytes),
+    entryJsGzipBytes_pct: pctChange(entryJsGzipBytes, prevEntryJsGzipBytes),
     trackPointOnTrack_nsPerCall_pct: pctChange(trackNs, prevTrackNs),
     enemyStep_nsPerStep_pct: pctChange(enemyNs, prevEnemyNs)
   };
@@ -162,6 +217,15 @@ describe("perf: build + sim microbench", () => {
     // Dist size
     const distDir = path.join(repoRoot, "dist");
     const distBytes = fs.existsSync(distDir) ? sumDirBytes(distDir) : 0;
+
+    // Gzip sizes (exclude sourcemaps)
+    const distFiles = fs.existsSync(distDir) ? listFilesRecursive(distDir) : [];
+    const distGzipBytes = distFiles
+      .filter((p) => !p.endsWith(".map"))
+      .reduce((sum, p) => sum + gzipBytesOfFile(p), 0);
+
+    const entryJs = fs.existsSync(distDir) ? resolveEntryJsFromDist(distDir) : null;
+    const entryJsGzipBytes = entryJs ? gzipBytesOfFile(entryJs) : 0;
 
     // --- Sim microbenchmarks ---
     // Track projection benchmark: pointOnTrack() is used heavily for placement / AI.
@@ -203,6 +267,8 @@ describe("perf: build + sim microbench", () => {
       node,
       buildMs: String(buildMs),
       distBytes: String(distBytes),
+      distGzipBytes: String(distGzipBytes),
+      entryJsGzipBytes: String(entryJsGzipBytes),
       trackPointOnTrack_nsPerCall: String(Math.round(trackPointOnTrack_nsPerCall)),
       enemyStep_nsPerStep: String(Math.round(enemyStep_nsPerStep))
     };
@@ -211,9 +277,9 @@ describe("perf: build + sim microbench", () => {
     const existingText = fs.existsSync(historyPath) ? fs.readFileSync(historyPath, "utf8") : "";
     const parsed = parseHistory(existingText);
 
-    const baseHeaderOk = BASE_COLUMNS.every((c) => parsed.headerCols.includes(c));
+    const baseHeaderOk = MIN_COLUMNS.every((c) => parsed.headerCols.includes(c));
     if (!baseHeaderOk && parsed.rows.length > 0) {
-      throw new Error(`perf history header is missing required columns: ${BASE_COLUMNS.join(", ")}`);
+      throw new Error(`perf history header is missing required columns: ${MIN_COLUMNS.join(", ")}`);
     }
 
     // Convert existing rows into base rows using the existing header.

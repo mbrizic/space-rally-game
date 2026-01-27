@@ -1870,6 +1870,8 @@ export class Game {
     }
 
     // Zone-based visibility effects (screen-space overlays). Keep these under HUD.
+    const proj = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
+
     let rainIntensity = 0;
     let fogIntensity = 0;
     let eclipseIntensity = 0;
@@ -1878,7 +1880,6 @@ export class Game {
     let activeZoneKinds: string[] = [];
     let activeZoneIndicators: { kind: TrackZoneKind; intensity01: number }[] = [];
     if (this.currentStageZones.length > 0) {
-      const proj = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
       const activeZones = zonesAtSM(this.track.totalLengthM, proj.sM, this.currentStageZones);
       activeZoneKinds = [...new Set(activeZones.map((z) => z.kind))];
       activeZoneIndicators = activeZones.map((z) => ({ kind: z.kind, intensity01: z.intensity01 }));
@@ -2004,6 +2005,66 @@ export class Game {
     const canShowMinimap = this.showMinimap && (this.role === PlayerRole.NAVIGATOR || !isTouch);
 
     if (canShowMinimap) {
+      // Minimap warnings (driver hinting). Keep these simple; full zone intel is for the navigator.
+      const warningTextLines: string[] = [];
+      const rainLookaheadM = 220;
+      const narrowLookaheadM = 50;
+      const loops = this.track.points.length > 2
+        ? Math.hypot(
+          this.track.points[0].x - this.track.points[this.track.points.length - 1].x,
+          this.track.points[0].y - this.track.points[this.track.points.length - 1].y
+        ) < 20
+        : false;
+
+      const forwardDistM = (targetSM: number): number => {
+        let d = targetSM - proj.sM;
+        if (d < 0) d = loops ? d + this.track.totalLengthM : Infinity;
+        return d;
+      };
+
+      // Upcoming rain
+      const rainActive = activeZoneKinds.includes("rain");
+      if (rainActive) {
+        warningTextLines.push("RAIN");
+      } else if (this.currentStageZones.length > 0) {
+        let best = Infinity;
+        for (const z of this.currentStageZones) {
+          if (z.kind !== "rain") continue;
+          const target = z.start01 * this.track.totalLengthM;
+          const d = forwardDistM(target);
+          if (d >= 0 && d <= rainLookaheadM) best = Math.min(best, d);
+        }
+        if (Number.isFinite(best) && best <= rainLookaheadM) {
+          warningTextLines.push(`RAIN IN ${Math.round(best)}m`);
+        }
+      }
+
+      // Upcoming narrow road segments (based on per-segment width profile)
+      if (this.track.segmentWidthsM && this.track.segmentWidthsM.length > 0) {
+        const base = this.track.widthM;
+        // Only warn for VERY narrow segments (avoid spamming on mild squeezes).
+        const narrowThreshold = base * 0.64;
+        const currentW = this.track.segmentWidthsM[proj.segmentIndex] ?? base;
+        if (currentW <= narrowThreshold) {
+          warningTextLines.push("NARROW ROAD");
+        } else {
+          let best = Infinity;
+          for (let i = 0; i < this.track.segmentWidthsM.length; i++) {
+            const idx = loops ? (proj.segmentIndex + i) % this.track.segmentWidthsM.length : proj.segmentIndex + i;
+            if (idx < 0 || idx >= this.track.segmentWidthsM.length) break;
+            const w = this.track.segmentWidthsM[idx] ?? base;
+            if (w >= narrowThreshold) continue;
+            const segStart = this.track.cumulativeLengthsM[idx] ?? 0;
+            const d = forwardDistM(segStart);
+            if (d > narrowLookaheadM && !loops) break;
+            if (d >= 0 && d <= narrowLookaheadM) best = Math.min(best, d);
+          }
+          if (Number.isFinite(best) && best <= narrowLookaheadM) {
+            warningTextLines.push(`NARROW IN ${Math.round(best)}m`);
+          }
+        }
+      }
+
       const miniMapSize = (isTouch && this.role === PlayerRole.NAVIGATOR)
         ? Math.min(width * 0.56, height * 0.56)
         : (isTouch ? width : Math.min(height * 0.4, 300));
@@ -2031,7 +2092,8 @@ export class Game {
         activeZones: this.role === PlayerRole.NAVIGATOR ? activeZoneIndicators : undefined,
         statusTextLines: (this.role === PlayerRole.NAVIGATOR && electricalIntensity > 0.05)
           ? ["ERROR", "ELECTRICAL STORM"]
-          : undefined
+          : undefined,
+        warningTextLines
       });
     }
 

@@ -18,11 +18,22 @@ export type Enemy = {
   maxHealth: number;
   radius: number; // Collision radius (meters)
   wanderAngle: number; // Current wander direction
+  wanderRngState: number; // Deterministic PRNG state for wandering
   timeAlive: number; // Age in seconds
   trackSegmentHint: number; // Approximate track position for efficient queries
 };
 
 let nextEnemyId = 1;
+
+function nextRand01(state: number): { state: number; r: number } {
+  // xorshift32: tiny deterministic RNG with a 32-bit internal state.
+  let x = (state >>> 0) || 0x12345678;
+  x ^= x << 13;
+  x ^= x >>> 17;
+  x ^= x << 5;
+  const s = x >>> 0;
+  return { state: s, r: s / 4294967296 };
+}
 
 /**
  * Create a new enemy
@@ -32,14 +43,32 @@ export function createEnemy(
   y: number,
   trackSegmentHint: number,
   type: EnemyType = EnemyType.ZOMBIE,
-  opts?: { wanderAngle?: number }
+  opts?: { wanderAngle?: number; wanderRngState?: number; id?: number }
 ): Enemy {
   const isTank = type === EnemyType.TANK;
   const health = isTank ? 5 : 1;
   const radius = isTank ? 0.9 : 0.6;
 
+  const id = typeof opts?.id === "number" ? Math.floor(opts.id) : nextEnemyId++;
+  if (id >= nextEnemyId) nextEnemyId = id + 1;
+
+  let wanderRngState = typeof opts?.wanderRngState === "number" ? (opts.wanderRngState >>> 0) : 0;
+  if (!wanderRngState) {
+    // Deterministic fallback: based on position + id. (Avoid Math.random() entirely.)
+    const xi = Math.floor(x * 1000);
+    const yi = Math.floor(y * 1000);
+    wanderRngState = ((id * 2654435761) ^ (xi * 374761393) ^ (yi * 668265263)) >>> 0;
+  }
+
+  let wanderAngle = typeof opts?.wanderAngle === "number" ? opts.wanderAngle : NaN;
+  if (!Number.isFinite(wanderAngle)) {
+    const n = nextRand01(wanderRngState);
+    wanderRngState = n.state;
+    wanderAngle = n.r * Math.PI * 2;
+  }
+
   return {
-    id: nextEnemyId++,
+    id,
     type,
     x,
     y,
@@ -48,7 +77,8 @@ export function createEnemy(
     health,
     maxHealth: health,
     radius,
-    wanderAngle: typeof opts?.wanderAngle === "number" ? opts.wanderAngle : Math.random() * Math.PI * 2,
+    wanderAngle,
+    wanderRngState,
     timeAlive: 0,
     trackSegmentHint
   };
@@ -103,8 +133,9 @@ export function stepEnemy(enemy: Enemy, dtSeconds: number, track: Track): Enemy 
 
   const roadAngle = Math.atan2(toRoadY, toRoadX);
 
-  // Random wander component
-  const wanderChange = (Math.random() - 0.5) * 0.5;
+  // Random wander component (deterministic)
+  const n = nextRand01(enemy.wanderRngState);
+  const wanderChange = (n.r - 0.5) * 0.5;
   const wanderAngle = enemy.wanderAngle + wanderChange;
 
   // Blend road bias with wander
@@ -120,6 +151,7 @@ export function stepEnemy(enemy: Enemy, dtSeconds: number, track: Track): Enemy 
     vx,
     vy,
     wanderAngle: targetAngle,
+    wanderRngState: n.state,
     timeAlive: enemy.timeAlive + dtSeconds,
     trackSegmentHint: closestS
   };
@@ -137,7 +169,6 @@ export function generateEnemies(track: Track, opts?: { seed?: number; count?: nu
 
   // Place enemies at uneven intervals along the track.
   // NOTE: This is deterministic via the seeded RNG (mulberry32).
-  // TODO: Ensure enemy generation remains deterministic and seed-driven across multiplayer clients.
   const minSpacing = 14; // allow clusters
   const maxSpacing = 52; // allow gaps
   const desiredCount = opts?.count ?? Math.floor(track.totalLengthM / 25); // ~1 per 25m (4x more than original)
@@ -187,7 +218,10 @@ export function generateEnemies(track: Track, opts?: { seed?: number; count?: nu
 
     if (!tooClose) {
       const enemyType = rand() < 0.2 ? EnemyType.TANK : EnemyType.ZOMBIE;
-      enemies.push(createEnemy(x, y, nextEnemyAt, enemyType, { wanderAngle: rand() * Math.PI * 2 }));
+      const wanderRngState = Math.floor(rand() * 0xffffffff) >>> 0;
+      const idBase = (seed >>> 0) * 1000;
+      const id = idBase + enemies.length;
+      enemies.push(createEnemy(x, y, nextEnemyAt, enemyType, { id, wanderRngState, wanderAngle: rand() * Math.PI * 2 }));
     }
 
     // Schedule next enemy

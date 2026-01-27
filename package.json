@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "perf:run": "vitest run --config vitest.perf.config.ts",
+    "net:healthcheck": "node scripts/net-healthcheck.mjs",
     "deploy": "./deploy.sh test",
     "deploy:test": "./deploy.sh test",
     "deploy:prod": "./deploy.sh prod",
@@ -17,8 +18,10 @@
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^2.1.9",
+    "jsdom": "^22.1.0",
     "typescript": "^5.4.5",
     "vite": "^5.4.11",
-    "vitest": "^2.1.8"
+    "vitest": "^2.1.8",
+    "ws": "^8.19.0"
   }
 }

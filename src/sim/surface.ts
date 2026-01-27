@@ -51,7 +51,16 @@ export function surfaceForTrackSM(
   themeKind?: StageThemeKind
 ): Surface {
   if (offTrack) {
-    return offtrackSurfaceForTheme(themeKind);
+    const off = offtrackSurfaceForTheme(themeKind);
+    // If the on-road segment is icy, off-road should not magically have better grip.
+    const onRoad = surfaceForTrackSM(totalLengthM, sM, false, trackSeed, themeKind);
+    if (onRoad.name === "ice") {
+      return {
+        ...off,
+        frictionMu: Math.min(off.frictionMu, onRoad.frictionMu * 0.75)
+      };
+    }
+    return off;
   }
 
   const t = (sM % totalLengthM) / totalLengthM;

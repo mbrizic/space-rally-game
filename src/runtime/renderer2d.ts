@@ -1473,6 +1473,7 @@ export class Renderer2D {
     zones?: TrackZone[];
     activeZones?: { kind: TrackZoneKind; intensity01: number }[];
     statusTextLines?: string[];
+    warningTextLines?: string[];
   }): void {
     const ctx = this.ctx;
     ctx.save();
@@ -1490,6 +1491,27 @@ export class Renderer2D {
     // Semi-transparent background
     ctx.fillStyle = opts.minimapBgColor ?? "rgba(20, 25, 30, 0.3)";
     ctx.fillRect(minimapX, minimapY, minimapSize, minimapSize);
+
+    // Warnings (e.g. incoming rain / narrow road). Rendered before the map itself.
+    if (opts.warningTextLines && opts.warningTextLines.length > 0) {
+      ctx.save();
+      ctx.translate(minimapX + 10, minimapY + 10);
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.font = "700 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+
+      for (let i = 0; i < Math.min(3, opts.warningTextLines.length); i++) {
+        const text = opts.warningTextLines[i] ?? "";
+        if (!text) continue;
+        const y = i * 14;
+        ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+        ctx.fillText(text, 1, y + 1);
+        ctx.fillStyle = text.includes("RAIN") ? "rgba(120, 190, 255, 0.95)" : "rgba(255, 245, 220, 0.95)";
+        ctx.fillText(text, 0, y);
+      }
+
+      ctx.restore();
+    }
 
     // Electrical storm: replace minimap with an error display.
     if (opts.statusTextLines && opts.statusTextLines.length > 0) {

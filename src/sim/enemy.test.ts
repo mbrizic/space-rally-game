@@ -3,7 +3,7 @@ import { createTrackFromDefinition } from "./track";
 import { generateEnemies, EnemyType } from "./enemy";
 
 describe("enemies", () => {
-  it("generateEnemies is deterministic for a given seed (ignoring ids)", () => {
+  it("generateEnemies is deterministic for a given seed (including ids)", () => {
     const track = createTrackFromDefinition({
       points: [
         { x: 0, y: 0 },
@@ -17,11 +17,13 @@ describe("enemies", () => {
 
     const normalize = (xs: typeof a) =>
       xs.map((e) => ({
+        id: e.id,
         type: e.type,
         x: +e.x.toFixed(4),
         y: +e.y.toFixed(4),
         trackSegmentHint: +e.trackSegmentHint.toFixed(4),
-        wanderAngle: +e.wanderAngle.toFixed(6)
+        wanderAngle: +e.wanderAngle.toFixed(6),
+        wanderRngState: e.wanderRngState
       }));
 
     expect(normalize(a)).toEqual(normalize(b));

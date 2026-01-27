@@ -25,6 +25,9 @@ The harness currently records:
 
 - Build time (`npm run build`) in milliseconds
 - Build size: total bytes of the `dist/` folder
+- Bundle gzip sizes:
+   - Entry JS gzip bytes (main JS)
+   - Total `dist/` gzip bytes (excluding sourcemaps)
 - Simulation microbenchmarks (CPU):
   - `pointOnTrack()` cost (ns/call)
   - `stepEnemy()` cost (ns/step)
