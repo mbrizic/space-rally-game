@@ -66,11 +66,14 @@ export class Game {
   private netRemoteNavigator: { aimX: number; aimY: number; shootHeld: boolean; shootPulse: boolean; weaponIndex: number } | null = null;
   private netRemoteDriver: InputState | null = null;
   private netStatusLines: string[] = [];
-  private netShootPulseHandler: (() => void) | null = null;
+  // Damage events from client navigator to host (client-authoritative shooting)
+  private netClientDamageEvents: { enemyId: number; damage: number; killed: boolean; x: number; y: number; isTank: boolean }[] = [];
   private netParticleEvents: (
     | { type: "emit"; opts: { x: number; y: number; vx: number; vy: number; lifetime: number; sizeM: number; color: string; count?: number } }
     | { type: "enemyDeath"; x: number; y: number; isTank: boolean }
   )[] = [];
+  // Audio events to sync between host and client
+  private netAudioEvents: { effect: "gunshot" | "explosion" | "impact" | "checkpoint"; volume: number; pitch: number }[] = [];
   private netClientTargetCar: {
     xM: number;
     yM: number;
@@ -136,6 +139,8 @@ export class Game {
   private readonly effectsAudio = new EffectsAudio();
   private readonly rainAudio = new RainAudio();
   private audioUnlocked = false;
+  // Continuous audio state for network sync
+  private continuousAudioState = { engineRpm: 0, engineThrottle: 0, slideIntensity: 0, surfaceName: "tarmac" as string };
   private running = false;
   private proceduralSeed = 20260124;
   private totalDistanceM = 0; // Total distance driven across all sessions
@@ -149,6 +154,28 @@ export class Game {
   private weapons: WeaponState[] = [];
   private currentWeaponIndex = 0;
   private enemyKillCount = 0; // Track kills for scoring
+
+  // Simple frame timing breakdown (shown in debug menu).
+  // Raw instantaneous values for internal tracking.
+  private perfTimingsMs: { frame: number; bg: number; world: number; hud: number; overlays: number; rain: number } = {
+    frame: 0,
+    bg: 0,
+    world: 0,
+    hud: 0,
+    overlays: 0,
+    rain: 0
+  };
+  // Smoothed values for display (exponential moving average).
+  private perfTimingsSmoothMs: { frame: number; bg: number; world: number; hud: number; overlays: number; rain: number } = {
+    frame: 0,
+    bg: 0,
+    world: 0,
+    hud: 0,
+    overlays: 0,
+    rain: 0
+  };
+  // EMA smoothing factor: 0.1 = slow/stable, 0.3 = responsive.
+  private readonly perfSmoothAlpha = 0.15;
 
   private readonly startStageSeedStorageKey = "space-rally-last-start-stage-seed";
 
@@ -273,6 +300,17 @@ export class Game {
     if (roleToggle) roleToggle.textContent = this.role === PlayerRole.DRIVER ? "Driver" : "Shooter";
 
     window.addEventListener("keydown", (e) => {
+      // Don't allow game controls before the game loop is running.
+      if (!this.running) return;
+
+      // Avoid interfering with browser/system shortcuts (copy/paste, find, etc).
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      // If focus is in an input/textarea, don't steal keys.
+      const target = e.target as any;
+      const tag = (target?.tagName as string | undefined)?.toLowerCase?.() ?? "";
+      if (tag === "input" || tag === "textarea" || target?.isContentEditable) return;
+
       if (e.code === "KeyR") {
         if (this.netMode !== "client") this.reset();
       }
@@ -361,8 +399,39 @@ export class Game {
     this.netWaitForPeer = wait;
   }
 
-  public setNetShootPulseHandler(handler: (() => void) | null): void {
-    this.netShootPulseHandler = handler;
+  public setNetShootPulseHandler(_handler: (() => void) | null): void {
+    // No longer used - client handles shooting locally
+  }
+
+  public getAndClearClientDamageEvents(): { enemyId: number; damage: number; killed: boolean; x: number; y: number; isTank: boolean }[] {
+    return this.netClientDamageEvents.splice(0, this.netClientDamageEvents.length);
+  }
+
+  public getClientProjectiles(): { x: number; y: number; vx: number; vy: number; color?: string; size?: number }[] {
+    return this.projectilePool.getActive().map(p => ({
+      x: p.x, y: p.y, vx: p.vx, vy: p.vy, color: p.color, size: p.size
+    }));
+  }
+
+  public applyRemoteNavigatorProjectiles(projectiles: { x: number; y: number; vx: number; vy: number; color?: string; size?: number }[]): void {
+    // Store for rendering on host side
+    this.netRemoteProjectiles = projectiles;
+  }
+
+  public applyRemoteDamageEvents(events: { enemyId: number; damage: number; killed: boolean; x: number; y: number; isTank: boolean }[]): void {
+    for (const ev of events) {
+      if (ev.killed) {
+        // Kill the enemy and create death particles
+        this.enemyPool.damage(ev.enemyId, 999); // Ensure death
+        this.enemyKillCount++;
+        this.createEnemyDeathParticles(ev.x, ev.y, ev.isTank);
+        // Queue particle event for syncing back to client (client already sees it locally, but keeps host in sync)
+        this.netParticleEvents.push({ type: "enemyDeath", x: ev.x, y: ev.y, isTank: ev.isTank });
+      } else {
+        // Just damage
+        this.enemyPool.damage(ev.enemyId, ev.damage);
+      }
+    }
   }
 
   public setNetStatusLines(lines: string[]): void {
@@ -395,6 +464,8 @@ export class Game {
       | { type: "emit"; opts: { x: number; y: number; vx: number; vy: number; lifetime: number; sizeM: number; color: string; count?: number } }
       | { type: "enemyDeath"; x: number; y: number; isTank: boolean }
     )[];
+    audioEvents?: { effect: "gunshot" | "explosion" | "impact" | "checkpoint"; volume: number; pitch: number }[];
+    continuousAudio?: { engineRpm: number; engineThrottle: number; slideIntensity: number; surfaceName: string };
     raceActive?: boolean;
     raceStartTimeSeconds?: number;
     raceFinished?: boolean;
@@ -439,6 +510,21 @@ export class Game {
           this.createEnemyDeathParticles(ev.x, ev.y, ev.isTank);
         }
       }
+    }
+    // Play synced audio events from host
+    if (snapshot.audioEvents && this.audioUnlocked) {
+      for (const ev of snapshot.audioEvents) {
+        if (!ev) continue;
+        this.effectsAudio.playEffect(ev.effect, ev.volume, ev.pitch);
+      }
+    }
+    // Update continuous audio (engine/slide) from host state
+    if (snapshot.continuousAudio && this.audioUnlocked) {
+      const ca = snapshot.continuousAudio;
+      this.engineAudio.update(ca.engineRpm, ca.engineThrottle);
+      // Map surface name to a surface object for slide audio
+      const surfaceForSlide = { name: ca.surfaceName, frictionMu: 1.0, rollingResistanceMu: 0.01 };
+      this.slideAudio.update(ca.slideIntensity, surfaceForSlide as any);
     }
     if (typeof snapshot.raceActive === "boolean") this.raceActive = snapshot.raceActive;
     if (typeof snapshot.raceStartTimeSeconds === "number") this.raceStartTimeSeconds = snapshot.raceStartTimeSeconds;
@@ -487,9 +573,9 @@ export class Game {
       this.tryUnlockAudio();
     }
 
-    // In net client mode, request a one-shot shot on the host.
+    // In net client mode, client is authoritative for shooting.
     if (this.netMode === "client") {
-      this.netShootPulseHandler?.();
+      this.clientShoot();
       return;
     }
 
@@ -507,7 +593,8 @@ export class Game {
   }
 
   public setRoleExternal(role: PlayerRole): void {
-    this.setRole(role);
+    // Network-owned role assignment (allowed even in multiplayer).
+    this.setRole(role, true);
   }
 
   public getRoleExternal(): PlayerRole {
@@ -518,7 +605,11 @@ export class Game {
     return this.lastInputState;
   }
 
-  private setRole(role: PlayerRole): void {
+  private setRole(role: PlayerRole, force = false): void {
+    // In multiplayer, roles are fixed (driver hosts, co-driver joins).
+    // Prevent local toggles from creating confusing states.
+    if (!force && this.netMode !== "solo") return;
+
     this.role = role;
     this.showNotification(`ROLE: ${role.toUpperCase()}`);
 
@@ -534,7 +625,7 @@ export class Game {
     } else {
       driverGroup?.classList.remove("active");
       navGroup?.classList.add("active");
-      if (roleToggle) roleToggle.textContent = "Shooter";
+      if (roleToggle) roleToggle.textContent = "Gunner";
     }
 
     this.updateAmmoDisplay();
@@ -690,6 +781,10 @@ export class Game {
     this.notificationTimeSeconds = this.state.timeSeconds;
   }
 
+  public notify(text: string): void {
+    this.showNotification(text);
+  }
+
   private randomizeTrack(): void {
     // Deterministic-ish but changing seeds; makes it easy to share a specific stage later.
     this.proceduralSeed = (this.proceduralSeed + 1) % 1_000_000_000;
@@ -753,7 +848,8 @@ export class Game {
     if (isTouch) return;
 
     if (this.netMode === "client" && this.role === PlayerRole.NAVIGATOR) {
-      this.netShootPulseHandler?.();
+      // Client is authoritative for their own shooting
+      this.clientShoot();
       return;
     }
 
@@ -875,6 +971,8 @@ export class Game {
       | { type: "emit"; opts: { x: number; y: number; vx: number; vy: number; lifetime: number; sizeM: number; color: string; count?: number } }
       | { type: "enemyDeath"; x: number; y: number; isTank: boolean }
     )[];
+    audioEvents: { effect: "gunshot" | "explosion" | "impact" | "checkpoint"; volume: number; pitch: number }[];
+    continuousAudio: { engineRpm: number; engineThrottle: number; slideIntensity: number; surfaceName: string };
     raceActive: boolean;
     raceStartTimeSeconds: number;
     raceFinished: boolean;
@@ -911,6 +1009,8 @@ export class Game {
         maxAge: p.maxAge
       })),
       particleEvents: this.netParticleEvents.splice(0, this.netParticleEvents.length),
+      audioEvents: this.netAudioEvents.splice(0, this.netAudioEvents.length),
+      continuousAudio: { ...this.continuousAudioState },
       raceActive: this.raceActive,
       raceStartTimeSeconds: this.raceStartTimeSeconds,
       raceFinished: this.raceFinished,
@@ -928,6 +1028,80 @@ export class Game {
     this.particlePool.emit(opts);
     if (this.netMode === "host") {
       this.netParticleEvents.push({ type: "emit", opts });
+    }
+  }
+
+  /**
+   * Play an audio effect locally and queue it for network sync (host only).
+   * Client receives these via audioEvents in the snapshot.
+   */
+  private playNetEffect(effect: "gunshot" | "explosion" | "impact" | "checkpoint", volume: number = 1.0, pitch: number = 1.0): void {
+    if (!this.audioUnlocked) return;
+    // Play locally
+    this.effectsAudio.playEffect(effect, volume, pitch);
+    // Queue for network sync (host sends to client)
+    if (this.netMode === "host") {
+      this.netAudioEvents.push({ effect, volume, pitch });
+    }
+  }
+
+  /**
+   * Client-authoritative shooting: client handles projectiles, collisions, and damage locally.
+   * Damage events are sent to host to update enemy state.
+   */
+  private clientShoot(): void {
+    if (this.netMode !== "client") return;
+    
+    const weapon = this.weapons[this.currentWeaponIndex];
+    if (!weapon) return;
+    
+    // Check ammo
+    if (weapon.ammo === 0) return;
+    
+    // Rate limit
+    const now = this.state.timeSeconds;
+    if (now - weapon.lastFireTime < weapon.stats.fireInterval) return;
+    weapon.lastFireTime = now;
+    
+    // Consume ammo
+    if (weapon.ammo > 0) {
+      weapon.ammo--;
+    }
+    this.updateAmmoDisplay();
+    
+    // Spawn local projectiles
+    const carX = this.state.car.xM;
+    const carY = this.state.car.yM;
+    const stats = weapon.stats;
+    
+    const dx = this.mouseWorldX - carX;
+    const dy = this.mouseWorldY - carY;
+    const baseAngle = Math.atan2(dy, dx);
+    
+    for (let i = 0; i < stats.projectileCount; i++) {
+      const spread = (Math.random() - 0.5) * stats.spread;
+      const angle = baseAngle + spread;
+      const dist = 10;
+      const targetX = carX + Math.cos(angle) * dist;
+      const targetY = carY + Math.sin(angle) * dist;
+      
+      this.projectilePool.spawn(
+        carX, carY, targetX, targetY,
+        stats.projectileSpeed,
+        stats.damage,
+        stats.projectileColor,
+        stats.projectileSize
+      );
+    }
+    
+    // Play gunshot sound locally
+    if (this.audioUnlocked) {
+      let vol = 1.0;
+      let pitch = 1.0;
+      if (stats.type === WeaponType.RIFLE) { vol = 0.9; pitch = 0.75; }
+      else if (stats.type === WeaponType.AK47) { vol = 0.7; pitch = 1.2; }
+      else if (stats.type === WeaponType.SHOTGUN) { vol = 1.1; pitch = 0.6; }
+      this.effectsAudio.playEffect("gunshot", vol, pitch);
     }
   }
 
@@ -988,18 +1162,13 @@ export class Game {
       );
     }
 
-    // Play gunshot sound - only if audio is unlocked
-    if (this.audioUnlocked) {
-      // Use weapon specific sound if we had more, for now vary pitch/vol
-      let vol = 1.0;
-      let pitch = 1.0;
-
-      if (stats.type === WeaponType.RIFLE) { vol = 0.9; pitch = 0.75; }
-      else if (stats.type === WeaponType.AK47) { vol = 0.7; pitch = 1.2; }
-      else if (stats.type === WeaponType.SHOTGUN) { vol = 1.1; pitch = 0.6; } // Deep boom
-
-      this.effectsAudio.playEffect("gunshot", vol, pitch);
-    }
+    // Play gunshot sound - use weapon specific pitch/volume
+    let vol = 1.0;
+    let pitch = 1.0;
+    if (stats.type === WeaponType.RIFLE) { vol = 0.9; pitch = 0.75; }
+    else if (stats.type === WeaponType.AK47) { vol = 0.7; pitch = 1.2; }
+    else if (stats.type === WeaponType.SHOTGUN) { vol = 1.1; pitch = 0.6; } // Deep boom
+    this.playNetEffect("gunshot", vol, pitch);
   }
 
   private updateMouseWorldPosition(): void {
@@ -1020,9 +1189,6 @@ export class Game {
       def = { ...def, meta: { ...meta, theme, zones } };
     }
 
-    this.trackDef = def;
-    this.track = createTrackFromDefinition(def);
-
     const themeRef = def.meta?.theme ?? { kind: "temperate" as const };
     this.currentStageThemeKind = themeRef.kind;
     this.currentStageZones = def.meta?.zones ?? [];
@@ -1033,6 +1199,66 @@ export class Game {
     this.trackSegmentSurfaceNames = [];
 
     const theme = resolveStageTheme(themeRef);
+
+    // Build an initial track so we can sample sM for deterministic surface/width generation.
+    // Then compute per-segment widths that vary more (especially for gravel/dirt).
+    // Keep the result stable across peers via (seed + segment index) hashing.
+    const initialTrack = createTrackFromDefinition(def);
+
+    const widthRand01 = (segmentIdx: number): number => {
+      const seed = (Math.floor(trackSeed) || 1) * 131 + segmentIdx * 17 + 0x9e3779b9;
+      const x = Math.sin(seed) * 10000;
+      return x - Math.floor(x);
+    };
+
+    const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
+    const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
+
+    const computedWidths: number[] = new Array(initialTrack.points.length);
+    for (let i = 0; i < initialTrack.points.length; i++) {
+      const midSM = initialTrack.cumulativeLengthsM[i] + initialTrack.segmentLengthsM[i] * 0.5;
+      const surface = surfaceForTrackSM(initialTrack.totalLengthM, midSM, false, trackSeed, themeRef.kind);
+
+      const baseW = (def.segmentWidthsM && def.segmentWidthsM.length === initialTrack.points.length)
+        ? (def.segmentWidthsM[i] ?? def.baseWidthM)
+        : def.baseWidthM;
+
+      // Deterministic per-segment variability.
+      const r = widthRand01(i);
+      let minMult = 0.70;
+      let maxMult = 1.10;
+      if (surface.name === "tarmac") {
+        minMult = 0.75;
+        maxMult = 1.08;
+      } else if (surface.name === "gravel" || surface.name === "dirt") {
+        // Gravel/sand routes: can be very tight squeezes or moderately wide sections.
+        minMult = 0.30;
+        maxMult = 1.40;
+      } else if (surface.name === "ice") {
+        minMult = 0.50;
+        maxMult = 1.25;
+      }
+
+      // Bias toward the center for tarmac, but allow extremes for gravel.
+      const shaped = surface.name === "tarmac" ? (0.5 + (r - 0.5) * 0.55) : r;
+      const mult = lerp(minMult, maxMult, clamp01(shaped));
+      computedWidths[i] = baseW * mult;
+    }
+
+    // Smooth once to avoid sharp width discontinuities.
+    for (let pass = 0; pass < 1; pass++) {
+      for (let i = 0; i < computedWidths.length; i++) {
+        const a = computedWidths[(i - 1 + computedWidths.length) % computedWidths.length];
+        const b = computedWidths[i];
+        const c = computedWidths[(i + 1) % computedWidths.length];
+        computedWidths[i] = (a + b * 2 + c) / 4;
+      }
+    }
+
+    // Rebuild track with the computed widths so projection/collisions match visuals.
+    def = { ...def, segmentWidthsM: computedWidths };
+    this.trackDef = def;
+    this.track = createTrackFromDefinition(def);
 
     for (let i = 0; i < this.track.points.length; i++) {
       const midSM = this.track.cumulativeLengthsM[i] + this.track.segmentLengthsM[i] * 0.5;
@@ -1126,7 +1352,9 @@ export class Game {
     // Always update inputs so net-clients can send them.
     this.lastInputState = this.input.getState();
 
+    // Client navigator handles their own projectiles (client-authoritative shooting)
     if (this.netMode === "client") {
+      this.stepClientProjectiles(dtSeconds);
       return;
     }
 
@@ -1159,18 +1387,16 @@ export class Game {
     // Navigator actions
     // - Local keyboard: rawInput.shoot (KeyL)
     // - Local touch/pen: hold-to-fire via shootHeld
-    // - Remote navigator (net host): aim + shoot
+    // - Remote navigator: handled on client side (client-authoritative shooting)
     const heldTouchShoot = this.role === PlayerRole.NAVIGATOR && this.shootHeld;
     if (inputsEnabled && ((isNavigatorLocal && rawInput.shoot) || heldTouchShoot)) {
       this.shoot();
     }
-    if (inputsEnabled && this.netMode === "host" && this.netRemoteNavigator) {
-      const n = this.netRemoteNavigator;
-      if (n.shootPulse || n.shootHeld) {
-        this.shoot({ aimX: n.aimX, aimY: n.aimY, weaponIndex: n.weaponIndex });
-      }
-      // Pulse is one-shot; held is continuous.
-      this.netRemoteNavigator = { ...n, shootPulse: false };
+    // Note: Remote navigator shooting is NOT handled here anymore - client is authoritative
+    // Host just receives damage events from client via applyRemoteDamageEvents()
+    if (this.netRemoteNavigator) {
+      // Still clear the pulse flag to prevent stale data
+      this.netRemoteNavigator = { ...this.netRemoteNavigator, shootPulse: false };
     }
 
     // Gear logic: holding brake from (near) standstill engages reverse.
@@ -1263,8 +1489,8 @@ export class Game {
     }
 
     // Update audio
+    const rpmNorm = rpmFraction(this.engineState, this.engineParams);
     if (this.audioUnlocked) {
-      const rpmNorm = rpmFraction(this.engineState, this.engineParams);
       this.engineAudio.update(rpmNorm, this.engineState.throttleInput);
     }
 
@@ -1291,16 +1517,25 @@ export class Game {
 
     // Slide/gravel sound: tie it to the same signal that drives particles.
     // More audible on gravel/dirt/offtrack, and stronger while actually sliding.
+    // Prefer regular gravel/loose spray a bit more, and keep drift from dominating the mix.
+    const driftLoud = clamp(this.driftInfo.intensity * 0.95, 0, 1);
+    const particleSignal = clamp((totalIntensity - 0.06) / 0.68, 0, 1);
+    const looseDrive = surfaceIsLoose
+      ? clamp((Math.abs(this.engineState.throttleInput) - 0.12) / 0.6, 0, 1) * clamp(speedMS / 10, 0, 1)
+      : 0;
+    const gravelLoud = clamp(particleSignal * (0.58 + 0.42 * looseDrive) + looseDrive * 0.12, 0, 1);
+    const slideIntensity = Math.max(driftLoud, gravelLoud);
     if (this.audioUnlocked) {
-      // Prefer regular gravel/loose spray a bit more, and keep drift from dominating the mix.
-      const driftLoud = clamp(this.driftInfo.intensity * 0.95, 0, 1);
-      const particleSignal = clamp((totalIntensity - 0.06) / 0.68, 0, 1);
-      const looseDrive = surfaceIsLoose
-        ? clamp((Math.abs(this.engineState.throttleInput) - 0.12) / 0.6, 0, 1) * clamp(speedMS / 10, 0, 1)
-        : 0;
-      const gravelLoud = clamp(particleSignal * (0.58 + 0.42 * looseDrive) + looseDrive * 0.12, 0, 1);
-      this.slideAudio.update(Math.max(driftLoud, gravelLoud), this.lastSurface);
+      this.slideAudio.update(slideIntensity, this.lastSurface);
     }
+    
+    // Store continuous audio state for network sync
+    this.continuousAudioState = {
+      engineRpm: rpmNorm,
+      engineThrottle: this.engineState.throttleInput,
+      slideIntensity,
+      surfaceName
+    };
 
     if (totalIntensity > 0.2) {
       const particleConfig = getParticleConfig(this.lastSurface);
@@ -1470,9 +1705,8 @@ export class Game {
       this.particlePool.update(dt);
     }
 
-    // Draw background
-    const theme = resolveStageTheme({ kind: this.currentStageThemeKind });
-    this.renderer.drawBg(theme.bgColor, this.state.car.xM, this.state.car.yM);
+    const perfStartMs = performance.now();
+    let perfMarkMs = perfStartMs;
 
     const isTouch = isTouchMode();
 
@@ -1530,9 +1764,22 @@ export class Game {
     const shakeX = this.netMode === "client" ? 0 : this.cameraShakeX;
     const shakeY = this.netMode === "client" ? 0 : this.cameraShakeY;
 
+    // Compute actual camera center (used for both bg and world rendering)
+    const cameraCenterX = this.state.car.xM + shakeX + offsetX;
+    const cameraCenterY = this.state.car.yM + shakeY + offsetY;
+
+    // Draw background BEFORE beginCamera but using the same pivot point
+    const theme = resolveStageTheme({ kind: this.currentStageThemeKind });
+    this.renderer.drawBg(theme.bgColor, cameraCenterX, cameraCenterY, this.cameraRotationRad, screenCenterYCssPxOverride);
+    {
+      const now = performance.now();
+      this.perfTimingsMs.bg = now - perfMarkMs;
+      perfMarkMs = now;
+    }
+
     this.renderer.beginCamera({
-      centerX: this.state.car.xM + shakeX + offsetX,
-      centerY: this.state.car.yM + shakeY + offsetY,
+      centerX: cameraCenterX,
+      centerY: cameraCenterY,
       pixelsPerMeter,
       rotationRad: this.cameraRotationRad,
       screenCenterXCssPx,
@@ -1602,7 +1849,13 @@ export class Game {
     });
 
     // Draw projectiles (bullets)
-    const projectilesToDraw = this.netMode === "client" && this.netRemoteProjectiles ? this.netRemoteProjectiles : this.projectilePool.getActive();
+    // Client navigator uses their own local projectiles (client-authoritative shooting)
+    // Host combines local projectiles with remote projectiles from client navigator
+    let projectilesToDraw: { x: number; y: number; vx: number; vy: number; color?: string; size?: number }[] = this.projectilePool.getActive();
+    if (this.netMode === "host" && this.netRemoteProjectiles && this.netRemoteProjectiles.length > 0) {
+      // Host renders client's projectiles (received via nav messages)
+      projectilesToDraw = [...projectilesToDraw, ...this.netRemoteProjectiles];
+    }
     this.renderer.drawProjectiles(projectilesToDraw);
 
     if (this.showDebugMenu && this.tuning?.values.showArrows) {
@@ -1610,6 +1863,11 @@ export class Game {
     }
 
     this.renderer.endCamera();
+    {
+      const now = performance.now();
+      this.perfTimingsMs.world = now - perfMarkMs;
+      perfMarkMs = now;
+    }
 
     // Zone-based visibility effects (screen-space overlays). Keep these under HUD.
     let rainIntensity = 0;
@@ -1631,8 +1889,9 @@ export class Game {
       electricalIntensity = activeZones.filter((z) => z.kind === "electrical").reduce((m, z) => Math.max(m, z.intensity01), 0);
     }
 
-    // Desert + temperate maps should never have fog (even if a legacy track definition includes it).
-    if (this.currentStageThemeKind === "desert" || this.currentStageThemeKind === "temperate") fogIntensity = 0;
+    // Desert maps should never have fog (even if a legacy track definition includes it).
+    // Temperate and arctic can have fog as a weather zone.
+    if (this.currentStageThemeKind === "desert") fogIntensity = 0;
 
     // Desert should never have rain (even if a legacy track definition includes it).
     if (this.currentStageThemeKind === "desert") rainIntensity = 0;
@@ -1641,8 +1900,8 @@ export class Game {
     if (this.audioUnlocked) this.rainAudio.update(rainIntensity);
 
     if (fogIntensity > 0.05) {
-      // Smaller radius (see less), but lighter gray fog.
-      const radius = 60 - 45 * fogIntensity;
+      // Larger radius for more gradual visibility falloff
+      const radius = 90 - 55 * fogIntensity;
       this.renderer.drawFog(this.state.car.xM, this.state.car.yM, radius);
     }
     if (sandIntensity > 0.05) {
@@ -1737,9 +1996,7 @@ export class Game {
       rightStackY += 68; // Slim panel
     }
 
-    // 2b. Pacenotes (Below Rally Info) - FULLY REMOVED
-
-
+    // 2b. Pacenotes removed.
     // 2c. Minimap
     // Show if:
     // 1. Role is NAVIGATOR (always)
@@ -1813,12 +2070,15 @@ export class Game {
           .join(", ")
         : "none";
       const activeSummary = activeZoneKinds.length > 0 ? activeZoneKinds.join(", ") : "none";
+      const perf = this.perfTimingsSmoothMs;
       this.renderer.drawPanel({
         x: 12,
         y: 12,
         title: "Debug",
         lines: [
           `FPS: ${this.fps.toFixed(0)}`,
+          `ms (avg): frame ${perf.frame.toFixed(1)}  bg ${perf.bg.toFixed(1)}  world ${perf.world.toFixed(1)}`,
+          `ms (avg): hud ${perf.hud.toFixed(1)}  overlays ${perf.overlays.toFixed(1)}  rain ${perf.rain.toFixed(1)}`,
           `t: ${this.state.timeSeconds.toFixed(2)}s`,
           `track: ${this.trackDef.meta?.name ?? "Custom"}${this.trackDef.meta?.seed ? ` (seed ${this.trackDef.meta.seed})` : ""}`,
           `stage: ${this.trackDef.meta?.seed ?? this.proceduralSeed}`,
@@ -1856,10 +2116,10 @@ export class Game {
 
     if (this.showDebugMenu) {
       const deg = (rad: number) => (rad * 180) / Math.PI;
-      // Tires panel - positioned below Tuning panel (which is at ~312px and ~200px tall)
+      // Tires panel - positioned below Tuning panel
       this.renderer.drawPanel({
         x: 12,
-        y: 542, // Below Debug (~270px) + Tuning (~200px) + 60px gap
+        y: 742, // Below Debug + Tuning + gap
         title: "Tires",
         lines: [
           `steerAngle: ${deg(this.state.carTelemetry.steerAngleRad).toFixed(1)}°`,
@@ -1926,7 +2186,14 @@ export class Game {
       this.renderer.drawNotification(this.notificationText, timeSinceNotification);
     }
 
-    // Pacenotes are now handled in the HUD Layout Orchestration block above.
+    // Everything above was mostly HUD/minimap/panels; mark it separately.
+    {
+      const now = performance.now();
+      this.perfTimingsMs.hud = now - perfMarkMs;
+      perfMarkMs = now;
+    }
+
+    // Pacenotes removed.
 
     // Drift indicator removed (future: vibration-driven feedback)
 
@@ -1936,9 +2203,12 @@ export class Game {
     }
 
     // Rain visual effect: blue tint + falling streak noise (over everything).
+    this.perfTimingsMs.rain = 0;
     if (rainIntensity > 0.05) {
+      const rainStartMs = performance.now();
       this.renderer.drawScreenOverlay(`rgba(60, 120, 210, ${clamp(0.02 + 0.08 * rainIntensity, 0, 0.12)})`);
       this.renderer.drawRain({ intensity01: rainIntensity, timeSeconds: this.state.timeSeconds });
+      this.perfTimingsMs.rain = performance.now() - rainStartMs;
     }
 
     // Electrical storm: occasional white flashes across the screen.
@@ -1974,7 +2244,7 @@ export class Game {
     // This is keyed off `netWaitForPeer` so the banner still appears even if
     // `netMode` hasn't flipped to "host" yet (racey in some flows).
     if (this.netWaitForPeer && this.netMode !== "client") {
-      this.renderer.drawCenterText({ text: "WAITING", subtext: "Invite the shooter to join" });
+      this.renderer.drawCenterText({ text: "WAITING", subtext: "Invite the gunner to join" });
     }
 
     if (this.damage01 >= 1) {
@@ -1990,6 +2260,22 @@ export class Game {
         kills: this.enemyKillCount,
         totalEnemies: this.enemyPool.getAll().length
       });
+    }
+
+    {
+      const end = performance.now();
+      this.perfTimingsMs.overlays = end - perfMarkMs;
+      this.perfTimingsMs.frame = end - perfStartMs;
+      // Update smoothed (EMA) values for stable display.
+      const a = this.perfSmoothAlpha;
+      const raw = this.perfTimingsMs;
+      const s = this.perfTimingsSmoothMs;
+      s.frame = s.frame + a * (raw.frame - s.frame);
+      s.bg = s.bg + a * (raw.bg - s.bg);
+      s.world = s.world + a * (raw.world - s.world);
+      s.hud = s.hud + a * (raw.hud - s.hud);
+      s.overlays = s.overlays + a * (raw.overlays - s.overlays);
+      s.rain = s.rain + a * (raw.rain - s.rain);
     }
   }
 
@@ -2193,7 +2479,7 @@ export class Game {
         this.raceStartTimeSeconds = this.state.timeSeconds;
         this.nextCheckpointIndex = 1;
         this.showNotification("GO!");
-        this.effectsAudio.playEffect("checkpoint", 0.8);
+        this.playNetEffect("checkpoint", 0.8);
       } else if (this.nextCheckpointIndex === this.checkpointSM.length - 1) {
         // Finish line!
         this.raceFinished = true;
@@ -2201,14 +2487,14 @@ export class Game {
         this.nextCheckpointIndex = this.checkpointSM.length; // Move past last checkpoint
         const time = this.finishTimeSeconds.toFixed(2);
         this.showNotification(`FINISH! Time: ${time}s`);
-        this.effectsAudio.playEffect("checkpoint", 1.0); // Louder for finish
+        this.playNetEffect("checkpoint", 1.0); // Louder for finish
       } else {
         // Regular checkpoint
         this.nextCheckpointIndex += 1;
         const checkpointNum = this.nextCheckpointIndex;
         const totalCheckpoints = this.checkpointSM.length - 1; // Excluding finish
         this.showNotification(`Checkpoint ${checkpointNum}/${totalCheckpoints}`);
-        this.effectsAudio.playEffect("checkpoint", 0.7);
+        this.playNetEffect("checkpoint", 0.7);
       }
       this.insideActiveGate = true;
     } else if (!insideGate) {
@@ -2391,6 +2677,9 @@ export class Game {
       this.fps = (this.frameCounter / this.fpsWindowMs) * 1000;
       this.frameCounter = 0;
       this.fpsWindowMs = 0;
+      // Update always-visible FPS counter
+      const fpsEl = document.getElementById("fps-counter");
+      if (fpsEl) fpsEl.textContent = `${Math.round(this.fps)} FPS`;
     }
   }
 
@@ -2429,6 +2718,125 @@ export class Game {
       this.state.car.vxMS *= Math.pow(waterDrag, dtSeconds * 60);
       this.state.car.vyMS *= Math.pow(waterDrag, dtSeconds * 60);
       this.state.car.yawRateRadS *= Math.pow(waterAngularDrag, dtSeconds * 60);
+    }
+  }
+
+  /**
+   * Client-side projectile update for navigator shooting.
+   * Client is authoritative for their own projectiles - updates, collision detection,
+   * and damage events are handled locally, then damage is sent to host.
+   */
+  private stepClientProjectiles(dtSeconds: number): void {
+    if (this.role !== PlayerRole.NAVIGATOR) return;
+    
+    // Update projectile positions
+    this.projectilePool.update(dtSeconds);
+    
+    // Check collisions using remote enemy positions (synced from host)
+    if (!this.netRemoteEnemies) return;
+    
+    const projectiles = this.projectilePool.getActive();
+    const projectilesToRemove: number[] = [];
+    
+    for (const proj of projectiles) {
+      let hit = false;
+      
+      // Check collision with trees
+      for (const tree of this.trees) {
+        const dx = proj.x - tree.x;
+        const dy = proj.y - tree.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < tree.r * 0.4) {
+          projectilesToRemove.push(proj.id);
+          hit = true;
+          break;
+        }
+      }
+      
+      if (hit) continue;
+      
+      // Check collision with enemies (use synced positions from host)
+      for (const enemy of this.netRemoteEnemies) {
+        const dx = proj.x - enemy.x;
+        const dy = proj.y - enemy.y;
+        const distSq = dx * dx + dy * dy;
+        const radiusSq = enemy.radius * enemy.radius;
+        
+        let collision = distSq < radiusSq;
+        
+        // Raycast for fast projectiles
+        if (!collision) {
+          const speed = Math.hypot(proj.vx, proj.vy);
+          if (speed > 1) {
+            const stepDist = speed * 0.016;
+            const vx = proj.vx / speed;
+            const vy = proj.vy / speed;
+            const ex = enemy.x - proj.x;
+            const ey = enemy.y - proj.y;
+            const t = -(ex * vx + ey * vy);
+            if (t > 0 && t < stepDist) {
+              const closestX = proj.x - vx * t;
+              const closestY = proj.y - vy * t;
+              const distToLineSq = (closestX - enemy.x) ** 2 + (closestY - enemy.y) ** 2;
+              if (distToLineSq < radiusSq) {
+                collision = true;
+              }
+            }
+          }
+        }
+        
+        if (collision) {
+          projectilesToRemove.push(proj.id);
+          
+          const damage = proj.damage || 1.0;
+          const health = (enemy.health ?? 1) - damage;
+          const killed = health <= 0;
+          const isTank = enemy.type === "tank";
+          
+          // Queue damage event to send to host
+          this.netClientDamageEvents.push({
+            enemyId: enemy.id,
+            damage,
+            killed,
+            x: enemy.x,
+            y: enemy.y,
+            isTank
+          });
+          
+          // Update local enemy health for visual feedback
+          enemy.health = health;
+          
+          if (killed) {
+            // Show death particles locally
+            this.createEnemyDeathParticles(enemy.x, enemy.y, isTank);
+          } else {
+            // Small hit particles
+            this.particlePool.emit({
+              x: proj.x,
+              y: proj.y,
+              vx: (Math.random() - 0.5) * 4,
+              vy: (Math.random() - 0.5) * 4,
+              sizeM: 0.1,
+              lifetime: 0.3,
+              color: "rgba(200, 50, 50, 0.8)",
+              count: 5
+            });
+          }
+          
+          // Play impact sound locally
+          const impactVol = killed ? 0.7 : 0.4;
+          if (this.audioUnlocked) {
+            this.effectsAudio.playEffect("impact", impactVol);
+          }
+          
+          hit = true;
+          break;
+        }
+      }
+    }
+    
+    for (const id of projectilesToRemove) {
+      this.projectilePool.remove(id);
     }
   }
 
@@ -2536,10 +2944,8 @@ export class Game {
           }
 
           // Play impact sound (slightly quieter for hits)
-          if (this.audioUnlocked) {
-            const volume = (damagedEnemy && damagedEnemy.health <= 0) ? 0.7 : 0.4;
-            this.effectsAudio.playEffect("impact", volume);
-          }
+          const impactVol = (damagedEnemy && damagedEnemy.health <= 0) ? 0.7 : 0.4;
+          this.playNetEffect("impact", impactVol);
 
           hit = true;
           break;
@@ -2653,11 +3059,9 @@ export class Game {
         }
 
         // Play impact sound
-        if (this.audioUnlocked) {
-          const base = isTank ? 0.85 : 0.75;
-          const volume = clamp(base + impact * 0.18, 0, 1);
-          this.effectsAudio.playEffect("impact", volume);
-        }
+        const base = isTank ? 0.85 : 0.75;
+        const impactVolume = clamp(base + impact * 0.18, 0, 1);
+        this.playNetEffect("impact", impactVolume);
       }
     }
   }

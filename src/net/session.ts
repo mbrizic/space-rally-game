@@ -38,41 +38,7 @@ type ServerMsg =
   | ErrorMsg
   | { type: string;[k: string]: unknown };
 
-function randId(len: number): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let out = "";
-  for (let i = 0; i < len; i++) out += chars[(Math.random() * chars.length) | 0];
-  return out;
-}
-
-function hostKeyStorageKey(room: string): string {
-  return `space-rally-host-key:${room}`;
-}
-
-function loadStoredHostKey(room: string): string | null {
-  try {
-    return localStorage.getItem(hostKeyStorageKey(room));
-  } catch {
-    return null;
-  }
-}
-
-function storeHostKey(room: string, key: string): void {
-  try {
-    localStorage.setItem(hostKeyStorageKey(room), key);
-  } catch {
-    // ignore
-  }
-}
-
-function setQuery(params: Record<string, string | null>): void {
-  const url = new URL(window.location.href);
-  for (const [k, v] of Object.entries(params)) {
-    if (v === null) url.searchParams.delete(k);
-    else url.searchParams.set(k, v);
-  }
-  history.replaceState({}, "", url.toString());
-}
+// (share-link style room ids removed; multiplayer uses 4-digit numeric codes)
 
 function resolveSignalWsEndpoint(): string {
   const url = new URL(window.location.href);
@@ -89,10 +55,11 @@ function resolveSignalWsEndpoint(): string {
   return u.toString().replace(/^http/, "ws");
 }
 
-function wsUrl(room: string, peer: string): string {
+function wsUrl(room: string, peer: string, create: boolean): string {
   const u = new URL(resolveSignalWsEndpoint());
   u.searchParams.set("room", room);
   u.searchParams.set("peer", peer);
+  if (create) u.searchParams.set("create", "1");
   return u.toString();
 }
 
@@ -150,15 +117,16 @@ export function initNetSession(
   game: Game,
   opts?: {
     onPeerConnected?: (mode: "host" | "client") => void;
-    onPeerReady?: () => void;
+    onPeerReady?: (mode: "host" | "client") => void;
     onPeerDisconnected?: () => void;
   }
-): { invite: () => void; isPeerReady: () => boolean } | null {
-  const inviteBtn = document.getElementById("net-invite") as HTMLButtonElement | null;
-  const roomInput = document.getElementById("net-room") as HTMLInputElement | null;
+): {
+  host: () => Promise<string>;
+  join: (roomCode: string) => Promise<void>;
+  disconnect: () => void;
+  isPeerReady: () => boolean;
+} {
   const statusEl = document.getElementById("net-status") as HTMLDivElement | null;
-
-  if (!inviteBtn || !roomInput || !statusEl) return null;
 
   const state: NetState = {
     room: "",
@@ -179,8 +147,10 @@ export function initNetSession(
   let connectWatchdogTimer: number | null = null;
   let offerRestartCount = 0;
   let pendingIce: RTCIceCandidateInit[] = [];
-  let shootPulse = false;
   let peerReady = false;
+
+  let hostRole: PlayerRole = PlayerRole.DRIVER;
+  let clientRole: PlayerRole = PlayerRole.NAVIGATOR;
 
   const render = (): void => {
     const lines = [
@@ -191,32 +161,8 @@ export function initNetSession(
       state.lastError ? `err: ${state.lastError}` : ""
     ].filter(Boolean);
 
-    statusEl.textContent = lines.join("\n");
+    if (statusEl) statusEl.textContent = lines.join("\n");
     game.setNetStatusLines(lines);
-
-    // Update button appearance based on mode
-    if (state.mode === "client") {
-      // Hide button for clients
-      inviteBtn.style.display = "none";
-    } else if (state.mode === "host" && state.room) {
-      // Show DISCONNECT for active host
-      inviteBtn.style.display = "flex";
-      inviteBtn.textContent = "DISCONNECT";
-      inviteBtn.style.background = "#EF4444";
-      inviteBtn.style.boxShadow = "0 4px 14px 0 rgba(239, 68, 68, 0.4)";
-    } else if (state.mode === "host" && !state.room) {
-      // Shouldn't happen, but fallback to INVITE
-      inviteBtn.style.display = "flex";
-      inviteBtn.textContent = "INVITE PLAYER";
-      inviteBtn.style.background = "#3B82F6";
-      inviteBtn.style.boxShadow = "0 4px 14px 0 rgba(59, 130, 246, 0.4)";
-    } else {
-      // Solo mode - show INVITE
-      inviteBtn.style.display = "flex";
-      inviteBtn.textContent = "INVITE PLAYER";
-      inviteBtn.style.background = "#3B82F6";
-      inviteBtn.style.boxShadow = "0 4px 14px 0 rgba(59, 130, 246, 0.4)";
-    }
   };
 
   const setError = (msg: string | null): void => {
@@ -367,9 +313,9 @@ export function initNetSession(
 
       if (state.mode === "host") {
         game.setNetMode("host");
-        // Don't force role change - preserve user's current selection
+        game.setRoleExternal(hostRole);
         try {
-          dc.send(JSON.stringify({ type: "init", trackDef: game.getSerializedTrackDef() }));
+          dc.send(JSON.stringify({ type: "init", trackDef: game.getSerializedTrackDef(), hostRole }));
         } catch { }
 
         hostSendTimer = window.setInterval(() => {
@@ -384,29 +330,30 @@ export function initNetSession(
 
       if (state.mode === "client") {
         game.setNetMode("client");
-        const initialRole = new URL(window.location.href).searchParams.get("role") === "driver" ? PlayerRole.DRIVER : PlayerRole.NAVIGATOR;
-        game.setRoleExternal(initialRole);
-        game.setNetShootPulseHandler(() => { shootPulse = true; });
+        game.setRoleExternal(clientRole);
+        // shootPulse is no longer used - client handles shooting locally
+        game.setNetShootPulseHandler(null);
 
-        // Tell the host we're actually in-game (so host can start sim).
-        try {
-          dc.send(JSON.stringify({ type: "ready" }));
-        } catch { }
+        // Wait to send READY until we've received init/trackDef.
 
         clientSendTimer = window.setInterval(() => {
           if (!dc || dc.readyState !== "open") return;
 
           if (game.getRoleExternal() === PlayerRole.NAVIGATOR) {
             const aim = game.getAimWorld();
+            const damageEvents = game.getAndClearClientDamageEvents();
+            const projectiles = game.getClientProjectiles();
             const payload = {
               type: "nav",
               aimX: aim.x,
               aimY: aim.y,
               shootHeld: game.getNavigatorShootHeld(),
-              shootPulse,
-              weaponIndex: game.getCurrentWeaponIndex()
+              weaponIndex: game.getCurrentWeaponIndex(),
+              // Client-authoritative damage events (hits from client's projectiles)
+              damageEvents: damageEvents.length > 0 ? damageEvents : undefined,
+              // Send projectile positions for rendering on host
+              projectiles: projectiles.length > 0 ? projectiles : undefined
             };
-            shootPulse = false;
             try { dc.send(JSON.stringify(payload)); } catch { }
           } else if (game.getRoleExternal() === PlayerRole.DRIVER) {
             const payload = {
@@ -435,13 +382,30 @@ export function initNetSession(
 
       if (msg?.type === "ready" && state.mode === "host") {
         peerReady = true;
-        opts?.onPeerReady?.();
+        game.notify("Client connected");
+        opts?.onPeerReady?.("host");
         return;
       }
 
       if (msg?.type === "init" && state.mode === "client") {
         const ok = typeof msg.trackDef === "string" ? game.loadSerializedTrackDef(msg.trackDef) : false;
-        if (!ok) setError("bad trackDef");
+        if (!ok) {
+          setError("bad trackDef");
+          return;
+        }
+
+        const hr = msg.hostRole === PlayerRole.DRIVER ? PlayerRole.DRIVER : PlayerRole.NAVIGATOR;
+        clientRole = hr === PlayerRole.DRIVER ? PlayerRole.NAVIGATOR : PlayerRole.DRIVER;
+        game.setRoleExternal(clientRole);
+
+        // Now tell the host we're actually in-game (so host can start sim).
+        try {
+          dc?.send(JSON.stringify({ type: "ready" }));
+        } catch { }
+
+        peerReady = true;
+        game.notify("Connected");
+        opts?.onPeerReady?.("client");
         return;
       }
 
@@ -458,9 +422,19 @@ export function initNetSession(
           aimX: typeof msg.aimX === "number" ? msg.aimX : 0,
           aimY: typeof msg.aimY === "number" ? msg.aimY : 0,
           shootHeld: !!msg.shootHeld,
-          shootPulse: !!msg.shootPulse,
+          shootPulse: false, // No longer used - client handles shooting
           weaponIndex: typeof msg.weaponIndex === "number" ? msg.weaponIndex : 0
         });
+        // Process damage events from client (client-authoritative shooting)
+        if (Array.isArray(msg.damageEvents) && msg.damageEvents.length > 0) {
+          game.applyRemoteDamageEvents(msg.damageEvents);
+        }
+        // Apply projectile positions from client for rendering on host
+        if (Array.isArray(msg.projectiles)) {
+          game.applyRemoteNavigatorProjectiles(msg.projectiles);
+        } else {
+          game.applyRemoteNavigatorProjectiles([]);
+        }
         return;
       }
 
@@ -498,9 +472,9 @@ export function initNetSession(
     }
   };
 
-  const connect = (room: string): void => {
+  const connectWithMode = (room: string, create: boolean): Promise<void> => {
     const cleanRoom = room.trim().toUpperCase();
-    if (!cleanRoom) return;
+    if (!cleanRoom) return Promise.reject(new Error("bad room"));
 
     setError(null);
     state.room = cleanRoom;
@@ -514,7 +488,7 @@ export function initNetSession(
       ws = null;
     }
 
-    const url = wsUrl(state.room, state.peer);
+    const url = wsUrl(state.room, state.peer, create);
     ws = new WebSocket(url);
 
     fetch(resolveSignalHealthUrl())
@@ -543,12 +517,40 @@ export function initNetSession(
 
     ws.onerror = () => setError("ws error");
 
+    let didResolve = false;
+    let resolveOnce: (() => void) | null = null;
+    let rejectOnce: ((e: any) => void) | null = null;
+    const p = new Promise<void>((resolve, reject) => {
+      resolveOnce = () => {
+        if (didResolve) return;
+        didResolve = true;
+        resolve();
+      };
+      rejectOnce = (e) => {
+        if (didResolve) return;
+        didResolve = true;
+        reject(e);
+      };
+    });
+
     ws.onmessage = async (ev) => {
       let msg: ServerMsg;
       try { msg = JSON.parse(String(ev.data)) as ServerMsg; } catch { return; }
 
+      if (msg.type === "error") {
+        const code = (msg as ErrorMsg).code;
+        setError(code);
+        if (code === "ROOM_NOT_FOUND") {
+          rejectOnce?.(new Error("ROOM_NOT_FOUND"));
+        } else if (code === "ROOM_TAKEN") {
+          rejectOnce?.(new Error("ROOM_TAKEN"));
+        }
+        return;
+      }
+
       if (msg.type === "welcome") {
         const peers = (msg as WelcomeMsg).peers ?? [];
+        resolveOnce?.();
         if (peers.length > 0) {
           state.remotePeer = peers[0];
           render();
@@ -642,101 +644,63 @@ export function initNetSession(
     };
 
     render();
+    return p;
   };
 
-  const startRoom = (room: string, asHost: boolean = false): void => {
-    const cleanRoom = room.trim().toUpperCase();
-    roomInput.value = cleanRoom;
-    if (asHost) {
-      const key = randId(10);
-      storeHostKey(cleanRoom, key);
-      setQuery({ room: cleanRoom, host: "1", hostKey: key });
-
-      // Immediately enter host mode and show the waiting HUD.
-      // Previously we only flipped to host once the RTC datachannel opened,
-      // which meant the WAITING banner could fail to appear right after inviting.
-      game.setNetMode("host");
-      game.setNetWaitForPeer(true);
-    } else {
-      setQuery({ room: cleanRoom });
-    }
-    connect(cleanRoom);
+  const normalize4DigitCode = (s: string): string | null => {
+    const digits = (s ?? "").replace(/\D/g, "").slice(0, 4);
+    if (digits.length !== 4) return null;
+    return digits;
   };
 
-  const copyToClipboard = async () => {
-    const url = new URL(window.location.href);
-    if (state.room) url.searchParams.set("room", state.room);
-
-    // Include hostKey in invite URL so joiner can validate the session.
-    // The joiner will NOT become host (host=1 is removed) but they carry the key
-    // to prove they received a legitimate invite from the host.
-    const storedKey = loadStoredHostKey(state.room);
-    if (storedKey) url.searchParams.set("hostKey", storedKey);
-
-    // Ensure copied URL is always a *joiner* link (never a host link).
-    // Preserve other params like signaling overrides.
-    url.searchParams.delete("host");
-    const role = url.searchParams.get("role");
-    if (role === "driver") url.searchParams.delete("role");
-    try {
-      await navigator.clipboard.writeText(url.toString());
-      const oldText = inviteBtn.textContent;
-      inviteBtn.textContent = "COPIED!";
-      window.setTimeout(() => {
-        inviteBtn.textContent = oldText;
-      }, 1000);
-    } catch {
-      setError("copy failed");
-    }
-  };
-
-  const doInvite = () => {
-    if (state.mode === "host" && state.room) {
-      // Disconnect and return to solo
-      const url = new URL(window.location.href);
-      url.searchParams.delete("room");
-      url.searchParams.delete("host");
-      url.searchParams.delete("role");
-      window.location.href = url.toString();
-    } else {
-      // Create new room and copy link
-      state.mode = "host";
-      const roomCode = randId(4);
-      startRoom(roomCode, true);
-      copyToClipboard();
-    }
-  };
-
-  inviteBtn.addEventListener("click", () => {
-    doInvite();
-  });
-
-  roomInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") startRoom(roomInput.value);
-  });
-
-  // Auto-join/host based on URL parameters
-  const url = new URL(window.location.href);
-  const initialRoom = url.searchParams.get("room");
-  const requestedHost = url.searchParams.get("host") === "1";
-  const urlHostKey = url.searchParams.get("hostKey");
-
-  if (initialRoom) {
-    const room = initialRoom.trim().toUpperCase();
-    const storedHostKey = loadStoredHostKey(room);
-    const isHost = requestedHost && !!storedHostKey && !!urlHostKey && storedHostKey === urlHostKey;
-
-    if (requestedHost && !isHost) {
-      // Someone tried to force host=1 without owning the room. Downgrade to client.
-      setQuery({ host: null, hostKey: null });
-    }
-
-    if (isHost) state.mode = "host";
-    else state.mode = "client";
-    startRoom(room, isHost);
-  } else {
+  const disconnect = (): void => {
+    state.mode = "offline";
+    state.room = "";
+    state.remotePeer = null;
+    setError(null);
+    try { ws?.close(); } catch { }
+    ws = null;
+    resetP2p();
+    game.setNetMode("solo");
+    game.setNetWaitForPeer(false);
     render();
-  }
+  };
 
-  return { invite: doInvite, isPeerReady: () => peerReady };
+  const host = async (): Promise<string> => {
+    hostRole = PlayerRole.DRIVER;
+    clientRole = PlayerRole.NAVIGATOR;
+
+    state.mode = "host";
+    game.setNetMode("host");
+    game.setRoleExternal(hostRole);
+    game.setNetWaitForPeer(true);
+
+    // Try a few random 4-digit codes until we find a free one.
+    for (let attempt = 0; attempt < 25; attempt++) {
+      const code = Math.floor(Math.random() * 10000).toString().padStart(4, "0");
+      try {
+        await connectWithMode(code, true);
+        return code;
+      } catch (e: any) {
+        if (String(e?.message ?? e) === "ROOM_TAKEN") continue;
+        throw e;
+      }
+    }
+
+    throw new Error("NO_FREE_CODE");
+  };
+
+  const join = async (roomCode: string): Promise<void> => {
+    const code = normalize4DigitCode(roomCode);
+    if (!code) throw new Error("BAD_CODE");
+
+    state.mode = "client";
+    game.setNetMode("client");
+    // role finalization happens after init is received.
+    game.setNetWaitForPeer(true);
+    await connectWithMode(code, false);
+  };
+
+  render();
+  return { host, join, disconnect, isPeerReady: () => peerReady };
 }

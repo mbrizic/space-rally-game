@@ -4,7 +4,7 @@ export type Surface = {
   rollingResistanceN: number;
 };
 
-export type StageThemeKind = "temperate" | "desert" | "arctic";
+export type StageThemeKind = "temperate" | "rainforest" | "desert" | "arctic";
 
 // Simple pseudo-random function for surface generation
 function surfaceRand(seed: number): number {
@@ -18,6 +18,8 @@ function offtrackSurfaceForTheme(themeKind?: StageThemeKind): Surface {
       return { name: "offtrack", frictionMu: 0.62, rollingResistanceN: 320 };
     case "arctic":
       return { name: "offtrack", frictionMu: 0.35, rollingResistanceN: 280 };
+    case "rainforest":
+      return { name: "offtrack", frictionMu: 0.52, rollingResistanceN: 320 };
     case "temperate":
     default:
       return { name: "offtrack", frictionMu: 0.55, rollingResistanceN: 300 };
@@ -30,11 +32,14 @@ function surfaceWeightsForTheme(themeKind?: StageThemeKind): { tarmac: number; g
       return { tarmac: 0.36, gravel: 0.40, dirt: 0.24, ice: 0.0 };
     case "arctic":
       return { tarmac: 0.26, gravel: 0.22, dirt: 0.18, ice: 0.34 };
+    case "rainforest":
+      // Wet, earthy, but never icy.
+      return { tarmac: 0.42, gravel: 0.28, dirt: 0.30, ice: 0.0 };
     case "temperate":
     default:
-      // Temperate should feel less "sandy" overall.
-      // Note: dirt is currently treated as gravel (see below), so keep dirt weight low.
-      return { tarmac: 0.50, gravel: 0.18, dirt: 0.07, ice: 0.25 };
+      // Temperate is more dirt/rock than rainforest. Allow occasional ice patches.
+      // Note: dirt is currently treated as gravel (see below), so keep dirt moderate.
+      return { tarmac: 0.52, gravel: 0.22, dirt: 0.16, ice: 0.10 };
   }
 }
 

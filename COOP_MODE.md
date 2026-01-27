@@ -2,12 +2,14 @@
 
 This document contains design notes for the co-op mode so `TASKS.md` can stay as a short checklist.
 
-## Core concept (“Blind Rally”)
+## Core concept (Co-Op Rally)
 
 Two players control one car:
 
-- **Driver**: full physics/control, limited visibility.
+- **Driver**: drives and shoots.
 - **Navigator**: tactical overview, aims/shoots, calls hazards.
+
+Note: We removed the explicit “blind mode” fog-of-war mechanic; the game already limits forward information by only rendering a limited amount of road ahead.
 
 ## Phases / Ideas
 
@@ -21,7 +23,7 @@ See `MULTIPLAYER.md` for:
 ### Phase B: Navigator info tools
 
 Candidate features:
-- **Ping/marker system**: navigator taps minimap to place a marker in the driver’s view (hazards, enemies, corners).
+- Optional idea: **Ping/marker system** (navigator taps minimap to place a marker in the driver’s view).
 - Optional: “danger zones” and timed callouts.
 
 ### Phase C: Mobile-first layouts

@@ -10,24 +10,45 @@ if (!(canvas instanceof HTMLCanvasElement)) {
 const tuning = new TuningPanel(document.body);
 const game = new Game(canvas, tuning);
 
-// Server-infra testing: pairing + WebRTC handshake panel.
+let pendingMultiplayerStart:
+  | null
+  | {
+      mode: "host" | "client";
+      started: boolean;
+    } = null;
+
 const net = initNetSession(game, {
-  onPeerReady: () => {
-    // Host: allow simulation once the shooter is actually in.
-    game.setNetWaitForPeer(false);
+  onPeerReady: (mode) => {
+    // Multiplayer should only start rendering once both peers are actually in.
+    if (!pendingMultiplayerStart) pendingMultiplayerStart = { mode, started: false };
+    if (pendingMultiplayerStart.started) return;
+    pendingMultiplayerStart.started = true;
+    void finalizeStart({ multiplayer: true });
   },
   onPeerDisconnected: () => {
-    // If the shooter drops, pause again (host can re-invite).
-    try {
-      const url = new URL(window.location.href);
-      const isHost = url.searchParams.get("host") === "1";
-      const hasRoom = !!url.searchParams.get("room");
-      if (hasRoom && isHost) game.setNetWaitForPeer(true);
-    } catch {
-      // ignore
+    // If someone drops, stop simulation and return to lobby.
+    if (document.body.classList.contains("started")) {
+      document.body.classList.remove("started");
+      if (startMenu) startMenu.style.display = "flex";
     }
+    try { game.stop(); } catch { }
+    game.setNetWaitForPeer(true);
   }
 });
+
+// Vite dev (HMR) can re-run this module without a full reload, which can leave
+// multiple RAF loops and duplicated listeners running (feels "twitchy").
+// Force a hard reload on hot updates.
+try {
+  const hot: any = (import.meta as any).hot;
+  hot?.dispose?.(() => {
+    try { net.disconnect(); } catch { }
+    try { game.stop(); } catch { }
+    window.location.reload();
+  });
+} catch {
+  // ignore
+}
 
 const docAny = document as any;
 const rootAny = document.documentElement as any;
@@ -84,7 +105,16 @@ let wantsFullscreen = true;
 
 const startMenu = document.getElementById("start-menu");
 const startBtn = document.getElementById("btn-start") as HTMLButtonElement | null;
-const inviteBtn = document.getElementById("btn-invite-menu") as HTMLButtonElement | null;
+const hostDriverBtn = document.getElementById("btn-host-driver") as HTMLButtonElement | null;
+const joinCtaBtn = document.getElementById("btn-join-codriver") as HTMLButtonElement | null;
+const joinConfirmBtn = document.getElementById("btn-join-confirm") as HTMLButtonElement | null;
+const joinBackBtn = document.getElementById("btn-join-back") as HTMLButtonElement | null;
+const joinCodeInput = document.getElementById("mp-join-code") as HTMLInputElement | null;
+const joinCtaRow = document.getElementById("mp-join-cta") as HTMLDivElement | null;
+const joinForm = document.getElementById("mp-join-form") as HTMLDivElement | null;
+const hostBox = document.getElementById("mp-host") as HTMLDivElement | null;
+const hostCodeEl = document.getElementById("mp-code") as HTMLDivElement | null;
+const mpErrorEl = document.getElementById("mp-error") as HTMLDivElement | null;
 const netPanel = document.getElementById("net-panel") as HTMLDivElement | null;
 const mobileOverlay = document.getElementById("mobile-overlay") as HTMLDivElement | null;
 const exitFsBtn = document.getElementById("fullscreen-toggle") as HTMLButtonElement | null;
@@ -135,90 +165,116 @@ const waitForLandscape = (timeoutMs: number): Promise<boolean> => {
   });
 };
 
-const begin = (mode: "solo" | "multi", opts?: { fromUserGesture?: boolean }): void => {
-  const fromUserGesture = opts?.fromUserGesture ?? true;
+const setMpError = (msg: string | null): void => {
+  if (!mpErrorEl) return;
+  mpErrorEl.textContent = msg ?? "";
+};
 
-  wantsFullscreen = true;
-  // User gesture path: unlock audio + fullscreen/landscape
-  if (fromUserGesture) game.unlockAudioFromUserGesture();
-
-  const url = new URL(window.location.href);
-  const hasRoom = !!url.searchParams.get("room");
-
-  // Shooter join links: skip the menu entirely (no gesture required).
-  if (!fromUserGesture) {
-    document.body.classList.add("started");
-    if (startMenu) startMenu.style.display = "none";
-    if (netPanel) netPanel.style.display = "block";
-    if (looksTouch && mobileOverlay) mobileOverlay.style.display = "block";
+const setJoinUi = (mode: "collapsed" | "expanded"): void => {
+  if (joinCtaRow) joinCtaRow.style.display = mode === "collapsed" ? "flex" : "none";
+  if (joinForm) joinForm.style.display = mode === "expanded" ? "block" : "none";
+  if (mode === "expanded") {
+    window.setTimeout(() => {
+      try { joinCodeInput?.focus(); } catch { }
+    }, 0);
   }
+};
 
-  if (mode === "multi") {
-    // If we're not already joining via a link, create a host room + copy invite.
-    if (!hasRoom) {
-      try {
-        net?.invite();
-      } catch {
-        // ignore
-      }
-    }
-  }
-
-  // Do not await (gesture-sensitive APIs like fullscreen/clipboard can be finicky across browsers).
-  // Desktop: do not enter fullscreen at all.
-  if (fromUserGesture && looksTouch && wantsFullscreen) void enterFullscreenLandscape();
-
-  // If we're on touch and still portrait, wait until we're actually in landscape before starting.
-  // This avoids first-frame camera/HUD calculations being based on portrait dimensions.
+const finalizeStart = async (opts?: { multiplayer?: boolean }): Promise<void> => {
+  // Wait for touch devices to settle into landscape before first frame.
   if (looksTouch && !isLandscape()) {
     if (startMenuSub) startMenuSub.textContent = "Rotate to landscape to start.";
   } else {
     if (startMenuSub) startMenuSub.textContent = "Starting…";
   }
 
-  void (async () => {
-    const ok = fromUserGesture ? await waitForLandscape(1600) : true;
-    if (!ok && looksTouch) {
-      if (startMenuSub) startMenuSub.textContent = "Rotate to landscape to start.";
-      return;
-    }
+  const ok = await waitForLandscape(1600);
+  if (!ok && looksTouch) {
+    if (startMenuSub) startMenuSub.textContent = "Rotate to landscape to start.";
+    return;
+  }
 
-    // Let layout settle after rotation/fullscreen.
-    await new Promise<void>((r) => requestAnimationFrame(() => r()));
-    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+  await new Promise<void>((r) => requestAnimationFrame(() => r()));
+  await new Promise<void>((r) => requestAnimationFrame(() => r()));
 
-    wantsFullscreen = true;
-    document.body.classList.add("started");
-    if (startMenu) startMenu.style.display = "none";
-    if (netPanel) {
-      // Show net status/controls only when multiplayer is in use.
-      const nowUrl = new URL(window.location.href);
-      const isInMultiplayer = !!nowUrl.searchParams.get("room");
-      netPanel.style.display = isInMultiplayer ? "block" : "none";
-    }
-    if (looksTouch && mobileOverlay) mobileOverlay.style.display = "block";
+  wantsFullscreen = true;
+  document.body.classList.add("started");
+  if (startMenu) startMenu.style.display = "none";
+  if (looksTouch && mobileOverlay) mobileOverlay.style.display = "block";
 
-    const startedUrl = new URL(window.location.href);
-    const startedInMultiplayer = !!startedUrl.searchParams.get("room");
-    const startedIsHost = startedUrl.searchParams.get("host") === "1";
+  if (!opts?.multiplayer) {
+    game.pickRandomStartStage({ minSeed: 1, maxSeed: 1000 });
+  }
 
-    // Driver host: pause simulation until shooter is actually in.
-    const alreadyReady = net?.isPeerReady?.() ?? false;
-    game.setNetWaitForPeer(startedInMultiplayer && startedIsHost && !alreadyReady);
-
-    // Start stage/track:
-    // - Solo or Host: choose a random stage seed.
-    // - Client (shooter join): wait for host to send trackDef.
-    if (!startedInMultiplayer || startedIsHost) {
-      game.pickRandomStartStage({ minSeed: 1, maxSeed: 1000 });
-    }
-
-    game.start();
-    updateFullscreenUi();
-  })();
-
-  // Keep exit UI in sync (it will show once fullscreen is entered).
+  game.setNetWaitForPeer(false);
+  game.start();
   updateFullscreenUi();
+};
+
+const beginSolo = (): void => {
+  setMpError(null);
+  pendingMultiplayerStart = null;
+  setJoinUi("collapsed");
+  game.unlockAudioFromUserGesture();
+  if (looksTouch && wantsFullscreen) void enterFullscreenLandscape();
+  void finalizeStart({ multiplayer: false });
+};
+
+const beginHost = async (): Promise<void> => {
+  setMpError(null);
+  pendingMultiplayerStart = { mode: "host", started: false };
+
+  if (hostBox) hostBox.style.display = "none";
+  setJoinUi("collapsed");
+
+  game.unlockAudioFromUserGesture();
+  if (looksTouch && wantsFullscreen) void enterFullscreenLandscape();
+
+  // Host picks the stage up-front so the init message has a deterministic trackDef.
+  game.pickRandomStartStage({ minSeed: 1, maxSeed: 1000 });
+  game.setNetWaitForPeer(true);
+
+  if (startMenuSub) startMenuSub.textContent = "Creating room…";
+  try {
+    const code = await net.host();
+    if (hostBox) hostBox.style.display = "block";
+    if (hostCodeEl) hostCodeEl.textContent = code;
+    if (startMenuSub) startMenuSub.textContent = "Waiting for gunner to join…";
+  } catch (e: any) {
+    setMpError("Failed to create room.");
+    if (startMenuSub) startMenuSub.textContent = "";
+  }
+};
+
+const beginJoin = async (): Promise<void> => {
+  setMpError(null);
+  pendingMultiplayerStart = { mode: "client", started: false };
+
+  if (hostBox) hostBox.style.display = "none";
+  setJoinUi("expanded");
+
+  game.unlockAudioFromUserGesture();
+  if (looksTouch && wantsFullscreen) void enterFullscreenLandscape();
+
+  const code = (joinCodeInput?.value ?? "").trim();
+  if (!/^\d{4}$/.test(code.replace(/\D/g, ""))) {
+    setMpError("Enter a 4-digit code.");
+    return;
+  }
+
+  if (startMenuSub) startMenuSub.textContent = "Joining room…";
+  game.setNetWaitForPeer(true);
+
+  try {
+    await net.join(code);
+    if (startMenuSub) startMenuSub.textContent = "Connected. Waiting for host…";
+  } catch (e: any) {
+    const msg = String(e?.message ?? e);
+    if (msg === "ROOM_NOT_FOUND") setMpError("Room not found. Check the code.");
+    else if (msg === "BAD_CODE") setMpError("Enter a 4-digit code.");
+    else setMpError("Failed to join room.");
+    if (startMenuSub) startMenuSub.textContent = "";
+  }
 };
 
 // If the user rotates after start, best-effort re-lock to landscape.
@@ -230,12 +286,41 @@ window.addEventListener("orientationchange", () => {
 
 startBtn?.addEventListener("click", (e) => {
   e.preventDefault();
-  begin("solo", { fromUserGesture: true });
+  beginSolo();
 });
 
-inviteBtn?.addEventListener("click", (e) => {
+hostDriverBtn?.addEventListener("click", (e) => {
   e.preventDefault();
-  begin("multi", { fromUserGesture: true });
+  void beginHost();
+});
+
+joinCtaBtn?.addEventListener("click", (e) => {
+  e.preventDefault();
+  setMpError(null);
+  setJoinUi("expanded");
+});
+
+joinBackBtn?.addEventListener("click", (e) => {
+  e.preventDefault();
+  setMpError(null);
+  setJoinUi("collapsed");
+});
+
+joinConfirmBtn?.addEventListener("click", (e) => {
+  e.preventDefault();
+  void beginJoin();
+});
+
+joinCodeInput?.addEventListener("input", () => {
+  if (!joinCodeInput) return;
+  joinCodeInput.value = joinCodeInput.value.replace(/\D/g, "").slice(0, 4);
+});
+
+joinCodeInput?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    void beginJoin();
+  }
 });
 
 exitFsBtn?.addEventListener("click", (e) => {
@@ -257,21 +342,8 @@ window.addEventListener("keydown", (e) => {
   if (document.body.classList.contains("started")) return;
   if (e.code === "Enter") {
     e.preventDefault();
-    begin("solo", { fromUserGesture: true });
+    beginSolo();
   }
 });
 
-// Shooter join links: bypass start menu and enter immediately.
-try {
-  const url = new URL(window.location.href);
-  const room = url.searchParams.get("room");
-  const isHost = url.searchParams.get("host") === "1";
-  if (room && isHost) {
-    // Host links should also skip the menu (use DISCONNECT to return to solo).
-    begin("multi", { fromUserGesture: false });
-  } else if (room && !isHost) {
-    begin("multi", { fromUserGesture: false });
-  }
-} catch {
-  // ignore
-}
+// URL-based join links removed (use 4-digit code instead).

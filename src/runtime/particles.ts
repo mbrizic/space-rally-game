@@ -133,7 +133,7 @@ export function getParticleConfig(surface: Surface): {
             };
         case "offtrack":
             return {
-                color: "rgba(160, 185, 150, 0.70)", // BRIGHT green-gray dust
+                color: "rgba(150, 130, 100, 0.70)", // Brown/tan dust (not green)
                 sizeM: 0.32, // BIGGER
                 lifetime: 1.0, // Linger longer
                 spawnRate: 60 // Decent grass/dirt kick-up

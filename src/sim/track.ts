@@ -4,13 +4,25 @@ import { stageMetaFromSeed, type StageThemeKind, type StageThemeRef, type TrackZ
 
 export type Vec2 = { x: number; y: number };
 
-export type TrackCornerInfo = {
-  type: "hairpin" | "sharp" | "medium" | "gentle" | "chicane";
-  direction: "L" | "R";
-  startSM: number; // Track position where corner starts (meters)
-  endSM: number;   // Track position where corner ends (meters)
-  angleChange: number; // Total angle change in radians
-};
+// Smooth an array of values using a simple moving average to reduce harsh transitions
+function smoothWidths(widths: number[], windowSize: number = 5): number[] {
+  if (widths.length < windowSize) return widths;
+  const result: number[] = [];
+  const half = Math.floor(windowSize / 2);
+  for (let i = 0; i < widths.length; i++) {
+    let sum = 0;
+    let count = 0;
+    for (let j = -half; j <= half; j++) {
+      const idx = i + j;
+      if (idx >= 0 && idx < widths.length) {
+        sum += widths[idx];
+        count++;
+      }
+    }
+    result.push(sum / count);
+  }
+  return result;
+}
 
 export type TrackDefinition = {
   points: Vec2[]; // Point-to-point: last point is the end
@@ -18,7 +30,6 @@ export type TrackDefinition = {
   segmentWidthsM?: number[]; // optional per-segment widths (same length as points)
   startCity?: City;
   endCity?: City;
-  corners?: TrackCornerInfo[]; // Planned corners for pacenotes
   meta?: {
     name?: string;
     seed?: number;
@@ -37,7 +48,6 @@ export type Track = {
   totalLengthM: number;
   startCity?: City;
   endCity?: City;
-  corners?: TrackCornerInfo[]; // Planned corners for pacenotes
 };
 
 export type TrackProjection = {
@@ -55,7 +65,6 @@ export function createTrackFromDefinition(def: TrackDefinition): Track {
   const track = buildTrackFromPoints(def.points, def.baseWidthM, def.segmentWidthsM);
   track.startCity = def.startCity;
   track.endCity = def.endCity;
-  track.corners = def.corners;
   return track;
 }
 
@@ -81,7 +90,7 @@ export function parseTrackDefinition(json: string): TrackDefinition | null {
     const meta = v.meta && typeof v.meta === "object" ? (v.meta as any) : undefined;
 
     const isThemeKind = (k: any): k is StageThemeKind =>
-      k === "temperate" || k === "desert" || k === "arctic";
+      k === "temperate" || k === "rainforest" || k === "desert" || k === "arctic";
     const safeTheme: StageThemeRef | undefined =
       meta?.theme && typeof meta.theme === "object" && isThemeKind((meta.theme as any).kind)
         ? { kind: (meta.theme as any).kind as StageThemeKind }
@@ -238,26 +247,29 @@ export function createProceduralTrackDefinition(seed: number, opts?: ProceduralT
 
   const points = sampleClosedCatmullRom(controlPoints, samplesPerSegment);
 
-  // Width variance: smooth + a couple of narrow "squeeze" zones.
+  // Width variance: smooth sinusoidal + a couple of narrow "squeeze" zones.
   const squeezeCenters = [rand(), rand(), rand()].sort((a, b) => a - b);
-  const segmentWidthsM: number[] = [];
+  const rawWidthsM: number[] = [];
   for (let i = 0; i < points.length; i++) {
     const s = i / points.length;
 
+    // Reduced amplitude and slower frequency for smoother transitions
     let widthMult =
       1 +
-      0.25 * Math.sin(s * Math.PI * 2 * 2 + phase1) +
-      0.12 * Math.sin(s * Math.PI * 2 * 6 + phase2);
-    widthMult += (rand() - 0.5) * 0.04;
-    widthMult = clamp(widthMult, 0.65, 1.55);
+      0.18 * Math.sin(s * Math.PI * 2 * 2 + phase1) +
+      0.08 * Math.sin(s * Math.PI * 2 * 4 + phase2);
+    widthMult += (rand() - 0.5) * 0.02;
+    widthMult = clamp(widthMult, 0.70, 1.40);
 
     for (const c of squeezeCenters) {
       const d = circular01Distance(s, c);
-      if (d < 0.030) widthMult *= lerp(0.62, 1, d / 0.030);
+      if (d < 0.030) widthMult *= lerp(0.70, 1, d / 0.030);
     }
 
-    segmentWidthsM.push(baseWidthM * clamp(widthMult, 0.55, 1.65));
+    rawWidthsM.push(baseWidthM * clamp(widthMult, 0.60, 1.50));
   }
+  // Smooth the widths to avoid jarring transitions
+  const segmentWidthsM = smoothWidths(rawWidthsM, 7);
 
   return {
     points,
@@ -465,13 +477,9 @@ function tryCreatePointToPointTrackDefinition(seed: number): TrackDefinition {
   let currentY = 0;
   let currentAngle = angle;
   
-  // Track corner positions (control point indices)
-  const cornerPositions: Array<{ cornerIndex: number; startControlPoint: number; endControlPoint: number }> = [];
-  
   // Generate track with planned corners
   let cornerIndex = 0;
   let controlPointsUntilNextCorner = Math.floor(controlPointsForStraights / (corners.length + 1));
-  let currentCornerStart = -1;
   
   for (let i = 0; i < totalControlPoints; i++) {
     controlPoints.push({ x: currentX, y: currentY });
@@ -483,11 +491,6 @@ function tryCreatePointToPointTrackDefinition(seed: number): TrackDefinition {
       // We're inside a corner
       const corner = corners[cornerIndex];
       const cornerProgress = Math.abs(controlPointsUntilNextCorner); // How many points into this corner
-      
-      // Mark corner start
-      if (currentCornerStart === -1) {
-        currentCornerStart = i;
-      }
       
       if (corner.type === "chicane") {
         // Chicane: quick alternating turns
@@ -506,14 +509,6 @@ function tryCreatePointToPointTrackDefinition(seed: number): TrackDefinition {
       
       // Check if corner is complete
       if (Math.abs(controlPointsUntilNextCorner) >= corner.controlPointsNeeded) {
-        // Record corner position
-        cornerPositions.push({
-          cornerIndex,
-          startControlPoint: currentCornerStart,
-          endControlPoint: i
-        });
-        currentCornerStart = -1;
-        
         cornerIndex++;
         if (cornerIndex < corners.length) {
           // Calculate straight section length until next corner
@@ -700,42 +695,21 @@ function tryCreatePointToPointTrackDefinition(seed: number): TrackDefinition {
   
     const baseWidthM = 7.5;
     
-    // Width variance
-    const segmentWidthsM: number[] = [];
+    // Width variance - smooth sinusoidal change with minimal per-segment noise
+    const rawWidthsM: number[] = [];
     for (let i = 0; i < allPoints.length; i++) {
       const t = i / allPoints.length;
-      let widthMult = 1 + 0.2 * Math.sin(t * Math.PI * 4) + (rand() - 0.5) * 0.1;
-      widthMult = clamp(widthMult, 0.7, 1.3);
-      segmentWidthsM.push(baseWidthM * widthMult);
+      // Slower sine wave for gradual transitions, reduced random noise
+      let widthMult = 1 + 0.15 * Math.sin(t * Math.PI * 3) + (rand() - 0.5) * 0.04;
+      widthMult = clamp(widthMult, 0.75, 1.25);
+      rawWidthsM.push(baseWidthM * widthMult);
     }
+    // Smooth the widths to avoid sudden jumps
+    const segmentWidthsM = smoothWidths(rawWidthsM, 7);
     
     // Create track structure for collision checking (cities need to check against full track)
     const trackForCollisionCheck = { points: allPoints, widthM: baseWidthM };
     
-    // Build a temporary track to calculate corner positions in meters
-    const tempTrack = buildTrackFromPoints(allPoints, baseWidthM, segmentWidthsM);
-    
-    // Convert corner positions from control point indices to track meters
-    const cornerInfos: TrackCornerInfo[] = cornerPositions.map(cp => {
-      const corner = corners[cp.cornerIndex];
-      
-      // Find track position for start and end control points
-      const samplingRate = 2; // From sampleOpenCatmullRom steps parameter
-      const startSegmentIdx = Math.min(cp.startControlPoint * samplingRate, tempTrack.cumulativeLengthsM.length - 1);
-      const endSegmentIdx = Math.min(cp.endControlPoint * samplingRate, tempTrack.cumulativeLengthsM.length - 1);
-      
-      const startSM = tempTrack.cumulativeLengthsM[startSegmentIdx] || 0;
-      const endSM = tempTrack.cumulativeLengthsM[endSegmentIdx] || tempTrack.totalLengthM;
-      
-      return {
-        type: corner.type,
-        direction: corner.direction > 0 ? "R" as const : "L" as const,
-        startSM,
-        endSM,
-        angleChange: Math.abs(corner.angleChange)
-      };
-    });
-  
     // Generate cities with adjusted positions AND the full track for collision checking
     const startCity = generateCity(startCityX, startCityY, seed, { 
       numStores: 4, 
@@ -756,7 +730,6 @@ function tryCreatePointToPointTrackDefinition(seed: number): TrackDefinition {
       segmentWidthsM,
       startCity,
       endCity,
-      corners: cornerInfos,
       meta: { name: `Route ${seed}`, seed, source: "point-to-point", theme: stageMeta.theme, zones: stageMeta.zones }
     };
   }
@@ -766,39 +739,17 @@ function tryCreatePointToPointTrackDefinition(seed: number): TrackDefinition {
   
   const baseWidthM = 7.5;
   
-  // Width variance
-  const segmentWidthsM: number[] = [];
+  // Width variance - smooth sinusoidal change with minimal per-segment noise
+  const rawWidthsM: number[] = [];
   for (let i = 0; i < allPoints.length; i++) {
     const t = i / allPoints.length;
-    let widthMult = 1 + 0.2 * Math.sin(t * Math.PI * 4) + (rand() - 0.5) * 0.1;
-    widthMult = clamp(widthMult, 0.7, 1.3);
-    segmentWidthsM.push(baseWidthM * widthMult);
+    // Slower sine wave for gradual transitions, reduced random noise
+    let widthMult = 1 + 0.15 * Math.sin(t * Math.PI * 3) + (rand() - 0.5) * 0.04;
+    widthMult = clamp(widthMult, 0.75, 1.25);
+    rawWidthsM.push(baseWidthM * widthMult);
   }
-  
-  // Build a temporary track to calculate corner positions in meters
-  const tempTrack = buildTrackFromPoints(allPoints, baseWidthM, segmentWidthsM);
-  
-  // Convert corner positions from control point indices to track meters
-  const cornerInfos: TrackCornerInfo[] = cornerPositions.map(cp => {
-    const corner = corners[cp.cornerIndex];
-    
-    // Find track position for start and end control points
-    // Control points were sampled at 'steps' intervals, so we need to map back
-    const samplingRate = 2; // From sampleOpenCatmullRom steps parameter
-    const startSegmentIdx = Math.min(cp.startControlPoint * samplingRate, tempTrack.cumulativeLengthsM.length - 1);
-    const endSegmentIdx = Math.min(cp.endControlPoint * samplingRate, tempTrack.cumulativeLengthsM.length - 1);
-    
-    const startSM = tempTrack.cumulativeLengthsM[startSegmentIdx] || 0;
-    const endSM = tempTrack.cumulativeLengthsM[endSegmentIdx] || tempTrack.totalLengthM;
-    
-    return {
-      type: corner.type,
-      direction: corner.direction > 0 ? "R" as const : "L" as const,
-      startSM,
-      endSM,
-      angleChange: Math.abs(corner.angleChange)
-    };
-  });
+  // Smooth the widths to avoid sudden jumps
+  const segmentWidthsM = smoothWidths(rawWidthsM, 7);
   
   // Create track structure for collision checking (cities need to check against full track)
   const trackForCollisionCheck = { points: allPoints, widthM: baseWidthM };
@@ -823,7 +774,6 @@ function tryCreatePointToPointTrackDefinition(seed: number): TrackDefinition {
     segmentWidthsM,
     startCity,
     endCity,
-    corners: cornerInfos,
     meta: { name: `Route ${seed}`, seed, source: "point-to-point", theme: stageMeta.theme, zones: stageMeta.zones }
   };
 }

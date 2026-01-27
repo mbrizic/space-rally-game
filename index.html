@@ -90,14 +90,18 @@
     }
 
     #start-menu .menu-btn {
-      min-width: 170px;
-      height: 54px;
+      min-width: 280px;
+      min-height: 54px;
+      height: auto;
       border-radius: 999px;
       border: none;
       font-weight: 950;
       letter-spacing: 0.08em;
       cursor: pointer;
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+      padding: 14px 20px;
+      line-height: 1.15;
+      white-space: normal;
     }
 
     #btn-start {
@@ -105,9 +109,56 @@
       color: rgba(10, 13, 18, 0.95);
     }
 
-    #btn-invite-menu {
+    #btn-host-driver,
+    #btn-join-codriver,
+    #btn-join-confirm {
       background: #3B82F6;
       color: rgba(255, 255, 255, 0.98);
+    }
+
+    #btn-join-codriver,
+    #btn-join-confirm {
+      background: #0EA5E9;
+    }
+
+    #start-menu .divider {
+      height: 1px;
+      background: rgba(255, 255, 255, 0.12);
+      margin: 14px 0;
+    }
+
+    #start-menu .code {
+      font-weight: 950;
+      letter-spacing: 0.18em;
+      font-size: 28px;
+      margin: 10px 0 2px;
+    }
+
+    #start-menu .hint {
+      opacity: 0.85;
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+
+    #start-menu input.code-input {
+      width: 170px;
+      height: 46px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      background: rgba(255, 255, 255, 0.08);
+      color: rgba(255, 255, 255, 0.98);
+      font-weight: 900;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      text-align: center;
+      outline: none;
+    }
+
+    #start-menu .error {
+      color: rgba(255, 110, 110, 0.98);
+      font-size: 12px;
+      min-height: 16px;
+      margin-top: 8px;
     }
 
     #net-invite {
@@ -477,6 +528,21 @@
       border-color: rgba(255, 255, 255, 0.34);
       color: rgba(255, 255, 255, 0.96);
     }
+
+    /* Always-visible FPS counter */
+    #fps-counter {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      z-index: 150;
+      font-size: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      color: rgba(255, 255, 255, 0.7);
+      background: rgba(0, 0, 0, 0.4);
+      padding: 2px 6px;
+      border-radius: 4px;
+      pointer-events: none;
+    }
   </style>
 </head>
 
@@ -484,19 +550,50 @@
   <div id="app">
     <canvas id="game"></canvas>
 
+    <div id="fps-counter">-- FPS</div>
+
     <button id="btn-reset" type="button">RESET</button>
 
     <div id="start-menu">
       <div class="card">
         <div class="title">SPACE RALLY</div>
         <div id="start-menu-sub" class="sub">
-          <b>START GAME</b>: singleplayer stage.<br />
-          <b>MULTIPLAYER</b>: experimental — may feel jittery; best on same Wi‑Fi.
+          <b>SOLO</b>: singleplayer stage.<br />
+          <b>MULTIPLAYER</b>: driver hosts and shows a 4‑digit code; gunner enters it.
         </div>
+
         <div class="row">
-          <button id="btn-start" class="menu-btn" type="button">START GAME</button>
-          <button id="btn-invite-menu" class="menu-btn" type="button">MULTIPLAYER</button>
+          <button id="btn-start" class="menu-btn" type="button">START SOLO</button>
         </div>
+
+        <div class="divider"></div>
+
+        <div class="row">
+          <button id="btn-host-driver" class="menu-btn" type="button">START MULTIPLAYER (YOU ARE THE DRIVER)</button>
+        </div>
+
+        <div id="mp-host" style="display:none;">
+          <div class="code" id="mp-code">0000</div>
+          <div class="hint" id="mp-host-hint">Tell your gunner this code.</div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="row" id="mp-join-cta">
+          <button id="btn-join-codriver" class="menu-btn" type="button">JOIN MULTIPLAYER (AS GUNNER)</button>
+        </div>
+
+        <div id="mp-join-form" style="display:none;">
+          <div class="row" style="margin-top: 10px;">
+            <input id="mp-join-code" class="code-input" inputmode="numeric" autocomplete="one-time-code" placeholder="1234" maxlength="4" />
+            <button id="btn-join-confirm" class="menu-btn" type="button">JOIN</button>
+          </div>
+          <div class="row" style="margin-top: 10px;">
+            <button id="btn-join-back" class="menu-btn" type="button" style="background:#374151;color:rgba(255,255,255,0.95);">BACK</button>
+          </div>
+        </div>
+
+        <div id="mp-error" class="error"></div>
       </div>
     </div>
 

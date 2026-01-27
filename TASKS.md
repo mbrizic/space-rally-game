@@ -2,28 +2,30 @@
 
 This file is the **master list of all things we might want** (tasks + ideas). Keep it compact: one-liners only, link out for details.
 
+## Recently Completed
+
+- [x] Fog rendering: Increased radius, fixed visible box edges with circular clipping
+- [x] Fog performance: Reduced gradient stops to improve FPS
+- [x] Road width variance: Smoothed with 7-point moving average to reduce jarring transitions
+- [x] P2 engine/skid audio: Synced audio state via snapshot so client hears their car
+- [x] P2 shooting responsiveness: Client-authoritative shooting (client spawns/renders/detects hits locally)
+- [x] Host sees client bullets: Projectile positions synced from client to host for rendering
+
 ## Multiplayer
 
 - [ ] Improve client playback smoothing / reduce drift (details: `MULTIPLAYER_PLAYBACK.md`)
-- [ ] Add a simple reconnect UX (detect disconnect → show “reconnect” CTA) (details: `MULTIPLAYER.md`)
+- [ ] Add a simple reconnect UX (detect disconnect → show "reconnect" CTA) (details: `MULTIPLAYER.md`)
 - [ ] Add basic network debug overlay / stats (RTT, snapshot rate, mode) (details: `MULTIPLAYER.md`)
-- [ ] Audio strategy for multiplayer (host-only? local-only? synced events?)
+- [x] Audio strategy for multiplayer: Client plays local engine/skid audio based on host-synced state
 
 ## Co-op Mode
 
-- [ ] Re-enable/tune Driver fog mechanic + Navigator satellite view (details: `COOP_MODE.md`) (or remove this mechanism)
-- [ ] Navigator ping/marker system (map click → driver-world marker) (details: `COOP_MODE.md`) (or maybe don't do this)
-- [ ] Mobile control layouts (driver + navigator) (details: `COOP_MODE.md`)
 - [ ] Prevent/mitigate cheating vectors (e.g. resize / zoom / debug toggles) (details: `COOP_MODE.md`)
 
 ## Track / Stage Generation
 
 - [ ] Improve track variety without breaking safety constraints (details: `TRACK_VARIETY_NOTES.md`)
 - [ ] Track generator: reduce “safe/repetitive” bias from overlap-retry logic (details: `TRACK_VARIETY_NOTES.md`)
-
-## Pacenotes
-
-- [ ] Decide pacenotes direction: fix + re-enable vs remove fully (details: `PACENOTES.md`)
 
 ## Determinism / Simulation
 
@@ -35,6 +37,10 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 - [ ] Add better tactile feedback (haptics/vibration tied to grip/impacts)
 - [ ] Manual gearbox UX on mobile
 
+## Bugs I noticed
+- "offtrack" seems to have better grip than ice itself
+- minimap (or on-screen hint) should somehow indicate: upcoming narrow strips or road, incoming rain
+
 ## Bigger Ideas (P3/P4, Weather, etc.)
 
 - [ ] Player 3 (Engineer): power distribution (shield/engine/weapons) + damage control
@@ -42,3 +48,4 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 - [ ] Weather: sandstorms (visibility), rain (traction), electrical storms (electronics/minimap), in progress
 - [ ] Bullet time: cooperative slowdown mechanics
 - [ ] Extra co-driver cues: visual pings, callout macros, “danger” meter
+- [ ] Optional idea: navigator ping/marker system (map click → driver-world marker) (details: `COOP_MODE.md`)

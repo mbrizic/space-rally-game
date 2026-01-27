@@ -165,3 +165,31 @@ Mitigations implemented in the client:
 
 - Buffer ICE candidates until a remote description exists.
 - Add a small watchdog and support ICE restart (`restart-ice` control message relayed by the signaling server).
+## Network Message Types
+
+### State (host → client, 30Hz)
+
+The host sends a full game snapshot including:
+- Car position, velocity, heading, gear, engine RPM
+- Continuous audio state (engine/skid) so client plays matching audio
+- Particles, enemies, props state
+
+### Nav (client → host, 30Hz)
+
+Navigator-role client sends:
+- `aimX`, `aimY` - world-space aim position
+- `shootHeld` - whether fire button is held
+- `weaponIndex` - selected weapon
+- `projectiles` - array of active projectile positions (for host rendering)
+- `damageEvents` - hits detected by client (enemy ID, damage, position, killed flag)
+
+### Client-Authoritative Shooting
+
+Shooting is **client-authoritative** for responsiveness:
+1. Client spawns projectiles locally when firing
+2. Client updates and renders projectiles locally (no lag)
+3. Client detects hits and queues damage events
+4. Host receives damage events and applies damage to enemies
+5. Host receives projectile positions and renders them (so host sees client's bullets)
+
+This eliminates the 30-60ms round-trip delay that would make shooting feel sluggish.

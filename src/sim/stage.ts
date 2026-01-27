@@ -1,6 +1,6 @@
 import { mulberry32 } from "./rng";
 
-export type StageThemeKind = "temperate" | "desert" | "arctic";
+export type StageThemeKind = "temperate" | "rainforest" | "desert" | "arctic";
 
 // Keep what we serialize small + stable.
 export type StageThemeRef = { kind: StageThemeKind };
@@ -30,6 +30,22 @@ export type TrackZone = {
 
 export function resolveStageTheme(ref: StageThemeRef): StageTheme {
   switch (ref.kind) {
+    case "rainforest":
+      return {
+        kind: "rainforest",
+        name: "Rainforest Stage",
+        // Deeper greens, damp vibe.
+        terrainColor: "rgba(55, 80, 55, 1)",
+        bgColor: "rgba(38, 58, 40, 1)",
+        minimapBgColor: "rgba(55, 80, 55, 0.22)",
+        offtrackBgColor: "rgba(55, 80, 55, 1)",
+        allowsIce: false,
+        allowsRain: true,
+        allowsFog: true,
+        allowsDarkness: true,
+        allowsElectrical: true,
+        allowsSandstorm: false
+      };
     case "desert":
       return {
         kind: "desert",
@@ -67,13 +83,14 @@ export function resolveStageTheme(ref: StageThemeRef): StageTheme {
       return {
         kind: "temperate",
         name: "Temperate Stage",
-        terrainColor: "rgba(75, 100, 70, 1)",
-        bgColor: "rgba(60, 85, 55, 1)",
-        minimapBgColor: "rgba(75, 100, 70, 0.20)",
-        offtrackBgColor: "rgba(75, 100, 70, 1)",
+        // Less rainforest-y: more dirt/rock tones with a hint of vegetation.
+        terrainColor: "rgba(105, 95, 80, 1)",
+        bgColor: "rgba(82, 76, 64, 1)",
+        minimapBgColor: "rgba(105, 95, 80, 0.22)",
+        offtrackBgColor: "rgba(105, 95, 80, 1)",
         allowsIce: true,
         allowsRain: true,
-        allowsFog: false,
+        allowsFog: true,
         allowsDarkness: true,
         allowsElectrical: true,
         allowsSandstorm: false
@@ -88,9 +105,10 @@ function clamp01(v: number): number {
 function pickThemeRef(seed: number): StageThemeRef {
   const r = mulberry32(Math.floor(seed) || 1);
   const roll = r();
-  if (roll < 0.28) return { kind: "desert" };
-  if (roll < 0.56) return { kind: "arctic" };
-  return { kind: "temperate" };
+  if (roll < 0.22) return { kind: "desert" };
+  if (roll < 0.44) return { kind: "arctic" };
+  if (roll < 0.70) return { kind: "temperate" };
+  return { kind: "rainforest" };
 }
 
 function allowedZoneKinds(theme: StageTheme): TrackZoneKind[] {
@@ -118,9 +136,11 @@ export function stageMetaFromSeed(seed: number): { theme: StageThemeRef; zones: 
   const zones: TrackZone[] = [];
 
   // Rain happens 0-1 times per map, covering 20-35% of the track.
-  // Fog and electrical are very rare special events.
+  // Fog is a weather zone that reduces visibility (arctic: very common for testing, temperate: moderate).
   const hasRain = theme.allowsRain && rand() < 0.65; // 65% chance of rain zone
-  const hasFog = theme.allowsFog && rand() < 0.04; // 4% chance fog
+  // Fog: arctic 85% for testing, temperate 35%, others 4%
+  const fogChance = themeRef.kind === "arctic" ? 0.85 : themeRef.kind === "temperate" ? 0.35 : 0.04;
+  const hasFog = theme.allowsFog && rand() < fogChance;
   const hasElectrical = theme.allowsElectrical && rand() < 0.06; // 6% chance electrical
 
   // Add rain zone if applicable
@@ -132,13 +152,15 @@ export function stageMetaFromSeed(seed: number): { theme: StageThemeRef; zones: 
     zones.push({ kind: "rain", start01, end01, intensity01 });
   }
 
-  // Add fog zone if applicable (non-overlapping)
+  // Add fog zone if applicable (non-overlapping) - weather fog that reduces visibility
   if (hasFog) {
     for (let attempt = 0; attempt < 12; attempt++) {
-      const start01 = clamp01(rand() * 0.75);
-      const len01 = 0.10 + rand() * 0.15;
+      const start01 = clamp01(rand() * 0.70);
+      // Fog covers 15-30% of the track
+      const len01 = 0.15 + rand() * 0.15;
       const end01 = clamp01(start01 + len01);
-      const intensity01 = clamp01(0.6 + rand() * 0.4);
+      // Intensity affects visibility radius
+      const intensity01 = clamp01(0.5 + rand() * 0.5);
       const candidate: TrackZone = { kind: "fog", start01, end01, intensity01 };
       if (!zones.some((z) => overlaps(z, candidate))) {
         zones.push(candidate);

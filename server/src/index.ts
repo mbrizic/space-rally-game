@@ -1,6 +1,7 @@
 type WsData = {
   room: string;
   peer: string;
+  create: boolean;
 };
 
 type RelayMessage = {
@@ -31,6 +32,11 @@ if (!Number.isFinite(PORT)) throw new Error("Invalid PORT");
 if (!Number.isFinite(ROOM_TTL_MS)) throw new Error("Invalid ROOM_TTL_MS");
 
 const rooms = new Map<string, Map<string, Client>>();
+
+function roomExists(room: string): boolean {
+  const peers = rooms.get(room);
+  return !!peers && peers.size > 0;
+}
 
 const corsHeaders: Record<string, string> = {
   "access-control-allow-origin": "*",
@@ -156,9 +162,10 @@ const server = Bun.serve<WsData>({
     if (isWsPath) {
       const room = normalizeRoom(url.searchParams.get("room") ?? "");
       const peer = normalizePeer(url.searchParams.get("peer") ?? "");
+      const create = url.searchParams.get("create") === "1";
       if (!room || !peer) return new Response("missing room/peer\n", { status: 400 });
 
-      const ok = srv.upgrade(req, { data: { room, peer } });
+      const ok = srv.upgrade(req, { data: { room, peer, create } });
       return ok ? undefined : new Response("upgrade failed\n", { status: 400 });
     }
 
@@ -166,8 +173,30 @@ const server = Bun.serve<WsData>({
   },
   websocket: {
     open(ws) {
-      const { room, peer } = ws.data;
+      const { room, peer, create } = ws.data;
       const t = nowMs();
+
+      // Enforce explicit room creation so joiners can get a deterministic "room not found" error.
+      if (!create && !roomExists(room)) {
+        sendJson(ws, { type: "error", code: "ROOM_NOT_FOUND", room, t });
+        try {
+          ws.close(4004, "room not found");
+        } catch {
+          // ignore
+        }
+        return;
+      }
+
+      // Hosts should fail fast if the code is already taken.
+      if (create && roomExists(room)) {
+        sendJson(ws, { type: "error", code: "ROOM_TAKEN", room, t });
+        try {
+          ws.close(4005, "room taken");
+        } catch {
+          // ignore
+        }
+        return;
+      }
 
       let peers = rooms.get(room);
       if (!peers) {

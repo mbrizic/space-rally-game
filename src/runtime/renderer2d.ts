@@ -21,6 +21,13 @@ export class Renderer2D {
   private viewportWidthCssPx = 0;
   private viewportHeightCssPx = 0;
 
+  // Reused scratch buffers to avoid per-frame allocations.
+  private tmpTrackNormals: { nx: number; ny: number }[] = [];
+
+  // Cached terrain texture (tiled) to avoid per-frame expensive drawing.
+  private terrainTile: HTMLCanvasElement | null = null;
+  private terrainTileKey: string | null = null;
+
   constructor(canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("2D context unavailable");
@@ -85,7 +92,7 @@ export class Renderer2D {
     return { x: rx + this.camera.centerX, y: ry + this.camera.centerY };
   }
 
-  drawBg(bgColor?: string, cameraX?: number, cameraY?: number): void {
+  drawBg(bgColor?: string, cameraX?: number, cameraY?: number, cameraRotationRad?: number, screenCenterYCssPx?: number): void {
     const ctx = this.ctx;
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0); // Identity (pixel space)
@@ -99,20 +106,15 @@ export class Renderer2D {
 
     // Subtle terrain texture so the world doesn't feel like a flat card.
     // Now in world-space so it moves with the camera.
-    this.drawTerrainDecorations(bgColor ?? "rgba(15, 20, 25, 1)", cameraX ?? 0, cameraY ?? 0);
+    this.drawTerrainDecorations(bgColor ?? "rgba(15, 20, 25, 1)", cameraX ?? 0, cameraY ?? 0, cameraRotationRad ?? 0, screenCenterYCssPx);
 
     ctx.restore();
   }
 
-  private drawTerrainDecorations(bgColor: string, cameraX: number, cameraY: number): void {
+  private drawTerrainDecorations(bgColor: string, cameraX: number, cameraY: number, cameraRotationRad: number, screenCenterYCssPx?: number): void {
     const ctx = this.ctx;
     const parsed = parseRgba(bgColor);
     if (!parsed) return;
-
-    const w = this.canvas.width;
-    const h = this.canvas.height;
-    const seed = hashStringToUint32(bgColor);
-    const rand = mulberry32Local(seed);
 
     const dark = (k: number, a: number): string => {
       const r = clampInt(parsed.r * (1 - k));
@@ -120,41 +122,123 @@ export class Renderer2D {
       const b = clampInt(parsed.b * (1 - k));
       return `rgba(${r}, ${g}, ${b}, ${a})`;
     };
+    const light = (k: number, a: number): string => {
+      const r = clampInt(parsed.r * (1 + k));
+      const g = clampInt(parsed.g * (1 + k));
+      const b = clampInt(parsed.b * (1 + k));
+      return `rgba(${r}, ${g}, ${b}, ${a})`;
+    };
 
-    // Camera offset in pixels - move 1:1 with map (top-down view)
-    const ppm = this.camera.pixelsPerMeter;
-    const offX = -cameraX * ppm;
-    const offY = -cameraY * ppm;
+    const w = this.canvas.width;
+    const h = this.canvas.height;
 
-    // "Hills": a few big soft blobs along the horizon.
-    // Only darken (no bright highlights) so the scene stays dark.
-    const hillCount = 7;
-    for (let i = 0; i < hillCount; i++) {
-      const baseX = rand() * w * 2;
-      const baseY = (0.35 + rand() * 0.35) * h * 2;
-      const cx = ((baseX + offX) % (w * 2)) - w * 0.5;
-      const cy = ((baseY + offY * 0.5) % (h * 2)) - h * 0.5;
-      const rx = (0.25 + rand() * 0.55) * w;
-      const ry = (0.10 + rand() * 0.25) * h;
-      ctx.fillStyle = dark(0.22 + rand() * 0.10, 0.10);
-      ctx.beginPath();
-      ctx.ellipse(cx, cy, rx, ry, (rand() - 0.5) * 0.4, 0, Math.PI * 2);
-      ctx.fill();
+    // Ensure we have a cached tile for this bg color.
+    const tileKey = `${bgColor}|${this.dpr}|v2`;
+    if (!this.terrainTile || this.terrainTileKey !== tileKey) {
+      const size = 512;
+      const tile = document.createElement("canvas");
+      tile.width = size;
+      tile.height = size;
+      const tctx = tile.getContext("2d");
+      if (tctx) {
+        tctx.clearRect(0, 0, size, size);
+        const seed = hashStringToUint32(bgColor);
+        const rand = mulberry32Local(seed);
+
+        // Ridge/hill shapes - elongated darker/lighter bands suggesting terrain undulation
+        const ridgeCount = 8;
+        for (let i = 0; i < ridgeCount; i++) {
+          const cx = rand() * size;
+          const cy = rand() * size;
+          const rx = (0.25 + rand() * 0.45) * size;
+          const ry = (0.06 + rand() * 0.12) * size;
+          const angle = rand() * Math.PI;
+          // Alternate between dark (valleys) and light (ridges) for contrast
+          const isLight = rand() < 0.4;
+          tctx.fillStyle = isLight ? light(0.08 + rand() * 0.12, 0.18) : dark(0.15 + rand() * 0.20, 0.22);
+          tctx.beginPath();
+          tctx.ellipse(cx, cy, rx, ry, angle, 0, Math.PI * 2);
+          tctx.fill();
+        }
+
+        // Smaller highlight patches (rocky outcrops, clearings)
+        const patchCount = 18;
+        for (let i = 0; i < patchCount; i++) {
+          const cx = rand() * size;
+          const cy = rand() * size;
+          const rx = (0.04 + rand() * 0.10) * size;
+          const ry = (0.03 + rand() * 0.08) * size;
+          const isLight = rand() < 0.5;
+          tctx.fillStyle = isLight ? light(0.10 + rand() * 0.15, 0.16) : dark(0.12 + rand() * 0.18, 0.18);
+          tctx.beginPath();
+          tctx.ellipse(cx, cy, rx, ry, rand() * Math.PI, 0, Math.PI * 2);
+          tctx.fill();
+        }
+
+        // Low-frequency speckle for texture
+        const dotCount = 1200;
+        for (let i = 0; i < dotCount; i++) {
+          const x = Math.floor(rand() * size);
+          const y = Math.floor(rand() * size);
+          const r = rand() < 0.85 ? 1 : 2;
+          tctx.fillStyle = dark(0.15 + rand() * 0.20, 0.12);
+          tctx.fillRect(x, y, r, r);
+        }
+      }
+      this.terrainTile = tile;
+      this.terrainTileKey = tileKey;
     }
 
-    // Speckle noise: low-frequency dots for texture.
-    const dotCount = Math.floor((w * h) / 22000);
-    for (let i = 0; i < dotCount; i++) {
-      const baseX = rand() * w * 2;
-      const baseY = rand() * h * 2;
-      const x = ((baseX + offX * 1.5) % (w * 1.5)) - w * 0.25;
-      const y = ((baseY + offY * 1.5) % (h * 1.5)) - h * 0.25;
-      const r = 0.6 + rand() * 1.6;
-      ctx.fillStyle = dark(0.26, 0.08);
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fill();
+    const tile = this.terrainTile;
+    if (!tile) return;
+
+    // To fix the background fully to the track (so it rotates with the camera),
+    // we draw the tile pattern in a rotated coordinate system.
+    // CRITICAL: The rotation pivot must match the camera's pivot point exactly,
+    // otherwise the background will drift when the camera rotates.
+    const ppmDevice = this.camera.pixelsPerMeter * this.dpr;
+    const tw = tile.width;
+    const th = tile.height;
+
+    // Calculate offset in world-space, then apply rotation to match camera.
+    // This anchors the texture to world coordinates, not screen coordinates.
+    const worldOffX = cameraX * ppmDevice;
+    const worldOffY = cameraY * ppmDevice;
+
+    // Use the same screen center as the camera for rotation pivot.
+    // If not specified, use canvas center.
+    const cx = w / 2;
+    const cy = screenCenterYCssPx !== undefined ? screenCenterYCssPx * this.dpr : h / 2;
+
+    // Diagonal of the screen - need to cover corners when rotated
+    const diagonal = Math.hypot(w, h);
+
+    ctx.save();
+    ctx.globalAlpha = 0.88;
+    // Translate to the camera's screen center (pivot point), rotate, then tile from there
+    ctx.translate(cx, cy);
+    ctx.rotate(cameraRotationRad);
+
+    // Tile offset in the rotated coordinate system
+    const ox = ((worldOffX % tw) + tw) % tw;
+    const oy = ((worldOffY % th) + th) % th;
+
+    // Draw tiles covering the rotated area (need extra tiles for corners)
+    const halfDiag = diagonal / 2 + tw;
+    for (let y = -halfDiag - oy; y < halfDiag; y += th) {
+      for (let x = -halfDiag - ox; x < halfDiag; x += tw) {
+        ctx.drawImage(tile, x, y);
+      }
     }
+    ctx.restore();
+  }
+
+  private getViewRadiusWorldMeters(padM: number): number {
+    const width = this.viewportWidthCssPx || this.canvas.clientWidth;
+    const height = this.viewportHeightCssPx || this.canvas.clientHeight;
+    const halfW = (width / 2) / this.camera.pixelsPerMeter;
+    const halfH = (height / 2) / this.camera.pixelsPerMeter;
+    return Math.hypot(halfW, halfH) + padM;
   }
 
   drawScreenOverlay(color: string): void {
@@ -237,7 +321,8 @@ export class Renderer2D {
     const segmentWidths = track.segmentWidthsM;
 
     // Calculate perpendicular normals for each point
-    const normals: { nx: number; ny: number }[] = [];
+    const normals = this.tmpTrackNormals;
+    normals.length = track.points.length;
     for (let i = 0; i < track.points.length; i++) {
       let dx: number, dy: number;
       if (i === 0) {
@@ -253,7 +338,15 @@ export class Renderer2D {
       }
       const len = Math.sqrt(dx * dx + dy * dy) || 1;
       // Perpendicular (rotate 90 degrees)
-      normals.push({ nx: -dy / len, ny: dx / len });
+      const nx = -dy / len;
+      const ny = dx / len;
+      const existing = normals[i];
+      if (existing) {
+        existing.nx = nx;
+        existing.ny = ny;
+      } else {
+        normals[i] = { nx, ny };
+      }
     }
 
     // Helper to draw a filled polygon section of the road
@@ -362,15 +455,17 @@ export class Renderer2D {
     ctx.lineWidth = 0.20;
     ctx.setLineDash([1.2, 1.5]);
 
+    ctx.beginPath();
+    let hasCenterline = false;
     for (let i = 0; i < track.points.length - 1; i++) {
       const surfaceName = track.segmentSurfaceNames ? track.segmentSurfaceNames[i] : "tarmac";
       if (surfaceName === "tarmac" || surfaceName === "ice") {
-        ctx.beginPath();
+        hasCenterline = true;
         ctx.moveTo(track.points[i].x, track.points[i].y);
         ctx.lineTo(track.points[i + 1].x, track.points[i + 1].y);
-        ctx.stroke();
       }
     }
+    if (hasCenterline) ctx.stroke();
     ctx.setLineDash([]);
 
     ctx.restore();
@@ -522,7 +617,17 @@ export class Renderer2D {
   drawTrees(trees: { x: number; y: number; r: number }[]): void {
     const ctx = this.ctx;
     ctx.save();
+
+    const pad = this.getViewRadiusWorldMeters(3);
+    const cx = this.camera.centerX;
+    const cy = this.camera.centerY;
+    const rSq = pad * pad;
+
     for (const t of trees) {
+      const dxC = t.x - cx;
+      const dyC = t.y - cy;
+      if (dxC * dxC + dyC * dyC > rSq) continue;
+
       // Brown tree trunk (narrower)
       ctx.fillStyle = "rgba(90, 60, 40, 1.0)";
       ctx.beginPath();
@@ -543,7 +648,16 @@ export class Renderer2D {
     const ctx = this.ctx;
     ctx.save();
 
+    const pad = this.getViewRadiusWorldMeters(6);
+    const cx = this.camera.centerX;
+    const cy = this.camera.centerY;
+    const rSq = pad * pad;
+
     for (const enemy of enemies) {
+      const dxC = enemy.x - cx;
+      const dyC = enemy.y - cy;
+      if (dxC * dxC + dyC * dyC > rSq) continue;
+
       ctx.save();
       ctx.translate(enemy.x, enemy.y);
 
@@ -617,7 +731,16 @@ export class Renderer2D {
     const ctx = this.ctx;
     ctx.save();
 
+    const pad = this.getViewRadiusWorldMeters(10);
+    const cx = this.camera.centerX;
+    const cy = this.camera.centerY;
+    const rSq = pad * pad;
+
     for (const w of waterBodies) {
+      const dxC = w.x - cx;
+      const dyC = w.y - cy;
+      if (dxC * dxC + dyC * dyC > rSq) continue;
+
       ctx.save();
       ctx.translate(w.x, w.y);
       ctx.rotate(w.rotation);
@@ -883,46 +1006,6 @@ export class Renderer2D {
     ctx.font = `${Math.floor(statsSize * 0.7)}px 'Space Mono', monospace`;
     ctx.fillStyle = "rgba(180, 220, 255, 0.6)";
     ctx.fillText("Press N to drive new track", cx, h - 60);
-
-    ctx.restore();
-  }
-
-  drawPacenotePanel(opts: { text: string; x?: number; y?: number }): void {
-    if (!opts.text) return;
-
-    const ctx = this.ctx;
-    ctx.save();
-    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-
-    const w = this.viewportWidthCssPx || this.canvas.clientWidth;
-    // Default position: top right, below where Rally Info will be
-    const x = opts.x ?? (w - 12);
-    const y = opts.y ?? 100;
-
-    ctx.font = "bold 36px 'Space Mono', monospace";
-    const metrics = ctx.measureText(opts.text);
-    const textWidth = metrics.width;
-    const padding = 12;
-    const height = 50;
-
-    // Right-aligned panel
-    const panelX = x - textWidth - padding * 2;
-
-    // Panel Background
-    ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-    ctx.strokeStyle = "rgba(255, 200, 50, 0.8)";
-    ctx.lineWidth = 2;
-
-    ctx.beginPath();
-    ctx.roundRect(panelX, y, textWidth + padding * 2, height, 4);
-    ctx.fill();
-    ctx.stroke();
-
-    // Text
-    ctx.fillStyle = "#ffcc00"; // Pacenote yellow
-    ctx.textAlign = "right";
-    ctx.textBaseline = "middle";
-    ctx.fillText(opts.text, x - padding, y + height / 2);
 
     ctx.restore();
   }
@@ -1864,31 +1947,28 @@ export class Renderer2D {
     const sy = screenCenterY + ry * this.camera.pixelsPerMeter;
 
     const pixelRadius = radiusM * this.camera.pixelsPerMeter;
+    // Use a larger gradient to avoid hard edges
+    const gradientRadius = pixelRadius * 1.4;
 
-    // Gray fog (lighter), but with reduced visibility radius.
-    const gradient = ctx.createRadialGradient(sx, sy, pixelRadius * 0.2, sx, sy, pixelRadius);
-    gradient.addColorStop(0, "rgba(210, 215, 220, 0)");
-    gradient.addColorStop(0.5, "rgba(190, 195, 200, 0.55)");
-    gradient.addColorStop(0.8, "rgba(175, 180, 186, 0.82)");
-    gradient.addColorStop(1, "rgba(165, 170, 176, 0.94)");
+    // Simplified gradient with fewer stops for better performance
+    const gradient = ctx.createRadialGradient(sx, sy, pixelRadius * 0.2, sx, sy, gradientRadius);
+    gradient.addColorStop(0, "rgba(185, 190, 195, 0)");
+    gradient.addColorStop(0.6, "rgba(175, 180, 186, 0.6)");
+    gradient.addColorStop(1, "rgba(165, 170, 176, 0.92)");
 
+    // Draw gradient over entire screen (gradient naturally fades)
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, w, h);
 
-    // If the gradient doesn't cover the whole screen, fill the rest (handled by the fillRect)
-    // But we need to make sure the area OUTSIDE the radial gradient is also filled with solid color.
-    // createRadialGradient only works within its outer circle.
-
-    // A better way to ensure everything outside is filled:
-    ctx.fillStyle = "rgba(165, 170, 176, 0.94)";
-    // Top
-    ctx.fillRect(0, 0, w, sy - pixelRadius);
-    // Bottom
-    ctx.fillRect(0, sy + pixelRadius, w, h - (sy + pixelRadius));
-    // Left
-    ctx.fillRect(0, sy - pixelRadius, sx - pixelRadius, pixelRadius * 2);
-    // Right
-    ctx.fillRect(sx + pixelRadius, sy - pixelRadius, w - (sx + pixelRadius), pixelRadius * 2);
+    // Only fill outside if gradient doesn't cover screen
+    const halfDiag = Math.sqrt(w * w + h * h) * 0.5;
+    if (gradientRadius < halfDiag) {
+      ctx.fillStyle = "rgba(165, 170, 176, 0.92)";
+      ctx.beginPath();
+      ctx.rect(0, 0, w, h);
+      ctx.arc(sx, sy, gradientRadius, 0, Math.PI * 2, true);
+      ctx.fill("evenodd");
+    }
 
     ctx.restore();
   }
@@ -1905,8 +1985,9 @@ export class Renderer2D {
     const h = this.canvas.height;
 
     // Falling streaks (screen space) with per-particle randomness.
-    // Deterministic per-particle, animated via time => "particle-y" look without allocations.
-    const count = Math.floor((w * h) / 55000 * (0.30 + intensity * 1.2));
+    // Batched into a single path+stroke to reduce draw-call overhead.
+    // Reduced particle count for performance while maintaining visual effect.
+    const count = Math.min(350, Math.floor((w * h) / 180000 * (0.18 + intensity * 0.7)));
     const t = opts.timeSeconds;
 
     const u32 = (n: number): number => (n >>> 0);
@@ -1923,7 +2004,10 @@ export class Renderer2D {
 
     ctx.lineCap = "round";
     ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
-    ctx.globalAlpha = 0.22 + 0.34 * intensity;
+    ctx.globalAlpha = 0.28 + 0.38 * intensity;
+    ctx.lineWidth = 1.3 + 1.2 * intensity;
+
+    ctx.beginPath();
 
     const baseSpeed = 900 + 2600 * intensity;
     for (let i = 0; i < count; i++) {
@@ -1940,21 +2024,21 @@ export class Renderer2D {
       const y = ((y0 + t * speed) % (h + 260)) - 130;
 
       const slant = -0.25 + 0.5 * rx;
-      const len = 10 + 26 * (0.25 + 0.75 * intensity) * (0.4 + 0.6 * rv);
+      // Longer streaks to compensate for fewer particles
+      const len = 14 + 32 * (0.25 + 0.75 * intensity) * (0.4 + 0.6 * rv);
       const dx = slant * len;
       const dy = len;
 
-      ctx.lineWidth = 0.8 + 1.2 * (0.2 + 0.8 * intensity) * (0.3 + 0.7 * rv);
-      ctx.beginPath();
       ctx.moveTo(x, y);
       ctx.lineTo(x + dx, y + dy);
-      ctx.stroke();
     }
 
-    // Fine mist specks.
-    ctx.globalAlpha = 0.05 + 0.10 * intensity;
+    ctx.stroke();
+
+    // Fine mist specks - reduced for performance.
+    ctx.globalAlpha = 0.06 + 0.12 * intensity;
     ctx.fillStyle = "rgba(250, 252, 255, 0.70)";
-    const speckCount = Math.floor((w * h) / 120000 * (0.15 + intensity * 0.6));
+    const speckCount = Math.min(200, Math.floor((w * h) / 400000 * (0.12 + intensity * 0.5)));
     const mistSpeed = 320 + 820 * intensity;
     for (let i = 0; i < speckCount; i++) {
       const r = to01(hash(i * 2 + 77));

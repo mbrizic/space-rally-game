@@ -18,15 +18,15 @@
 - 🛠️ **Track editor** - Create custom stages (press `T`)
 
 
-## The "Blind Rally" Co-Op Mode
+## The Co-Op Mode
 
 This will be a **2-player mobile app experience**. Two players, two phones, one car.
 
 It's a high-stakes asymmetric cooperative race designed for local play:
 
-- **The Driver** (Phone 1): The greatest driver in the world... but with the worst eyesight, seeing only 50m ahead through.
-- **The Navigator** (Phone 2): A tactical genius who sees everything... but has no idea how a steering wheel works and can only scream directions while manning the car's guns.
-- **The Loop**: The Navigator must shout out hazards (ice! turning left! enemy!), while the Driver relies on pure reflex and trust in their partner's voice. 
+- **The Driver** (Phone 1): Drives and fights.
+- **The Navigator** (Phone 2): Uses the map to call hazards/corners and aims the guns.
+- **The Loop**: The Navigator shouts directions (ice! left! enemy!) while the Driver commits at speed.
 
 Ideally played in the same room for maximum shouting and adrenaline.
 
