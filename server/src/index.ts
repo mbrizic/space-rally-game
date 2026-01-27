@@ -24,6 +24,20 @@ type TurnConfig = {
   credential: string;
 };
 
+import { Database } from "bun:sqlite";
+import { postHighScore } from "./twitter";
+
+const db = new Database("scores.sqlite", { create: true });
+db.run("CREATE TABLE IF NOT EXISTS high_scores (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, score INTEGER, seed TEXT, t INTEGER)");
+// Ensure seed column exists for existing databases
+try {
+  db.run("ALTER TABLE high_scores ADD COLUMN seed TEXT DEFAULT '0'");
+} catch {
+  // Column already exists
+}
+
+
+
 const HOST = process.env.HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.PORT ?? "8787", 10);
 const ROOM_TTL_MS = Number.parseInt(process.env.ROOM_TTL_MS ?? `${15 * 60_000}`, 10);
@@ -126,7 +140,7 @@ setInterval(pruneRooms, 30_000).unref?.();
 const server = Bun.serve<WsData>({
   hostname: HOST,
   port: PORT,
-  fetch(req, srv) {
+  async fetch(req, srv) {
     const url = new URL(req.url);
     const path = url.pathname;
 
@@ -167,6 +181,44 @@ const server = Bun.serve<WsData>({
 
       const ok = srv.upgrade(req, { data: { room, peer, create } });
       return ok ? undefined : new Response("upgrade failed\n", { status: 400 });
+    }
+
+    if (path === "/api/high-scores") {
+      if (req.method === "GET") {
+        const seed = url.searchParams.get("seed");
+        let query = "SELECT name, score, seed, t FROM high_scores";
+        const params: any[] = [];
+
+        if (seed) {
+          query += " WHERE seed = ?";
+          params.push(seed);
+        }
+
+        query += " ORDER BY score ASC LIMIT 10";
+        const scores = db.query(query).all(...params);
+        return new Response(JSON.stringify(scores), { headers: jsonHeaders });
+      }
+
+      if (req.method === "POST") {
+        try {
+          const body = (await req.json()) as { name: string; score: number; seed: string };
+          if (!body.name || typeof body.score !== "number" || !body.seed) {
+            return new Response(JSON.stringify({ error: "invalid body" }), { status: 400, headers: jsonHeaders });
+          }
+          db.run("INSERT INTO high_scores (name, score, seed, t) VALUES (?, ?, ?, ?)", [body.name, body.score, body.seed, Date.now()]);
+
+          // Check if it's the new all-time high score for THIS track to tweet
+          const top = db.query("SELECT score FROM high_scores WHERE seed = ? ORDER BY score ASC LIMIT 1").get(body.seed) as { score: number };
+          if (!top || body.score <= top.score) {
+            // Non-blocking tweet
+            postHighScore(body.name, body.score, body.seed).catch(console.error);
+          }
+
+          return new Response(JSON.stringify({ ok: true }), { headers: jsonHeaders });
+        } catch {
+          return new Response(JSON.stringify({ error: "json parse error" }), { status: 400, headers: jsonHeaders });
+        }
+      }
     }
 
     return new Response("not found\n", { status: 404, headers: { ...corsHeaders, "content-type": "text/plain; charset=utf-8" } });
@@ -245,6 +297,14 @@ const server = Bun.serve<WsData>({
       }
 
       if (!parsed || typeof parsed.type !== "string" || parsed.type.length > 64) return;
+
+      // Lightweight keepalive / RTT measurement to the signaling server.
+      // Reply directly and do not broadcast.
+      if (parsed.type === "ping") {
+        const echo = typeof (parsed as any).t === "number" ? (parsed as any).t : null;
+        sendJson(ws, { type: "pong", echo, t: nowMs() });
+        return;
+      }
 
       const out = { ...parsed, from: peer, room, t: nowMs() };
 
