@@ -7,6 +7,9 @@ type HighScoreRow = {
   t: number;
 };
 
+// Scores should always go to the production backend (never a local server).
+const PROD_BACKEND_HTTP_ORIGIN = "https://spacerally.supercollider.hr";
+
 function resolveBackendHttpOrigin(): string {
   const url = new URL(window.location.href);
   const override = url.searchParams.get("signal") ?? url.searchParams.get("signalWs");
@@ -80,7 +83,7 @@ export async function getTrackVotes(seed: string): Promise<{ ok: boolean; upvote
 }
 
 export async function postHighScore(opts: { name: string; scoreMs: number; seed: string }): Promise<{ ok: boolean }> {
-  const base = resolveBackendHttpOrigin();
+  const base = PROD_BACKEND_HTTP_ORIGIN;
   const u = new URL("/api/highscore", base);
   const { ok, json } = await fetchJson(u.toString(), {
     method: "POST",
@@ -93,7 +96,7 @@ export async function postHighScore(opts: { name: string; scoreMs: number; seed:
 }
 
 export async function getHighScores(opts?: { seed?: string; limit?: number }): Promise<{ ok: boolean; scores: HighScoreRow[] }> {
-  const base = resolveBackendHttpOrigin();
+  const base = PROD_BACKEND_HTTP_ORIGIN;
   const u = new URL("/api/highscores", base);
   if (opts?.seed) u.searchParams.set("seed", opts.seed);
   if (typeof opts?.limit === "number") u.searchParams.set("limit", String(Math.floor(opts.limit)));
