@@ -17,6 +17,24 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 - [ ] Improve track variety without breaking safety constraints (details: `TRACK_VARIETY_NOTES.md`)
 - [ ] Track generator: reduce “safe/repetitive” bias from overlap-retry logic (details: `TRACK_VARIETY_NOTES.md`)
 
+## Quick wins
+- reduce debris amount/frequency on rainforest tracks by a bit
+- reduce offtrack grip/traction penalty by a bit
+- change size of "CHeckpoint 3/3" text to be smaller
+- remove pacenotes fully from the project
+- remove "Press N to play new track" and instead always display the "NEW TRACK" button, even in desktop use (on mobile, the NEW TRACK button is across the )
+- make the RAIN/DEBRIS/ETC callouts on the minimal more prominent (e.g.) a marker on the map? Or a highlighted text on top of the screen (like the co-driver is seeing it in front? but current one is too big and too boring)
+- bullets not as visible on ice, as they're very similar colors
+- increase the minimap for the co-driver a bit
+- bug: after the track is finished, controls still shown on the screen, co-driver can even shoot guns
+- when you enter the join code, the phone keyboard should dismiss on its own
+- bug: auto full-screen doesn't really work on iPhones
+
+## Internet
+- add option to upvote/downvote track at the end of race
+    - add backend to support this and show most and least favourite tracks
+- log high scores (we already have backend support) and who those high scores somewhere 
+
 ## Performance
 
 - [ ] Rendering perf benchmark (browser): record + deterministic playback + Playwright runner (details: `PERF.md`)
@@ -34,7 +52,7 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 - [ ] Manual gearbox UX on mobile
 
 ## Bigger Ideas (P3/P4, Weather, etc.)
-- [x] a huge colossus boss that chases + shoots fireballs
+- [x] a huge colossus boss that chases + shoots fireballs (we have him, but question is whether we want to keep him, so currently disabled)
 - [] Something is after you: a sandstorm, dark clouds, something, and you need to run from it
 - [ ] Player 3 (Engineer): power distribution (shield/engine/weapons) + damage control
 - [ ] Player 4 (Intel/Hacker): forward-scout drone + tagging/hacking gates
@@ -71,7 +89,3 @@ Current architecture is host-client (2 players). For 3-4 players, mesh networkin
 - Bandwidth scales with player count
 
 **Recommendation:** Only implement if P3/P4 roles become a priority. Current 2-player architecture is simpler and sufficient for driver+navigator co-op.
-
-## Repo Hygiene
-
-- [x] Move design/ops markdown into `docs/` (deploy, multiplayer, perf, lore, notes)
