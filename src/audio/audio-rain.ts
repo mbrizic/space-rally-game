@@ -110,8 +110,8 @@ export class RainAudio {
     const i = clamp01(intensity01);
     const now = ctx.currentTime;
 
-    // Loud by design (you asked for it). Still clamps under the env channel + master.
-    const targetGain = 0.02 + 0.60 * i;
+    // Keep rain present but not fatiguing.
+    const targetGain = 0.01 + 0.35 * i;
     this.gainNode.gain.setTargetAtTime(targetGain, now, 0.08);
 
     // Heavier rain = slightly brighter hiss.

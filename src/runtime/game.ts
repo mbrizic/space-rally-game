@@ -13,7 +13,7 @@ import {
   type TrackProjection
 } from "../sim/track";
 import { surfaceForTrackSM, type Surface } from "../sim/surface";
-import { resolveStageTheme, stageMetaFromSeed, zonesAtSM, type StageThemeKind, type TrackZone, type TrackZoneKind } from "../sim/stage";
+import { quietZonesFromSeed, resolveStageTheme, stageMetaFromSeed, zoneEdgeFade01, zoneIntensityAtSM, zonesAtSM, type QuietZone, type StageThemeKind, type TrackZone, type TrackZoneKind } from "../sim/stage";
 import { generateDebris, generateTrees, generateWaterBodies, pointToSegmentDistance, type CircleObstacle, type DebrisObstacle, type WaterBody } from "../sim/props";
 import { DriftDetector, DriftState, type DriftInfo } from "../sim/drift";
 import { createEngineState, defaultEngineParams, stepEngine, rpmFraction, shiftUp, shiftDown, type EngineState } from "../sim/engine";
@@ -43,6 +43,8 @@ export enum PlayerRole {
   DRIVER = "driver",
   NAVIGATOR = "navigator"
 }
+
+export type SoloMode = "timeTrial" | "practice";
 
 type GameState = {
   timeSeconds: number;
@@ -88,6 +90,11 @@ export class Game {
     alphaRearRad: number;
   } | null = null;
   private netClientLastRenderMs = 0;
+  private gunFlash01 = 0;
+  private gunFlashLastUpdateMs = 0;
+  private currentQuietZones: QuietZone[] = [];
+  private netBroadcastTrackDef: ((trackDef: string) => void) | null = null;
+  private soloMode: SoloMode = "timeTrial";
   private trackDef!: TrackDefinition; // Will be set in constructor
   private track!: ReturnType<typeof createTrackFromDefinition>; // Will be set in constructor
   private trackSegmentFillStyles: string[] = [];
@@ -164,6 +171,9 @@ export class Game {
   private enemyProjectiles: { x: number; y: number; vx: number; vy: number; age: number; maxAge: number }[] = [];
   private colossusShotCooldownS = 0;
   private colossusShotPhase = 0;
+
+  private prevCarX = 0;
+  private prevCarY = 0;
 
   private lastDebrisWarnId: number | null = null;
   private lastDebrisWarnAtSeconds = -999;
@@ -277,14 +287,14 @@ export class Game {
     this.setTrack(createPointToPointTrackDefinition(this.proceduralSeed));
 
     // Touch: New track button (shown when finished)
-    const newTrackBtn = document.getElementById("btn-new-track");
-    newTrackBtn?.addEventListener("click", (e) => {
+    const onNewTrackClick = (e: Event): void => {
       e.preventDefault();
       e.stopPropagation();
       if (this.netMode === "client") return;
       this.randomizeTrack();
       if (!this.audioUnlocked) this.tryUnlockAudio();
-    });
+    };
+    document.getElementById("btn-new-track")?.addEventListener("click", onNewTrackClick);
 
     // Wrecked: on-screen reset button (shown via JS)
     const resetBtn = document.getElementById("btn-reset") as HTMLButtonElement | null;
@@ -415,6 +425,18 @@ export class Game {
 
   public setNetShootPulseHandler(_handler: (() => void) | null): void {
     // No longer used - client handles shooting locally
+  }
+
+  public setNetTrackDefBroadcaster(handler: ((trackDef: string) => void) | null): void {
+    this.netBroadcastTrackDef = handler;
+  }
+
+  public setSoloMode(mode: SoloMode): void {
+    this.soloMode = mode;
+  }
+
+  public getSoloMode(): SoloMode {
+    return this.soloMode;
   }
 
   public getAndClearClientDamageEvents(): { enemyId: number; damage: number; killed: boolean; x: number; y: number; isTank: boolean; enemyType?: "zombie" | "tank" | "colossus"; radiusM?: number }[] {
@@ -587,6 +609,8 @@ export class Game {
     const rect = this.canvas.getBoundingClientRect();
     this.mouseX = clientX - rect.left;
     this.mouseY = clientY - rect.top;
+    // Keep world-space aim in sync so tap-to-shoot uses the latest position.
+    this.updateMouseWorldPosition();
   }
 
   public setTouchShootHeld(held: boolean): void {
@@ -604,6 +628,9 @@ export class Game {
     if (!this.audioUnlocked) {
       this.tryUnlockAudio();
     }
+
+    // Ensure tap-to-shoot uses the most recent touch aim (world-space).
+    this.updateMouseWorldPosition();
 
     // In net client mode, client is authoritative for shooting.
     if (this.netMode === "client") {
@@ -873,7 +900,8 @@ export class Game {
     const rect = this.canvas.getBoundingClientRect();
     this.mouseX = e.clientX - rect.left;
     this.mouseY = e.clientY - rect.top;
-    // World position will be updated in render() after camera is set
+    // Keep aim responsive for click-to-shoot.
+    this.updateMouseWorldPosition();
   };
 
   private onMouseClick = (): void => {
@@ -893,6 +921,9 @@ export class Game {
     if (!this.audioUnlocked) {
       this.tryUnlockAudio();
     }
+
+    // Ensure we shoot at the latest cursor position.
+    this.updateMouseWorldPosition();
     this.shoot();
   };
 
@@ -902,6 +933,8 @@ export class Game {
     const rect = this.canvas.getBoundingClientRect();
     this.mouseX = e.clientX - rect.left;
     this.mouseY = e.clientY - rect.top;
+    // Keep world-space aim in sync so taps don't lag a frame.
+    this.updateMouseWorldPosition();
   };
 
   private onShootPointerDown = (e: PointerEvent): void => {
@@ -929,6 +962,93 @@ export class Game {
     if (this.netMode === "client") return;
     this.shoot();
   };
+
+  private emitMuzzleFlash(opts: { x: number; y: number; angleRad: number; weaponType: WeaponType }): void {
+    // Dramatic flash/sparks to make shooting feel punchier.
+    const ax = Math.cos(opts.angleRad);
+    const ay = Math.sin(opts.angleRad);
+    const originX = opts.x + ax * 1.05;
+    const originY = opts.y + ay * 1.05;
+
+    let burst = 10;
+    let size = 0.18;
+    let life = 0.085;
+    let flashStrength = 0.55;
+    if (opts.weaponType === WeaponType.AK47) { burst = 12; size = 0.17; life = 0.08; flashStrength = 0.50; }
+    if (opts.weaponType === WeaponType.RIFLE) { burst = 14; size = 0.18; life = 0.085; flashStrength = 0.62; }
+    if (opts.weaponType === WeaponType.SHOTGUN) { burst = 22; size = 0.22; life = 0.095; flashStrength = 0.95; }
+
+    // Brief screen bloom (decays in render).
+    this.gunFlash01 = Math.max(this.gunFlash01, Math.min(1, flashStrength));
+
+    // Core flash: big + very short.
+    const coreCount = opts.weaponType === WeaponType.SHOTGUN ? 2 : 1;
+    this.emitParticles({
+      x: originX,
+      y: originY,
+      vx: ax * 1.2,
+      vy: ay * 1.2,
+      lifetime: life * 0.55,
+      sizeM: size * 2.4,
+      color: "rgba(255, 255, 245, 0.98)",
+      count: coreCount
+    });
+
+    // Cone flash.
+    const groups = 3;
+    const perGroup = Math.max(1, Math.floor(burst / groups));
+    for (let i = 0; i < groups; i++) {
+      const jitter = (Math.random() - 0.5) * 0.80;
+      const a = opts.angleRad + jitter;
+      const s = 7.0 + Math.random() * 6.5;
+      this.emitParticles({
+        x: originX,
+        y: originY,
+        vx: Math.cos(a) * s,
+        vy: Math.sin(a) * s,
+        lifetime: life,
+        sizeM: size,
+        color: "rgba(255, 235, 195, 0.95)",
+        count: perGroup
+      });
+    }
+
+    // Orange sparks.
+    const sparkCount = Math.max(3, Math.floor(burst * 0.35));
+    for (let i = 0; i < 3; i++) {
+      const jitter = (Math.random() - 0.5) * 0.95;
+      const a = opts.angleRad + jitter;
+      const s = 9.0 + Math.random() * 9.0;
+      this.emitParticles({
+        x: originX,
+        y: originY,
+        vx: Math.cos(a) * s,
+        vy: Math.sin(a) * s,
+        lifetime: 0.15,
+        sizeM: 0.12,
+        color: "rgba(255, 160, 70, 0.92)",
+        count: Math.max(1, Math.floor(sparkCount / 3))
+      });
+    }
+
+    // A little smoke bloom behind the flash.
+    const smokeCount = opts.weaponType === WeaponType.SHOTGUN ? 3 : 2;
+    for (let i = 0; i < smokeCount; i++) {
+      const jitter = (Math.random() - 0.5) * 1.1;
+      const a = opts.angleRad + jitter;
+      const s = 0.8 + Math.random() * 1.4;
+      this.emitParticles({
+        x: originX - ax * 0.25,
+        y: originY - ay * 0.25,
+        vx: Math.cos(a) * s,
+        vy: Math.sin(a) * s,
+        lifetime: 0.35,
+        sizeM: 0.24 + Math.random() * 0.10,
+        color: "rgba(60, 60, 60, 0.22)",
+        count: 1
+      });
+    }
+  }
 
   private onShootPointerUp = (e: PointerEvent): void => {
     if (this.shootPointerId !== e.pointerId) return;
@@ -1127,6 +1247,8 @@ export class Game {
     const dx = this.mouseWorldX - carX;
     const dy = this.mouseWorldY - carY;
     const baseAngle = Math.atan2(dy, dx);
+
+    this.emitMuzzleFlash({ x: carX, y: carY, angleRad: baseAngle, weaponType: stats.type });
     
     for (let i = 0; i < stats.projectileCount; i++) {
       const spread = (Math.random() - 0.5) * stats.spread;
@@ -1190,6 +1312,8 @@ export class Game {
     const dy = aimY - carY;
     const baseAngle = Math.atan2(dy, dx);
 
+    this.emitMuzzleFlash({ x: carX, y: carY, angleRad: baseAngle, weaponType: stats.type });
+
     for (let i = 0; i < stats.projectileCount; i++) {
       // Apply spread
       const spread = (Math.random() - 0.5) * stats.spread;
@@ -1244,6 +1368,7 @@ export class Game {
     this.currentStageZones = def.meta?.zones ?? [];
 
     const trackSeed = def.meta?.seed ?? 1;
+    this.currentQuietZones = quietZonesFromSeed(trackSeed);
     this.trackSegmentFillStyles = [];
     this.trackSegmentShoulderStyles = [];
     this.trackSegmentSurfaceNames = [];
@@ -1334,9 +1459,23 @@ export class Game {
 
     const treeSeed = Math.floor(def.meta?.seed ?? 20260123);
     this.trees = generateTrees(this.track, { seed: treeSeed, themeKind: themeRef.kind });
-    this.waterBodies = generateWaterBodies(this.track, { seed: treeSeed + 777 });
-    const enemies = generateEnemies(this.track, { seed: treeSeed + 1337 });
-    this.enemyPool.setEnemies(enemies);
+    this.waterBodies = generateWaterBodies(this.track, { seed: treeSeed + 777, quietZones: this.currentQuietZones });
+    const spawnEnemies = !(this.netMode === "solo" && this.soloMode === "practice");
+    if (spawnEnemies) {
+      const enemies = generateEnemies(this.track, { seed: treeSeed + 1337, quietZones: this.currentQuietZones });
+      this.enemyPool.setEnemies(enemies);
+    } else {
+      this.enemyPool.clear();
+    }
+
+    // If we're the host, broadcast track changes so clients refresh immediately (minimap, hazards, etc).
+    if (this.netMode === "host" && this.netBroadcastTrackDef) {
+      try {
+        this.netBroadcastTrackDef(this.getSerializedTrackDef());
+      } catch {
+        // ignore
+      }
+    }
 
     // Reset stage-related state when swapping tracks.
     this.raceActive = false;
@@ -1418,6 +1557,10 @@ export class Game {
       return;
     }
 
+    // Snapshot previous position for robust gate-crossing detection.
+    this.prevCarX = this.state.car.xM;
+    this.prevCarY = this.state.car.yM;
+
     this.state.timeSeconds += dtSeconds;
 
     this.applyTuning();
@@ -1435,7 +1578,7 @@ export class Game {
     const isDriverRemote = this.netMode === "host" && !!this.netRemoteDriver;
 
     // Driver actions
-    const steer = inputsEnabled && (isDriverLocal || isDriverRemote) ? driverInput.steer : 0;
+    let steer = inputsEnabled && (isDriverLocal || isDriverRemote) ? driverInput.steer : 0;
     const throttleForward = inputsEnabled && (isDriverLocal || isDriverRemote) ? driverInput.throttle : 0;
     const brakeOrReverse = inputsEnabled && (isDriverLocal || isDriverRemote) ? driverInput.brake : 0;
     const handbrake = inputsEnabled && (isDriverLocal || isDriverRemote) ? driverInput.handbrake : 0;
@@ -1472,6 +1615,9 @@ export class Game {
       brake = 0;
     }
 
+    // Feel: invert steering while reversing so left/right match driver expectation.
+    if (this.gear === "R") steer = -steer;
+
     const projectionBefore = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
     const roadHalfWidthM = projectionBefore.widthM * 0.5;
     const offTrack = projectionBefore.distanceToCenterlineM > roadHalfWidthM;
@@ -1480,9 +1626,7 @@ export class Game {
       ? zonesAtSM(this.track.totalLengthM, projectionBefore.sM, this.currentStageZones)
       : [];
 
-    const rainIntensity = activeZones
-      .filter((z) => z.kind === "rain")
-      .reduce((m, z) => Math.max(m, z.intensity01), 0);
+    const rainIntensity = zoneIntensityAtSM(this.track.totalLengthM, projectionBefore.sM, this.currentStageZones, "rain", { rampM: 35 });
     const sandIntensity = activeZones
       .filter((z) => z.kind === "sandstorm")
       .reduce((m, z) => Math.max(m, z.intensity01), 0);
@@ -1689,6 +1833,15 @@ export class Game {
   private render(): void {
     const { width, height } = this.renderer.resizeToDisplay();
 
+    // Independent render-time decay (net client may not advance sim time).
+    {
+      const nowMs = performance.now();
+      if (this.gunFlashLastUpdateMs === 0) this.gunFlashLastUpdateMs = nowMs;
+      const dt = clamp((nowMs - this.gunFlashLastUpdateMs) / 1000, 0, 0.05);
+      this.gunFlashLastUpdateMs = nowMs;
+      this.gunFlash01 = Math.max(0, this.gunFlash01 - dt * 16);
+    }
+
     // Hide touch controls after finish (or when hard-locked) so the UI matches the lockout.
     const driverGroup = document.getElementById("driver-group");
     const navGroup = document.getElementById("navigator-group");
@@ -1795,11 +1948,10 @@ export class Game {
 
     const isTouch = isTouchMode();
 
-    // Show NEW TRACK button when finished (desktop + touch).
+    // Show NEW TRACK button when finished.
+    const showNewTrack = this.raceFinished && this.netMode !== "client";
     const newTrackBtn = document.getElementById("btn-new-track") as HTMLButtonElement | null;
-    if (newTrackBtn) {
-      newTrackBtn.style.display = this.raceFinished && this.netMode !== "client" ? "block" : "none";
-    }
+    if (newTrackBtn) newTrackBtn.style.display = showNewTrack ? "block" : "none";
 
     // Camera framing
     // Goal: ensure the car is always visible even on short landscape viewports.
@@ -2002,8 +2154,11 @@ export class Game {
     if (this.currentStageZones.length > 0) {
       const activeZones = zonesAtSM(this.track.totalLengthM, proj.sM, this.currentStageZones);
       activeZoneKinds = [...new Set(activeZones.map((z) => z.kind))];
-      activeZoneIndicators = activeZones.map((z) => ({ kind: z.kind, intensity01: z.intensity01 }));
-      rainIntensity = activeZones.filter((z) => z.kind === "rain").reduce((m, z) => Math.max(m, z.intensity01), 0);
+      activeZoneIndicators = activeZones.map((z) => ({
+        kind: z.kind,
+        intensity01: z.kind === "rain" ? z.intensity01 * zoneEdgeFade01(this.track.totalLengthM, proj.sM, z, 35) : z.intensity01
+      }));
+      rainIntensity = zoneIntensityAtSM(this.track.totalLengthM, proj.sM, this.currentStageZones, "rain", { rampM: 35 });
       fogIntensity = activeZones.filter((z) => z.kind === "fog").reduce((m, z) => Math.max(m, z.intensity01), 0);
       eclipseIntensity = activeZones.filter((z) => z.kind === "eclipse").reduce((m, z) => Math.max(m, z.intensity01), 0);
       sandIntensity = activeZones.filter((z) => z.kind === "sandstorm").reduce((m, z) => Math.max(m, z.intensity01), 0);
@@ -2131,6 +2286,7 @@ export class Game {
       const rainLookaheadM = 50;
       const narrowLookaheadM = 50;
       const debrisLookaheadM = 50;
+      const hideImminentM = 10;
       const loops = this.track.points.length > 2
         ? Math.hypot(
           this.track.points[0].x - this.track.points[this.track.points.length - 1].x,
@@ -2147,9 +2303,7 @@ export class Game {
       if (calloutsEnabled) {
         // Upcoming rain
         const rainActive = activeZoneKinds.includes("rain");
-        if (rainActive) {
-          warningTextLines.push("RAIN");
-        } else if (this.currentStageZones.length > 0) {
+        if (!rainActive && this.currentStageZones.length > 0) {
           let best = Infinity;
           for (const z of this.currentStageZones) {
             if (z.kind !== "rain") continue;
@@ -2168,9 +2322,7 @@ export class Game {
           // Only warn for VERY narrow segments (avoid spamming on mild squeezes).
           const narrowThreshold = base * 0.64;
           const currentW = this.track.segmentWidthsM[proj.segmentIndex] ?? base;
-          if (currentW <= narrowThreshold) {
-            warningTextLines.push("NARROW ROAD");
-          } else {
+          if (currentW > narrowThreshold) {
             let best = Infinity;
             for (let i = 0; i < this.track.segmentWidthsM.length; i++) {
               const idx = loops ? (proj.segmentIndex + i) % this.track.segmentWidthsM.length : proj.segmentIndex + i;
@@ -2182,7 +2334,7 @@ export class Game {
               if (d > narrowLookaheadM && !loops) break;
               if (d >= 0 && d <= narrowLookaheadM) best = Math.min(best, d);
             }
-            if (Number.isFinite(best) && best <= narrowLookaheadM) {
+            if (Number.isFinite(best) && best <= narrowLookaheadM && best > hideImminentM) {
               warningTextLines.push(`NARROW IN ${Math.round(best)}m`);
             }
           }
@@ -2195,7 +2347,7 @@ export class Game {
             const dist = forwardDistM(d.sM);
             if (dist >= 0 && dist <= debrisLookaheadM) best = Math.min(best, dist);
           }
-          if (Number.isFinite(best) && best <= debrisLookaheadM) {
+          if (Number.isFinite(best) && best <= debrisLookaheadM && best > hideImminentM) {
             warningTextLines.push(`DEBRIS IN ${Math.round(best)}m`);
           }
         }
@@ -2431,6 +2583,12 @@ export class Game {
       if (alpha > 0.01) this.renderer.drawScreenOverlay(`rgba(255, 255, 255, ${alpha})`);
     }
 
+    // Gun flash: brief warm bloom across the screen.
+    if (this.gunFlash01 > 0.01) {
+      const a = clamp(0.02 + 0.10 * this.gunFlash01, 0, 0.13);
+      this.renderer.drawScreenOverlay(`rgba(255, 240, 210, ${a})`);
+    }
+
     // Minimap
 
 
@@ -2637,6 +2795,8 @@ export class Game {
       yM: spawn.p.y,
       headingRad: spawn.headingRad
     };
+    this.prevCarX = this.state.car.xM;
+    this.prevCarY = this.state.car.yM;
     this.nextCheckpointIndex = 0;
     this.insideActiveGate = false;
     this.raceActive = false;
@@ -2662,11 +2822,16 @@ export class Game {
 
     // Respawn enemies when resetting (regenerate from track)
     const treeSeed = Math.floor(this.trackDef.meta?.seed ?? 20260123);
-    const enemies = generateEnemies(this.track, { seed: treeSeed + 1337 });
-    this.enemyPool.setEnemies(enemies);
+    const spawnEnemies = !(this.netMode === "solo" && this.soloMode === "practice");
+    if (spawnEnemies) {
+      const enemies = generateEnemies(this.track, { seed: treeSeed + 1337, quietZones: this.currentQuietZones });
+      this.enemyPool.setEnemies(enemies);
+    } else {
+      this.enemyPool.clear();
+    }
 
     // Deterministic on-road debris (biome-tuned)
-    this.debris = generateDebris(this.track, { seed: treeSeed + 3333, themeKind: this.currentStageThemeKind });
+    this.debris = generateDebris(this.track, { seed: treeSeed + 3333, themeKind: this.currentStageThemeKind, quietZones: this.currentQuietZones });
   }
 
   private wrapDeltaSForward(fromSM: number, toSM: number): number {
@@ -2698,8 +2863,8 @@ export class Game {
       }
     }
 
-    // Only warn when it's close: within ~50m ahead.
-    if (!best || bestDelta < 6 || bestDelta > 50) return;
+    // Only warn when it's close but not already visually imminent.
+    if (!best || bestDelta < 10 || bestDelta > 50) return;
     if (this.lastDebrisWarnId === best.id && (this.state.timeSeconds - this.lastDebrisWarnAtSeconds) < 4.0) return;
 
     this.lastDebrisWarnId = best.id;
@@ -3023,9 +3188,25 @@ export class Game {
     }
 
     const gateSM = this.checkpointSM[this.nextCheckpointIndex];
-    const insideGate =
-      Math.abs(proj.sM - gateSM) < 3.5 &&
-      proj.distanceToCenterlineM < proj.widthM * 0.6;
+    const gate = pointOnTrack(this.track, gateSM);
+    const tx = Math.cos(gate.headingRad);
+    const ty = Math.sin(gate.headingRad);
+
+    const signedNow = (this.state.car.xM - gate.p.x) * tx + (this.state.car.yM - gate.p.y) * ty;
+    const signedPrev = (this.prevCarX - gate.p.x) * tx + (this.prevCarY - gate.p.y) * ty;
+
+    // Effectively infinite gate line (no lateral requirement); keep a modest along-track window
+    // to avoid false triggers when far away.
+    const nearGate = Math.abs(proj.sM - gateSM) < 18;
+
+    const cosH = Math.cos(this.state.car.headingRad);
+    const sinH = Math.sin(this.state.car.headingRad);
+    const vxW = this.state.car.vxMS * cosH - this.state.car.vyMS * sinH;
+    const vyW = this.state.car.vxMS * sinH + this.state.car.vyMS * cosH;
+    const forwardAlongGate = vxW * tx + vyW * ty;
+
+    const crossedForward = signedPrev <= 0 && signedNow > 0 && forwardAlongGate > 0.5;
+    const insideGate = nearGate && crossedForward;
 
     if (insideGate && !this.insideActiveGate) {
       if (this.nextCheckpointIndex === 0) {
@@ -3065,7 +3246,7 @@ export class Game {
         this.playNetEffect("checkpoint", 0.7);
       }
       this.insideActiveGate = true;
-    } else if (!insideGate) {
+    } else if (!nearGate) {
       this.insideActiveGate = false;
     }
   }

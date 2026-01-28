@@ -37,8 +37,27 @@ export class Renderer2D {
 
   resizeToDisplay(): { width: number; height: number } {
     const dpr = clamp(window.devicePixelRatio ?? 1, 1, 3);
-    const displayWidthCssPx = Math.max(1, Math.floor(this.canvas.clientWidth));
-    const displayHeightCssPx = Math.max(1, Math.floor(this.canvas.clientHeight));
+    let displayWidthCssPx = Math.max(1, Math.floor(this.canvas.clientWidth));
+    let displayHeightCssPx = Math.max(1, Math.floor(this.canvas.clientHeight));
+
+    // On some mobile browsers, fullscreen/orientation transitions can temporarily report
+    // portrait-like dimensions while visually being landscape. After the game starts,
+    // force the renderer to use landscape parameters (stable UI/camera layout).
+    const looksTouch = ("ontouchstart" in window) || (navigator.maxTouchPoints ?? 0) > 0;
+    const started = typeof document !== "undefined" && document.body?.classList?.contains("started");
+    if (started && looksTouch) {
+      const w = Math.max(window.innerWidth || 0, window.innerHeight || 0);
+      const h = Math.min(window.innerWidth || 0, window.innerHeight || 0);
+      if (w > 0 && h > 0) {
+        displayWidthCssPx = Math.max(displayWidthCssPx, Math.floor(w));
+        displayHeightCssPx = Math.max(1, Math.floor(h));
+      }
+      if (displayHeightCssPx > displayWidthCssPx) {
+        const tmp = displayWidthCssPx;
+        displayWidthCssPx = displayHeightCssPx;
+        displayHeightCssPx = tmp;
+      }
+    }
 
     const displayWidthDevicePx = Math.floor(displayWidthCssPx * dpr);
     const displayHeightDevicePx = Math.floor(displayHeightCssPx * dpr);
@@ -521,19 +540,19 @@ export class Renderer2D {
     ctx.translate(opts.x, opts.y);
     ctx.rotate(opts.headingRad);
 
-    const half = opts.widthM * 0.5;
+    const halfRoad = opts.widthM * 0.5;
     const bandHalfThickness = 0.65; // thick, very visible
 
     // Dark base band.
     ctx.fillStyle = "rgba(0,0,0,0.7)";
-    ctx.fillRect(-bandHalfThickness, -half, bandHalfThickness * 2, half * 2);
+    ctx.fillRect(-bandHalfThickness, -halfRoad, bandHalfThickness * 2, halfRoad * 2);
 
     // Checkered pattern.
     const cell = 0.55;
     const cols = Math.max(1, Math.floor((bandHalfThickness * 2) / cell));
-    const rows = Math.max(1, Math.floor((half * 2) / cell));
+    const rows = Math.max(1, Math.floor((halfRoad * 2) / cell));
     const startX = -bandHalfThickness;
-    const startY = -half;
+    const startY = -halfRoad;
     for (let iy = 0; iy < rows; iy++) {
       for (let ix = 0; ix < cols; ix++) {
         const isWhite = (ix + iy) % 2 === 0;
@@ -546,8 +565,8 @@ export class Renderer2D {
     ctx.strokeStyle = "rgba(255, 220, 90, 0.75)";
     ctx.lineWidth = 0.22;
     ctx.beginPath();
-    ctx.moveTo(0, -half);
-    ctx.lineTo(0, half);
+    ctx.moveTo(0, -halfRoad);
+    ctx.lineTo(0, halfRoad);
     ctx.stroke();
 
     ctx.restore();
@@ -1720,64 +1739,6 @@ export class Renderer2D {
     ctx.fillStyle = opts.minimapBgColor ?? "rgba(20, 25, 30, 0.3)";
     ctx.fillRect(minimapX, minimapY, minimapSize, minimapSize);
 
-    // Warnings (e.g. incoming rain / narrow road). Rendered before the map itself.
-    if (opts.warningTextLines && opts.warningTextLines.length > 0) {
-      ctx.save();
-      ctx.translate(minimapX + 10, minimapY + 10);
-      ctx.textAlign = "left";
-      ctx.textBaseline = "top";
-
-      ctx.font = "800 13px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
-
-      const roundRect = (x: number, y: number, w: number, h: number, r: number): void => {
-        const rr = Math.max(0, Math.min(r, Math.min(w, h) / 2));
-        ctx.beginPath();
-        ctx.moveTo(x + rr, y);
-        ctx.lineTo(x + w - rr, y);
-        ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
-        ctx.lineTo(x + w, y + h - rr);
-        ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
-        ctx.lineTo(x + rr, y + h);
-        ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
-        ctx.lineTo(x, y + rr);
-        ctx.quadraticCurveTo(x, y, x + rr, y);
-        ctx.closePath();
-      };
-
-      const colorFor = (text: string): { bg: string; fg: string; prefix: string } => {
-        if (text.includes("RAIN")) return { bg: "rgba(35, 90, 140, 0.72)", fg: "rgba(210, 240, 255, 0.98)", prefix: "!" };
-        if (text.includes("DEBRIS")) return { bg: "rgba(140, 70, 25, 0.74)", fg: "rgba(255, 235, 210, 0.98)", prefix: "!" };
-        if (text.includes("NARROW")) return { bg: "rgba(120, 110, 30, 0.74)", fg: "rgba(255, 248, 210, 0.98)", prefix: "!" };
-        return { bg: "rgba(0, 0, 0, 0.65)", fg: "rgba(255, 245, 220, 0.95)", prefix: "!" };
-      };
-
-      let y = 0;
-      for (let i = 0; i < Math.min(4, opts.warningTextLines.length); i++) {
-        const raw = opts.warningTextLines[i] ?? "";
-        if (!raw) continue;
-        const { bg, fg, prefix } = colorFor(raw);
-        const text = `${prefix} ${raw}`;
-        const tw = ctx.measureText(text).width;
-        const boxW = Math.min(tw + 18, minimapSize - 22);
-        const boxH = 18;
-
-        // Background pill
-        ctx.fillStyle = bg;
-        roundRect(0, y, boxW, boxH, 8);
-        ctx.fill();
-        ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
-        // Text
-        ctx.fillStyle = fg;
-        ctx.fillText(text, 9, y + 3);
-        y += boxH + 6;
-      }
-
-      ctx.restore();
-    }
-
     // Electrical storm: replace minimap with an error display.
     if (opts.statusTextLines && opts.statusTextLines.length > 0) {
       ctx.fillStyle = "rgba(0, 0, 0, 0.70)";
@@ -2134,6 +2095,74 @@ export class Renderer2D {
         ctx.fillText(label, baseX + 13, y);
         y += 14;
       }
+      ctx.restore();
+    }
+
+    // Warnings (e.g. incoming rain / narrow road). Rendered above the minimap.
+    if (opts.warningTextLines && opts.warningTextLines.length > 0) {
+      ctx.save();
+
+      const lines: string[] = [];
+      for (let i = 0; i < Math.min(4, opts.warningTextLines.length); i++) {
+        const raw = opts.warningTextLines[i] ?? "";
+        if (raw) lines.push(raw);
+      }
+
+      const boxH = 18;
+      const gapY = 6;
+      const totalH = lines.length > 0 ? (lines.length * boxH + (lines.length - 1) * gapY) : 0;
+      const padAbove = 10;
+      const startY = Math.max(10, minimapY - padAbove - totalH);
+
+      ctx.translate(minimapX + 10, startY);
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+
+      ctx.font = "800 13px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+
+      const roundRect = (x: number, y: number, w: number, h: number, r: number): void => {
+        const rr = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+        ctx.beginPath();
+        ctx.moveTo(x + rr, y);
+        ctx.lineTo(x + w - rr, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+        ctx.lineTo(x + w, y + h - rr);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+        ctx.lineTo(x + rr, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
+        ctx.lineTo(x, y + rr);
+        ctx.quadraticCurveTo(x, y, x + rr, y);
+        ctx.closePath();
+      };
+
+      const colorFor = (text: string): { bg: string; fg: string; prefix: string } => {
+        if (text.includes("RAIN")) return { bg: "rgba(35, 90, 140, 0.72)", fg: "rgba(210, 240, 255, 0.98)", prefix: "!" };
+        if (text.includes("DEBRIS")) return { bg: "rgba(140, 70, 25, 0.74)", fg: "rgba(255, 235, 210, 0.98)", prefix: "!" };
+        if (text.includes("NARROW")) return { bg: "rgba(120, 110, 30, 0.74)", fg: "rgba(255, 248, 210, 0.98)", prefix: "!" };
+        return { bg: "rgba(0, 0, 0, 0.65)", fg: "rgba(255, 245, 220, 0.95)", prefix: "!" };
+      };
+
+      let y = 0;
+      for (const raw of lines) {
+        const { bg, fg, prefix } = colorFor(raw);
+        const text = `${prefix} ${raw}`;
+        const tw = ctx.measureText(text).width;
+        const boxW = Math.min(tw + 18, minimapSize - 22);
+
+        // Background pill
+        ctx.fillStyle = bg;
+        roundRect(0, y, boxW, boxH, 8);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Text
+        ctx.fillStyle = fg;
+        ctx.fillText(text, 9, y + 3);
+        y += boxH + gapY;
+      }
+
       ctx.restore();
     }
 

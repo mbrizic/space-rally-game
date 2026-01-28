@@ -433,8 +433,8 @@ function tryCreatePointToPointTrackDefinition(seed: number): TrackDefinition {
   // end-50m to end: Ending city
   
   const cityLength = 50; // Length of road through each city
-  const minDistance = 1000; // LONGER: 1000-1600m for more space
-  const maxDistance = 1600;
+  const minDistance = 1100; // LONGER: more room for fun fast segments
+  const maxDistance = 1800;
   const distance = minDistance + rand() * (maxDistance - minDistance);
   const angle = rand() * Math.PI * 2;
   

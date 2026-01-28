@@ -93,10 +93,10 @@ export function defaultCarParams(): CarParams {
     corneringStiffnessRearNPerRad: 98000,
     frictionMu: 1.22,
     maxSteerRad: 1.0,
-    maxSteerRateRadS: 7.5,
-    engineForceN: 28500,
+    maxSteerRateRadS: 8.0,
+    engineForceN: 30500,
     engineFadeSpeedMS: 58,
-    brakeForceN: 19000,
+    brakeForceN: 21000,
     handbrakeForceN: 7000,
     handbrakeRearGripScale: 0.55,
     driveBiasFront: 0.70, // 70% front, 30% rear (mostly FWD)

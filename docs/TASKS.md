@@ -22,6 +22,14 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 - add option to upvote/downvote track at the end of race
     - add backend to support this and show most and least favourite tracks
 - log high scores (we already have backend support) and who those high scores somewhere 
+- backend for these things should be on a branch "feat/backend-voting-stats"
+
+## Quick wins
+- [x] add "quiet" pieces of road where the only focus is on driving
+- [x] make rain a bit less loud
+- [x] narrow/debris callouts are right now drawn BEHIND the minimap road. They should maybe be above the map.
+- [x] I don't see a NEW TRACK button on the finished screen anymore?
+- [x] when next track is requested in multiplayer, the client still sees the old map
 
 ## Performance
 
@@ -32,10 +40,9 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 
 ## Feel / UX / Polish
 
-- [x] Make finish line prominent + hard-stop/lock controls on crossing
 - [x] Add deterministic road debris hazards (destabilize, no damage) + navigator callouts (~50m)
-- [x] Biome tuning: rainforest denser trees + more debris; arctic less debris
 - [ ] Tune surfaces + audio feel (gravel slide vs drift intensity, ice feel)
+- [x] Fix steering direction when reversing
 - [ ] Add better tactile feedback (haptics/vibration tied to grip/impacts)
 - [ ] Manual gearbox UX on mobile
 
