@@ -13,7 +13,7 @@ import {
   type TrackProjection
 } from "../sim/track";
 import { surfaceForTrackSM, type Surface } from "../sim/surface";
-import { resolveStageTheme, stageMetaFromSeed, zonesAtSM, type StageThemeKind, type TrackZone, type TrackZoneKind } from "../sim/stage";
+import { quietZonesFromSeed, resolveStageTheme, stageMetaFromSeed, zoneEdgeFade01, zoneIntensityAtSM, zonesAtSM, type QuietZone, type StageThemeKind, type TrackZone, type TrackZoneKind } from "../sim/stage";
 import { generateDebris, generateTrees, generateWaterBodies, pointToSegmentDistance, type CircleObstacle, type DebrisObstacle, type WaterBody } from "../sim/props";
 import { DriftDetector, DriftState, type DriftInfo } from "../sim/drift";
 import { createEngineState, defaultEngineParams, stepEngine, rpmFraction, shiftUp, shiftDown, type EngineState } from "../sim/engine";
@@ -27,6 +27,7 @@ import type { TuningPanel } from "./tuning";
 import { ProjectilePool } from "../sim/projectile";
 import { EnemyPool, EnemyType, generateEnemies } from "../sim/enemy";
 import { createWeaponState, WeaponState, WeaponType } from "../sim/weapons";
+import { getHighScores, getTrackVotes, postGameStat, postHighScore, postTrackVote } from "../net/backend-api";
 
 function isTouchMode(): boolean {
   try {
@@ -43,6 +44,68 @@ export enum PlayerRole {
   DRIVER = "driver",
   NAVIGATOR = "navigator"
 }
+
+export type SoloMode = "timeTrial" | "practice";
+
+type NetSnapshot = {
+  t: number;
+  car: { xM: number; yM: number; headingRad: number; vxMS: number; vyMS: number; yawRateRadS: number; steerAngleRad: number; alphaFrontRad: number; alphaRearRad: number };
+  enemies: { id: number; x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank" | "colossus"; health?: number; maxHealth?: number }[];
+  projectiles: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age: number; maxAge: number }[];
+  enemyProjectiles: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age: number; maxAge: number }[];
+  particleEvents: (
+    | { type: "emit"; opts: { x: number; y: number; vx: number; vy: number; lifetime: number; sizeM: number; color: string; count?: number } }
+    | { type: "enemyDeath"; x: number; y: number; isTank: boolean; radiusM?: number }
+  )[];
+  debrisDestroyed: number[];
+  audioEvents: { effect: "gunshot" | "explosion" | "impact" | "checkpoint"; volume: number; pitch: number }[];
+  continuousAudio: { engineRpm: number; engineThrottle: number; slideIntensity: number; surfaceName: string };
+  raceActive: boolean;
+  raceStartTimeSeconds: number;
+  raceFinished: boolean;
+  finishTimeSeconds: number | null;
+  damage01: number;
+  enemyKillCount: number;
+  cameraMode: "follow" | "runner";
+  cameraRotationRad: number;
+  shakeX: number;
+  shakeY: number;
+};
+
+type ReplayRecordingV1 = {
+  v: 1;
+  createdAtMs: number;
+  seed: string;
+  trackDef: string;
+  sampleHz: number;
+  frames: NetSnapshot[];
+};
+
+type ReplayInputEventV1 = {
+  t: number;
+  steer: number;
+  throttle: number;
+  brake: number;
+  handbrake: number;
+};
+
+type ReplayBundleV2 = {
+  v: 2;
+  createdAtMs: number;
+  seed: string;
+  trackDef: string;
+  state: {
+    sampleHz: number;
+    frames: NetSnapshot[];
+  };
+  inputs: {
+    startTimeSeconds: number;
+    startCar: ReturnType<typeof createCarState>;
+    startEngine: EngineState;
+    startGear: "F" | "R";
+    events: ReplayInputEventV1[];
+  } | null;
+};
 
 type GameState = {
   timeSeconds: number;
@@ -76,6 +139,8 @@ export class Game {
   )[] = [];
   // Audio events to sync between host and client
   private netAudioEvents: { effect: "gunshot" | "explosion" | "impact" | "checkpoint"; volume: number; pitch: number }[] = [];
+  // Audio events captured for local state replay recording (solo/host).
+  private replayLocalAudioEvents: { effect: "gunshot" | "explosion" | "impact" | "checkpoint"; volume: number; pitch: number }[] = [];
   private netClientTargetCar: {
     xM: number;
     yM: number;
@@ -88,6 +153,70 @@ export class Game {
     alphaRearRad: number;
   } | null = null;
   private netClientLastRenderMs = 0;
+  private gunFlash01 = 0;
+  private gunFlashLastUpdateMs = 0;
+  private currentQuietZones: QuietZone[] = [];
+  private netBroadcastTrackDef: ((trackDef: string) => void) | null = null;
+  private soloMode: SoloMode = "timeTrial";
+
+  private finishPanel = {
+    root: null as HTMLDivElement | null,
+    sub: null as HTMLDivElement | null,
+    name: null as HTMLInputElement | null,
+    submit: null as HTMLButtonElement | null,
+    voteUp: null as HTMLButtonElement | null,
+    voteDown: null as HTMLButtonElement | null,
+    replayState: null as HTMLButtonElement | null,
+    replayInput: null as HTMLButtonElement | null,
+    replayDownload: null as HTMLButtonElement | null,
+    replayAutoDownload: null as HTMLInputElement | null,
+    close: null as HTMLButtonElement | null,
+    msg: null as HTMLDivElement | null,
+    board: null as HTMLDivElement | null
+  };
+  private finishPanelSeed: string | null = null;
+  private finishPanelScoreMs: number | null = null;
+  private finishPanelShown = false;
+
+  private backendPlayedSent = false;
+  private backendFinishedSent = false;
+  private backendWreckedSent = false;
+
+  private readonly replayStorageKey = "spaceRallyReplay:last";
+  private readonly replayAutoDownloadKey = "spaceRallyReplay:autoDownload";
+  private readonly replaySampleHz = 15;
+  private lastReplay: ReplayBundleV2 | null = null;
+  private replayRecording: ReplayBundleV2 | null = null;
+  private replayRecordAccumulatorS = 0;
+  private replayPlayback:
+    | null
+    | {
+        rec: ReplayBundleV2;
+        index: number;
+        accumulatorS: number;
+        speed: 0.5 | 1 | 2 | 4;
+        ended: boolean;
+      } = null;
+
+  private replayInputRecording: ReplayBundleV2["inputs"] | null = null;
+  private replayInputPlayback:
+    | null
+    | {
+        rec: ReplayBundleV2;
+        speed: 0.5 | 1 | 2 | 4;
+        cursor: number;
+        current: { steer: number; throttle: number; brake: number; handbrake: number };
+        ended: boolean;
+      } = null;
+
+  private replayPanel = {
+    root: null as HTMLDivElement | null,
+    sub: null as HTMLDivElement | null,
+    restart: null as HTMLButtonElement | null,
+    speed: null as HTMLButtonElement | null,
+    exit: null as HTMLButtonElement | null
+  };
+
   private trackDef!: TrackDefinition; // Will be set in constructor
   private track!: ReturnType<typeof createTrackFromDefinition>; // Will be set in constructor
   private trackSegmentFillStyles: string[] = [];
@@ -164,6 +293,9 @@ export class Game {
   private enemyProjectiles: { x: number; y: number; vx: number; vy: number; age: number; maxAge: number }[] = [];
   private colossusShotCooldownS = 0;
   private colossusShotPhase = 0;
+
+  private prevCarX = 0;
+  private prevCarY = 0;
 
   private lastDebrisWarnId: number | null = null;
   private lastDebrisWarnAtSeconds = -999;
@@ -276,15 +408,24 @@ export class Game {
     // Start with a point-to-point track
     this.setTrack(createPointToPointTrackDefinition(this.proceduralSeed));
 
+    this.initFinishPanel();
+    this.initReplayPanel();
+    this.loadLastReplayFromStorage();
+
+    if (!this.backendPlayedSent) {
+      this.backendPlayedSent = true;
+      void postGameStat("played");
+    }
+
     // Touch: New track button (shown when finished)
-    const newTrackBtn = document.getElementById("btn-new-track");
-    newTrackBtn?.addEventListener("click", (e) => {
+    const onNewTrackClick = (e: Event): void => {
       e.preventDefault();
       e.stopPropagation();
       if (this.netMode === "client") return;
       this.randomizeTrack();
       if (!this.audioUnlocked) this.tryUnlockAudio();
-    });
+    };
+    document.getElementById("btn-new-track")?.addEventListener("click", onNewTrackClick);
 
     // Wrecked: on-screen reset button (shown via JS)
     const resetBtn = document.getElementById("btn-reset") as HTMLButtonElement | null;
@@ -323,6 +464,25 @@ export class Game {
       const target = e.target as any;
       const tag = (target?.tagName as string | undefined)?.toLowerCase?.() ?? "";
       if (tag === "input" || tag === "textarea" || target?.isContentEditable) return;
+
+      if (this.replayPlayback) {
+        if (e.code === "Escape") {
+          const pb = this.replayPlayback;
+          if (pb && pb.rec.state.frames.length) {
+            this.applyReplayFrame(pb.rec.state.frames[pb.rec.state.frames.length - 1]);
+            this.controlsLocked = true;
+            this.finishPanelShown = true;
+            this.setFinishPanelVisible(true);
+          }
+          this.stopReplayPlayback();
+          if (this.raceFinished) this.finishPanelShown = true;
+        }
+        if (e.code === "KeyR") {
+          const rec = this.replayPlayback?.rec;
+          if (rec) this.startReplayPlayback(rec);
+        }
+        return;
+      }
 
       if (e.code === "KeyR") {
         if (this.netMode !== "client") this.reset();
@@ -415,6 +575,915 @@ export class Game {
 
   public setNetShootPulseHandler(_handler: (() => void) | null): void {
     // No longer used - client handles shooting locally
+  }
+
+  public setNetTrackDefBroadcaster(handler: ((trackDef: string) => void) | null): void {
+    this.netBroadcastTrackDef = handler;
+  }
+
+  public setSoloMode(mode: SoloMode): void {
+    this.soloMode = mode;
+  }
+
+  public getSoloMode(): SoloMode {
+    return this.soloMode;
+  }
+
+  private getTrackSeedString(): string {
+    const seed = this.trackDef?.meta?.seed;
+    if (typeof seed === "number" && Number.isFinite(seed)) return String(Math.floor(seed));
+    // Fallback: keep stable-ish for editor/imported tracks.
+    return "0";
+  }
+
+  private resetFinishPanel(): void {
+    this.finishPanelSeed = null;
+    this.finishPanelScoreMs = null;
+    this.finishPanelShown = false;
+    this.backendFinishedSent = false;
+    this.backendWreckedSent = false;
+
+    if (this.finishPanel.msg) this.finishPanel.msg.textContent = "";
+    if (this.finishPanel.board) this.finishPanel.board.textContent = "";
+    this.setFinishPanelVisible(false);
+  }
+
+  private setFinishPanelVisible(visible: boolean): void {
+    const root = this.finishPanel.root;
+    if (!root) return;
+    root.style.display = visible ? "flex" : "none";
+  }
+
+  private initFinishPanel(): void {
+    this.finishPanel.root = document.getElementById("finish-panel") as HTMLDivElement | null;
+    this.finishPanel.sub = document.getElementById("finish-sub") as HTMLDivElement | null;
+    this.finishPanel.name = document.getElementById("finish-name") as HTMLInputElement | null;
+    this.finishPanel.submit = document.getElementById("finish-submit") as HTMLButtonElement | null;
+    this.finishPanel.voteUp = document.getElementById("finish-vote-up") as HTMLButtonElement | null;
+    this.finishPanel.voteDown = document.getElementById("finish-vote-down") as HTMLButtonElement | null;
+    this.finishPanel.replayState = document.getElementById("finish-replay-state") as HTMLButtonElement | null;
+    this.finishPanel.replayInput = document.getElementById("finish-replay-input") as HTMLButtonElement | null;
+    this.finishPanel.replayDownload = document.getElementById("finish-replay-download") as HTMLButtonElement | null;
+    this.finishPanel.replayAutoDownload = document.getElementById("finish-replay-auto-download") as HTMLInputElement | null;
+    this.finishPanel.close = document.getElementById("finish-close") as HTMLButtonElement | null;
+    this.finishPanel.msg = document.getElementById("finish-msg") as HTMLDivElement | null;
+    this.finishPanel.board = document.getElementById("finish-board") as HTMLDivElement | null;
+
+    const nameEl = this.finishPanel.name;
+    if (nameEl) {
+      const saved = localStorage.getItem("spaceRallyName") ?? "";
+      if (!nameEl.value) nameEl.value = saved;
+      nameEl.addEventListener("change", () => {
+        try {
+          localStorage.setItem("spaceRallyName", nameEl.value.trim().slice(0, 40));
+        } catch {
+          // ignore
+        }
+      });
+    }
+
+    this.finishPanel.close?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.finishPanelShown = false;
+      this.setFinishPanelVisible(false);
+    });
+
+    this.finishPanel.submit?.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const seed = this.finishPanelSeed;
+      const scoreMs = this.finishPanelScoreMs;
+      const name = (this.finishPanel.name?.value ?? "").trim().slice(0, 40) || "anonymous";
+      if (!seed || !scoreMs) return;
+
+      if (this.finishPanel.submit) this.finishPanel.submit.disabled = true;
+      if (this.finishPanel.msg) this.finishPanel.msg.textContent = "Submitting score...";
+
+      try {
+        localStorage.setItem("spaceRallyName", name);
+      } catch {
+        // ignore
+      }
+
+      const res = await postHighScore({ name, scoreMs, seed });
+      if (this.finishPanel.msg) this.finishPanel.msg.textContent = res.ok ? "Score submitted." : "Score submit failed (offline?).";
+      if (this.finishPanel.submit) this.finishPanel.submit.disabled = false;
+
+      void this.refreshFinishPanelData();
+    });
+
+    const vote = async (type: "up" | "down"): Promise<void> => {
+      const seed = this.finishPanelSeed;
+      if (!seed) return;
+      const key = `spaceRallyVote:${seed}`;
+      if (localStorage.getItem(key)) return;
+
+      if (this.finishPanel.voteUp) this.finishPanel.voteUp.disabled = true;
+      if (this.finishPanel.voteDown) this.finishPanel.voteDown.disabled = true;
+      if (this.finishPanel.msg) this.finishPanel.msg.textContent = "Sending vote...";
+
+      const res = await postTrackVote(seed, type);
+      if (res.ok) {
+        try {
+          localStorage.setItem(key, type);
+        } catch {
+          // ignore
+        }
+        if (this.finishPanel.msg) this.finishPanel.msg.textContent = type === "up" ? "Upvoted." : "Downvoted.";
+      } else {
+        if (this.finishPanel.msg) this.finishPanel.msg.textContent = "Vote failed (offline?).";
+      }
+
+      void this.refreshFinishPanelData();
+    };
+
+    this.finishPanel.voteUp?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      void vote("up");
+    });
+    this.finishPanel.voteDown?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      void vote("down");
+    });
+
+    this.finishPanel.replayState?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const rec = this.lastReplay;
+      if (!rec || rec.state.frames.length === 0) return;
+      this.startReplayPlayback(rec);
+    });
+
+    this.finishPanel.replayInput?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const rec = this.lastReplay;
+      if (!rec || !rec.inputs || rec.inputs.events.length === 0) return;
+      this.startInputReplayPlayback(rec);
+    });
+
+    this.finishPanel.replayDownload?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const res = this.downloadLastReplay();
+      if (this.finishPanel.msg) this.finishPanel.msg.textContent = res.ok ? "Replay downloaded." : (res.error ?? "No replay to download.");
+    });
+
+    const autoDl = this.finishPanel.replayAutoDownload;
+    if (autoDl) {
+      try {
+        autoDl.checked = localStorage.getItem(this.replayAutoDownloadKey) === "1";
+      } catch {
+        autoDl.checked = false;
+      }
+      autoDl.addEventListener("change", () => {
+        try {
+          localStorage.setItem(this.replayAutoDownloadKey, autoDl.checked ? "1" : "0");
+        } catch {
+          // ignore
+        }
+      });
+    }
+
+    if (this.finishPanel.replayState) this.finishPanel.replayState.disabled = true;
+    if (this.finishPanel.replayInput) this.finishPanel.replayInput.disabled = true;
+    if (this.finishPanel.replayDownload) this.finishPanel.replayDownload.disabled = !this.lastReplay;
+
+    this.setFinishPanelVisible(false);
+  }
+
+  private updateFinishPanelReplayButtons(): void {
+    const seed = this.finishPanelSeed;
+    const rec = this.lastReplay;
+
+    if (this.finishPanel.replayDownload) this.finishPanel.replayDownload.disabled = !rec;
+
+    if (this.finishPanel.replayState) {
+      const ok = !!seed && !!rec && rec.seed === seed && rec.state.frames.length > 0;
+      this.finishPanel.replayState.disabled = !ok;
+    }
+    if (this.finishPanel.replayInput) {
+      const ok = !!seed && !!rec && rec.seed === seed && !!rec.inputs && rec.inputs.events.length > 0;
+      this.finishPanel.replayInput.disabled = !ok;
+    }
+  }
+
+  private initReplayPanel(): void {
+    this.replayPanel.root = document.getElementById("replay-panel") as HTMLDivElement | null;
+    this.replayPanel.sub = document.getElementById("replay-sub") as HTMLDivElement | null;
+    this.replayPanel.restart = document.getElementById("replay-restart") as HTMLButtonElement | null;
+    this.replayPanel.speed = document.getElementById("replay-speed") as HTMLButtonElement | null;
+    this.replayPanel.exit = document.getElementById("replay-exit") as HTMLButtonElement | null;
+
+    this.replayPanel.restart?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (this.replayPlayback) {
+        this.startReplayPlayback(this.replayPlayback.rec);
+        return;
+      }
+      if (this.replayInputPlayback) {
+        this.startInputReplayPlayback(this.replayInputPlayback.rec);
+      }
+    });
+
+    this.replayPanel.speed?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const pb = this.replayPlayback;
+      const ipb = this.replayInputPlayback;
+      if (!pb && !ipb) return;
+      const cur = pb ? pb.speed : (ipb ? ipb.speed : 1);
+      const next: 0.5 | 1 | 2 | 4 = cur === 1
+        ? 2
+        : cur === 2
+          ? 4
+          : cur === 4
+            ? 0.5
+            : 1;
+      if (pb) pb.speed = next;
+      if (ipb) ipb.speed = next;
+      this.updateReplayPanelUi();
+    });
+
+    this.replayPanel.exit?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const pb = this.replayPlayback;
+      // For STATE replays (started from the finish panel), always restore the final frame
+      // so exiting replay returns to the finish screen instead of leaving you mid-run.
+      if (pb && pb.rec.state.frames.length) {
+        this.applyReplayFrame(pb.rec.state.frames[pb.rec.state.frames.length - 1]);
+        this.controlsLocked = true;
+        this.finishPanelShown = true;
+        this.setFinishPanelVisible(true);
+      }
+      this.stopReplayPlayback();
+      // For other cases (e.g. INPUT replay), fall back to existing behavior.
+      if (this.raceFinished) {
+        this.finishPanelShown = true;
+      }
+    });
+
+    this.setReplayPanelVisible(false);
+  }
+
+  private setReplayPanelVisible(visible: boolean): void {
+    const root = this.replayPanel.root;
+    if (!root) return;
+    root.style.display = visible ? "flex" : "none";
+  }
+
+  private updateReplayPanelUi(): void {
+    const pb = this.replayPlayback;
+    const ipb = this.replayInputPlayback;
+    if (!pb && !ipb) return;
+
+    const speed = pb ? pb.speed : (ipb ? ipb.speed : 1);
+    if (this.replayPanel.speed) this.replayPanel.speed.textContent = `SPEED: ${speed}×`;
+
+    if (pb) {
+      const total = pb.rec.state.frames.length;
+      const idx = Math.min(pb.index + 1, total);
+      const seed = pb.rec.seed;
+      const timeS = this.finishTimeSeconds !== null ? this.finishTimeSeconds.toFixed(2) : "--";
+      const status = pb.ended ? "(END)" : "";
+      if (this.replayPanel.sub) this.replayPanel.sub.textContent = `MODE: STATE | Track: ${seed} | Frame: ${idx}/${total} | Time: ${timeS}s ${status}`.trim();
+      return;
+    }
+
+    if (ipb) {
+      const seed = ipb.rec.seed;
+      const timeS = this.finishTimeSeconds !== null ? this.finishTimeSeconds.toFixed(2) : "--";
+      const status = ipb.ended ? "(END)" : "";
+      if (this.replayPanel.sub) this.replayPanel.sub.textContent = `MODE: INPUTS | Track: ${seed} | Time: ${timeS}s ${status}`.trim();
+    }
+  }
+
+  private parseReplayBundle(parsed: any): ReplayBundleV2 | null {
+    if (!parsed) return null;
+
+    if (parsed.v === 2) {
+      if (typeof parsed.seed !== "string" || typeof parsed.trackDef !== "string") return null;
+      if (!parsed.state || typeof parsed.state.sampleHz !== "number" || !Array.isArray(parsed.state.frames)) return null;
+
+      if (parsed.inputs != null) {
+        const inp = parsed.inputs;
+        if (typeof inp.startTimeSeconds !== "number") return null;
+        if (!inp.startCar || typeof inp.startCar !== "object") return null;
+        if (!inp.startEngine || typeof inp.startEngine !== "object") return null;
+        // Back/forward compat: accept "F"|"R" (current) or coerce numeric to a gear.
+        let gear: any = inp.startGear;
+        if (typeof gear === "number") gear = gear < 0 ? "R" : "F";
+        if (gear !== "F" && gear !== "R") return null;
+        inp.startGear = gear;
+        if (!Array.isArray(inp.events)) return null;
+      }
+
+      return parsed as ReplayBundleV2;
+    }
+
+    if (parsed.v === 1) {
+      if (typeof parsed.seed !== "string" || typeof parsed.trackDef !== "string") return null;
+      if (typeof parsed.sampleHz !== "number" || !Number.isFinite(parsed.sampleHz) || parsed.sampleHz <= 0) return null;
+      if (!Array.isArray(parsed.frames)) return null;
+      const v1 = parsed as ReplayRecordingV1;
+      return {
+        v: 2,
+        createdAtMs: v1.createdAtMs,
+        seed: v1.seed,
+        trackDef: v1.trackDef,
+        state: { sampleHz: v1.sampleHz, frames: v1.frames },
+        inputs: null
+      };
+    }
+
+    return null;
+  }
+
+  private commitLastReplay(rec: ReplayBundleV2): void {
+    this.lastReplay = rec;
+    try {
+      localStorage.setItem(this.replayStorageKey, JSON.stringify(rec));
+    } catch {
+      // ignore
+    }
+    (globalThis as any).__SPACE_RALLY_LAST_REPLAY__ = this.lastReplay;
+    this.updateFinishPanelReplayButtons();
+  }
+
+  private downloadReplayBundle(rec: ReplayBundleV2): { ok: true } | { ok: false; error: string } {
+    try {
+      const ts = new Date(rec.createdAtMs || Date.now());
+      const pad2 = (n: number) => String(n).padStart(2, "0");
+      const stamp = `${ts.getFullYear()}-${pad2(ts.getMonth() + 1)}-${pad2(ts.getDate())}_${pad2(ts.getHours())}${pad2(ts.getMinutes())}${pad2(ts.getSeconds())}`;
+      const seedSafe = (rec.seed || "0").replace(/[^0-9a-zA-Z_-]+/g, "_");
+      const filename = `space-rally_replay_v2_seed-${seedSafe}_${stamp}.json`;
+
+      const blob = new Blob([JSON.stringify(rec)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "Download failed." };
+    }
+  }
+
+  public downloadLastReplay(): { ok: true } | { ok: false; error: string } {
+    const rec = this.lastReplay;
+    if (!rec) return { ok: false, error: "No replay recorded yet." };
+    return this.downloadReplayBundle(rec);
+  }
+
+  public importReplayFromJsonText(text: string): { ok: true } | { ok: false; error: string } {
+    try {
+      const parsed: any = JSON.parse(text);
+      const rec = this.parseReplayBundle(parsed);
+      if (!rec) return { ok: false, error: "Invalid replay file." };
+      this.commitLastReplay(rec);
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "Could not parse JSON." };
+    }
+  }
+
+  public playLastReplay(mode: "auto" | "state" | "inputs" = "auto"): boolean {
+    const rec = this.lastReplay;
+    if (!rec) return false;
+
+    const canState = rec.state.frames.length > 0;
+    const canInputs = !!rec.inputs && rec.inputs.events.length > 0;
+
+    if (mode === "inputs") {
+      if (!canInputs) return false;
+      this.startInputReplayPlayback(rec);
+      return true;
+    }
+
+    if (mode === "state") {
+      if (!canState) return false;
+      this.startReplayPlayback(rec);
+      return true;
+    }
+
+    if (canInputs) {
+      this.startInputReplayPlayback(rec);
+      return true;
+    }
+    if (canState) {
+      this.startReplayPlayback(rec);
+      return true;
+    }
+    return false;
+  }
+
+  private loadLastReplayFromStorage(): void {
+    try {
+      const raw = localStorage.getItem(this.replayStorageKey);
+      if (!raw) return;
+      const parsed: any = JSON.parse(raw);
+      const rec = this.parseReplayBundle(parsed);
+      if (!rec) return;
+      this.lastReplay = rec;
+      (globalThis as any).__SPACE_RALLY_LAST_REPLAY__ = this.lastReplay;
+      this.updateFinishPanelReplayButtons();
+    } catch {
+      // ignore
+    }
+  }
+
+  private onRaceFinishedUi(): void {
+    this.finishPanelSeed = this.getTrackSeedString();
+    this.finishPanelScoreMs = this.finishTimeSeconds !== null ? Math.max(1, Math.floor(this.finishTimeSeconds * 1000)) : null;
+    this.finishPanelShown = true;
+
+    this.updateFinishPanelReplayButtons();
+
+    if (!this.backendFinishedSent) {
+      this.backendFinishedSent = true;
+      void postGameStat("finished");
+    }
+
+    const timeS = this.finishTimeSeconds !== null ? this.finishTimeSeconds.toFixed(2) : "--";
+    if (this.finishPanel.sub) this.finishPanel.sub.textContent = `Time: ${timeS}s | Track: ${this.finishPanelSeed}`;
+    if (this.finishPanel.msg) this.finishPanel.msg.textContent = "";
+
+    void this.refreshFinishPanelData();
+  }
+
+  private async refreshFinishPanelData(): Promise<void> {
+    const seed = this.finishPanelSeed;
+    if (!seed) return;
+
+    const key = `spaceRallyVote:${seed}`;
+    const voted = ((): "up" | "down" | null => {
+      const v = localStorage.getItem(key);
+      return v === "up" || v === "down" ? v : null;
+    })();
+
+    if (this.finishPanel.voteUp) this.finishPanel.voteUp.disabled = !!voted;
+    if (this.finishPanel.voteDown) this.finishPanel.voteDown.disabled = !!voted;
+
+    const [votes, scores] = await Promise.all([
+      getTrackVotes(seed),
+      getHighScores({ seed, limit: 6 })
+    ]);
+
+    const lines: string[] = [];
+    if (votes.ok) {
+      lines.push(`VOTES:  👍 ${votes.upvotes}   👎 ${votes.downvotes}`);
+    } else {
+      lines.push("VOTES:  (unavailable)");
+    }
+
+    lines.push("");
+    lines.push("TOP TIMES (THIS TRACK)");
+
+    if (scores.ok && scores.scores.length > 0) {
+      for (let i = 0; i < Math.min(6, scores.scores.length); i++) {
+        const s = scores.scores[i];
+        const sec = (s.score / 1000).toFixed(3);
+        lines.push(`${i + 1}. ${sec}s  ${s.name}`);
+      }
+    } else {
+      lines.push("(none yet)");
+    }
+
+    if (voted) {
+      lines.push("");
+      lines.push(voted === "up" ? "You voted: 👍" : "You voted: 👎");
+    }
+
+    if (this.finishPanel.board) this.finishPanel.board.textContent = lines.join("\n");
+  }
+
+  private getReplaySnapshotNonDestructive(): NetSnapshot {
+    return {
+      t: this.state.timeSeconds,
+      car: { ...this.state.car },
+      enemies: this.enemyPool.getActive().map((e) => ({
+        id: e.id,
+        x: e.x,
+        y: e.y,
+        radius: e.radius,
+        vx: e.vx,
+        vy: e.vy,
+        type: e.type,
+        health: e.health,
+        maxHealth: e.maxHealth
+      })),
+      projectiles: this.projectilePool.getActive().map((p) => ({
+        x: p.x,
+        y: p.y,
+        vx: p.vx,
+        vy: p.vy,
+        color: p.color,
+        size: p.size,
+        age: p.age,
+        maxAge: p.maxAge
+      })),
+      enemyProjectiles: this.enemyProjectiles.map((p) => ({
+        x: p.x,
+        y: p.y,
+        vx: p.vx,
+        vy: p.vy,
+        color: "rgba(255, 120, 40, 0.95)",
+        size: 0.34,
+        age: p.age,
+        maxAge: p.maxAge
+      })),
+      particleEvents: this.netParticleEvents.slice(),
+      debrisDestroyed: this.netDebrisDestroyedIds.slice(),
+      // For replays we want the local one-shot audio, not just network-queued audio.
+      audioEvents: this.replayLocalAudioEvents.slice(),
+      continuousAudio: { ...this.continuousAudioState },
+      raceActive: this.raceActive,
+      raceStartTimeSeconds: this.raceStartTimeSeconds,
+      raceFinished: this.raceFinished,
+      finishTimeSeconds: this.finishTimeSeconds,
+      damage01: this.damage01,
+      enemyKillCount: this.enemyKillCount,
+      cameraMode: this.cameraMode,
+      cameraRotationRad: this.cameraRotationRad,
+      shakeX: this.cameraShakeX,
+      shakeY: this.cameraShakeY
+    };
+  }
+
+  private getDriverInputForReplayRecording(): { steer: number; throttle: number; brake: number; handbrake: number } {
+    // Record the *driver* controls actually used by the host sim.
+    const raw = this.lastInputState;
+    const driverInput = (this.netMode === "host" && this.netRemoteDriver) ? this.netRemoteDriver : raw;
+    return {
+      steer: clamp(driverInput.steer, -1, 1),
+      throttle: clamp(driverInput.throttle, 0, 1),
+      brake: clamp(driverInput.brake, 0, 1),
+      handbrake: clamp(driverInput.handbrake, 0, 1)
+    };
+  }
+
+  private startReplayRecording(): void {
+    if (this.netMode === "client") return;
+    const seed = this.getTrackSeedString();
+    const trackDef = this.getSerializedTrackDef();
+
+    const inputs: ReplayBundleV2["inputs"] = {
+      startTimeSeconds: this.state.timeSeconds,
+      startCar: { ...this.state.car },
+      startEngine: { ...this.engineState },
+      startGear: this.gear,
+      events: []
+    };
+
+    // Seed inputs with the current driver state at t=0.
+    const d0 = this.getDriverInputForReplayRecording();
+    inputs.events.push({ t: 0, steer: d0.steer, throttle: d0.throttle, brake: d0.brake, handbrake: d0.handbrake });
+
+    this.replayRecording = {
+      v: 2,
+      createdAtMs: Date.now(),
+      seed,
+      trackDef,
+      state: {
+        sampleHz: this.replaySampleHz,
+        frames: []
+      },
+      inputs
+    };
+    this.replayInputRecording = inputs;
+    this.replayRecordAccumulatorS = 0;
+    this.replayRecording.state.frames.push(this.getReplaySnapshotNonDestructive());
+    this.replayLocalAudioEvents.length = 0;
+  }
+
+  private stopReplayRecording(commitToLast: boolean): void {
+    if (!this.replayRecording) return;
+    // Capture the final state.
+    this.replayRecording.state.frames.push(this.getReplaySnapshotNonDestructive());
+    this.replayLocalAudioEvents.length = 0;
+
+    const rec = this.replayRecording;
+    this.replayRecording = null;
+    this.replayInputRecording = null;
+    this.replayRecordAccumulatorS = 0;
+
+    if (!commitToLast) return;
+
+    this.commitLastReplay(rec);
+
+    try {
+      const autoDl = localStorage.getItem(this.replayAutoDownloadKey) === "1";
+      if (autoDl) {
+        this.downloadReplayBundle(rec);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  private recordReplayFrame(dtSeconds: number): void {
+    const rec = this.replayRecording;
+    if (!rec) return;
+    if (!this.raceActive) return;
+
+    // Cap to ~3 minutes at current sampling rate.
+    const maxFrames = Math.floor(rec.state.sampleHz * 180);
+    if (rec.state.frames.length >= maxFrames) {
+      this.stopReplayRecording(true);
+      return;
+    }
+
+    this.replayRecordAccumulatorS += dtSeconds;
+    const stepS = 1 / rec.state.sampleHz;
+    while (this.replayRecordAccumulatorS >= stepS) {
+      this.replayRecordAccumulatorS -= stepS;
+      rec.state.frames.push(this.getReplaySnapshotNonDestructive());
+      // Ensure one-shot SFX are only captured once.
+      this.replayLocalAudioEvents.length = 0;
+    }
+  }
+
+  private recordReplayInputAtTime(timeSeconds: number, driverInput: { steer: number; throttle: number; brake: number; handbrake: number }): void {
+    const inputs = this.replayInputRecording;
+    if (!inputs) return;
+    if (!this.raceActive) return;
+
+    const t = Math.max(0, timeSeconds - inputs.startTimeSeconds);
+    const events = inputs.events;
+    const last = events.length ? events[events.length - 1] : null;
+
+    // Quantize slightly to avoid noisy touch jitter exploding event count.
+    const q = (x: number): number => Math.round(clamp(x, -1, 1) * 256) / 256;
+    const steer = q(driverInput.steer);
+    const throttle = q(driverInput.throttle);
+    const brake = q(driverInput.brake);
+    const handbrake = q(driverInput.handbrake);
+
+    if (last && last.steer === steer && last.throttle === throttle && last.brake === brake && last.handbrake === handbrake) return;
+
+    // Cap to a generous upper bound (~60Hz * 5min) to avoid unbounded storage.
+    if (events.length >= 18000) return;
+    events.push({ t, steer, throttle, brake, handbrake });
+  }
+
+  private applyReplayFrame(frame: NetSnapshot): void {
+    this.state = { ...this.state, timeSeconds: frame.t, car: { ...this.state.car, ...frame.car } };
+
+    // Use the "net remote" containers as our replay render sources.
+    this.netRemoteEnemies = frame.enemies.map((e) => ({ ...e }));
+    this.netRemoteProjectiles = frame.projectiles.map((p) => ({ ...p }));
+    this.netRemoteEnemyProjectiles = frame.enemyProjectiles.map((p) => ({ ...p }));
+
+    this.raceActive = frame.raceActive;
+    this.raceStartTimeSeconds = frame.raceStartTimeSeconds;
+    this.raceFinished = frame.raceFinished;
+    this.finishTimeSeconds = frame.finishTimeSeconds;
+    this.damage01 = clamp(frame.damage01, 0, 1);
+    this.enemyKillCount = frame.enemyKillCount;
+    this.cameraMode = frame.cameraMode;
+    this.cameraRotationRad = frame.cameraRotationRad;
+    this.cameraShakeX = frame.shakeX;
+    this.cameraShakeY = frame.shakeY;
+
+    // Drive continuous audio during state replay.
+    if (this.audioUnlocked) {
+      const ca = frame.continuousAudio;
+      this.engineAudio.update(ca.engineRpm, ca.engineThrottle);
+      const surfaceForSlide = { name: ca.surfaceName, frictionMu: 1.0, rollingResistanceMu: 0.01 };
+      this.slideAudio.update(ca.slideIntensity, surfaceForSlide as any);
+    }
+  }
+
+  private applyReplayFrameInterpolated(a: NetSnapshot, b: NetSnapshot, alpha: number): void {
+    const t = clamp(alpha, 0, 1);
+    const lerp = (x: number, y: number): number => x + (y - x) * t;
+    const wrapPi = (ang: number): number => {
+      while (ang > Math.PI) ang -= Math.PI * 2;
+      while (ang < -Math.PI) ang += Math.PI * 2;
+      return ang;
+    };
+    const lerpAngle = (x: number, y: number): number => x + wrapPi(y - x) * t;
+
+    this.state = {
+      ...this.state,
+      timeSeconds: lerp(a.t, b.t),
+      car: {
+        ...this.state.car,
+        xM: lerp(a.car.xM, b.car.xM),
+        yM: lerp(a.car.yM, b.car.yM),
+        headingRad: lerpAngle(a.car.headingRad, b.car.headingRad),
+        vxMS: lerp(a.car.vxMS, b.car.vxMS),
+        vyMS: lerp(a.car.vyMS, b.car.vyMS),
+        yawRateRadS: lerp(a.car.yawRateRadS, b.car.yawRateRadS),
+        steerAngleRad: lerp(a.car.steerAngleRad, b.car.steerAngleRad),
+        alphaFrontRad: lerp(a.car.alphaFrontRad, b.car.alphaFrontRad),
+        alphaRearRad: lerp(a.car.alphaRearRad, b.car.alphaRearRad)
+      }
+    };
+
+    // For non-car entities, pick the nearer frame (keeps CPU low).
+    const pick = t >= 0.5 ? b : a;
+    this.netRemoteEnemies = pick.enemies.map((e) => ({ ...e }));
+    this.netRemoteProjectiles = pick.projectiles.map((p) => ({ ...p }));
+    this.netRemoteEnemyProjectiles = pick.enemyProjectiles.map((p) => ({ ...p }));
+
+    this.raceActive = pick.raceActive;
+    this.raceStartTimeSeconds = pick.raceStartTimeSeconds;
+    this.raceFinished = pick.raceFinished;
+    this.finishTimeSeconds = pick.finishTimeSeconds;
+    this.damage01 = clamp(pick.damage01, 0, 1);
+    this.enemyKillCount = pick.enemyKillCount;
+    this.cameraMode = pick.cameraMode;
+    this.cameraRotationRad = lerpAngle(a.cameraRotationRad, b.cameraRotationRad);
+    this.cameraShakeX = lerp(a.shakeX, b.shakeX);
+    this.cameraShakeY = lerp(a.shakeY, b.shakeY);
+
+    // Interpolate continuous audio too so engine/slide sound doesn't "step".
+    if (this.audioUnlocked) {
+      const ca0 = a.continuousAudio;
+      const ca1 = b.continuousAudio;
+      const rpm = lerp(ca0.engineRpm, ca1.engineRpm);
+      const thr = lerp(ca0.engineThrottle, ca1.engineThrottle);
+      const slide = lerp(ca0.slideIntensity, ca1.slideIntensity);
+      this.engineAudio.update(rpm, thr);
+      const surfaceForSlide = { name: (t >= 0.5 ? ca1.surfaceName : ca0.surfaceName), frictionMu: 1.0, rollingResistanceMu: 0.01 };
+      this.slideAudio.update(slide, surfaceForSlide as any);
+    }
+  }
+
+  private playReplayAudioEvents(frame: NetSnapshot): void {
+    if (!this.audioUnlocked) return;
+    if (!frame.audioEvents || frame.audioEvents.length === 0) return;
+    for (const ev of frame.audioEvents) {
+      if (!ev) continue;
+      this.effectsAudio.playEffect(ev.effect, ev.volume, ev.pitch);
+    }
+  }
+
+  private startReplayPlayback(rec: ReplayBundleV2): void {
+    if (!rec.state.frames.length) return;
+
+    // Ensure a clean world before applying snapshots.
+    this.stopReplayPlayback();
+    this.stopReplayRecording(false);
+
+    // If the replay is from a different track, load it.
+    if (rec.trackDef && this.getSerializedTrackDef() !== rec.trackDef) {
+      const ok = this.loadSerializedTrackDef(rec.trackDef);
+      if (!ok) return;
+    }
+
+    // Reset sim-side state so leftover enemies/projectiles/particles don't leak into replay UI.
+    this.reset();
+
+    this.replayInputPlayback = null;
+    this.controlsLocked = true;
+    this.finishPanelShown = false;
+    this.setFinishPanelVisible(false);
+
+    this.replayPlayback = { rec, index: 0, accumulatorS: 0, speed: 1, ended: false };
+    this.applyReplayFrame(rec.state.frames[0]);
+    this.playReplayAudioEvents(rec.state.frames[0]);
+    this.setReplayPanelVisible(true);
+    this.updateReplayPanelUi();
+  }
+
+  private stopReplayPlayback(): void {
+    this.replayPlayback = null;
+    this.replayInputPlayback = null;
+    this.setReplayPanelVisible(false);
+  }
+
+  private stepReplayPlayback(dtSeconds: number): void {
+    const pb = this.replayPlayback;
+    if (!pb) return;
+    if (pb.ended) {
+      this.updateReplayPanelUi();
+      return;
+    }
+
+    pb.accumulatorS += dtSeconds * pb.speed;
+    const stepS = 1 / pb.rec.state.sampleHz;
+    const frames = pb.rec.state.frames;
+    while (pb.accumulatorS >= stepS && !pb.ended) {
+      pb.accumulatorS -= stepS;
+      pb.index += 1;
+      if (pb.index >= frames.length) {
+        pb.index = frames.length - 1;
+        pb.ended = true;
+        break;
+      }
+      this.playReplayAudioEvents(frames[pb.index]);
+    }
+
+    // Smoothly interpolate between snapshot frames to avoid visible "15Hz" stepping.
+    const a = frames[pb.index];
+    const b = frames[Math.min(frames.length - 1, pb.index + 1)];
+    if (a && b && !pb.ended && b !== a) {
+      this.applyReplayFrameInterpolated(a, b, pb.accumulatorS / stepS);
+    } else if (a) {
+      this.applyReplayFrame(a);
+    }
+
+    this.updateReplayPanelUi();
+  }
+
+  private startInputReplayPlayback(rec: ReplayBundleV2): void {
+    const inputs = rec.inputs;
+    if (!inputs || inputs.events.length === 0) return;
+
+    // Ensure a clean world before deterministic playback.
+    this.stopReplayPlayback();
+    this.stopReplayRecording(false);
+
+    // If the replay is from a different track, load it.
+    if (rec.trackDef && this.getSerializedTrackDef() !== rec.trackDef) {
+      const ok = this.loadSerializedTrackDef(rec.trackDef);
+      if (!ok) return;
+    }
+
+    // Reset world state (enemies/debris/projectiles/etc). We may be in practice mode, but
+    // input replays should still recreate the original world as closely as possible.
+    this.reset();
+
+    const wantsEnemies = !!rec.state.frames[0] && Array.isArray(rec.state.frames[0].enemies) && rec.state.frames[0].enemies.length > 0;
+    if (!wantsEnemies) {
+      this.enemyPool.clear();
+    } else {
+      const treeSeed = Math.floor(this.trackDef.meta?.seed ?? 20260123);
+      const enemies = generateEnemies(this.track, { seed: treeSeed + 1337, quietZones: this.currentQuietZones });
+      this.enemyPool.setEnemies(enemies);
+    }
+
+    // Ensure replay cannot generate backend events.
+    this.backendFinishedSent = true;
+    this.backendWreckedSent = true;
+
+    this.finishPanelShown = false;
+    this.setFinishPanelVisible(false);
+
+    // Restore initial deterministic state.
+    this.controlsLocked = false;
+    this.damage01 = 0;
+    this.wreckedTimeSeconds = null;
+    this.raceFinished = false;
+    this.raceActive = true;
+    this.raceStartTimeSeconds = inputs.startTimeSeconds;
+    this.finishTimeSeconds = null;
+    this.state.timeSeconds = inputs.startTimeSeconds;
+    this.state.car = { ...inputs.startCar };
+    this.engineState = { ...inputs.startEngine };
+    this.gear = inputs.startGear;
+
+    // Match the in-race state at the moment we started recording.
+    this.nextCheckpointIndex = 1;
+    this.insideActiveGate = true;
+
+    this.replayInputPlayback = {
+      rec,
+      speed: 1,
+      cursor: 0,
+      current: { steer: 0, throttle: 0, brake: 0, handbrake: 0 },
+      ended: false
+    };
+
+    // Prime current input from t=0 and show overlay.
+    this.stepInputReplayPlayback(inputs.startTimeSeconds);
+    this.setReplayPanelVisible(true);
+    this.updateReplayPanelUi();
+  }
+
+  private stepInputReplayPlayback(timeBeforeSeconds: number): void {
+    const ipb = this.replayInputPlayback;
+    if (!ipb) return;
+    const inputs = ipb.rec.inputs;
+    if (!inputs) return;
+    if (ipb.ended) {
+      this.updateReplayPanelUi();
+      return;
+    }
+
+    const t = Math.max(0, timeBeforeSeconds - inputs.startTimeSeconds);
+    const events = inputs.events;
+    while (ipb.cursor < events.length && events[ipb.cursor].t <= t) {
+      const ev = events[ipb.cursor];
+      ipb.current = { steer: ev.steer, throttle: ev.throttle, brake: ev.brake, handbrake: ev.handbrake };
+      ipb.cursor += 1;
+    }
+
+    // Feed inputs into the sim via lastInputState.
+    this.lastInputState = { ...ipb.current, shoot: false, fromKeyboard: false };
+    this.updateReplayPanelUi();
   }
 
   public getAndClearClientDamageEvents(): { enemyId: number; damage: number; killed: boolean; x: number; y: number; isTank: boolean; enemyType?: "zombie" | "tank" | "colossus"; radiusM?: number }[] {
@@ -556,14 +1625,23 @@ export class Game {
     if (typeof snapshot.raceActive === "boolean") this.raceActive = snapshot.raceActive;
     if (typeof snapshot.raceStartTimeSeconds === "number") this.raceStartTimeSeconds = snapshot.raceStartTimeSeconds;
     if (typeof snapshot.raceFinished === "boolean") {
+      const wasFinished = this.raceFinished;
       this.raceFinished = snapshot.raceFinished;
       if (this.raceFinished) this.controlsLocked = true;
+      if (!wasFinished && this.raceFinished) {
+        // Ensure the finish UI shows up for net clients too.
+        this.onRaceFinishedUi();
+      }
     }
     if (snapshot.finishTimeSeconds !== undefined) this.finishTimeSeconds = snapshot.finishTimeSeconds;
     if (typeof snapshot.damage01 === "number") {
       this.damage01 = clamp(snapshot.damage01, 0, 1);
       if (this.damage01 >= 1) {
         if (this.wreckedTimeSeconds === null) this.wreckedTimeSeconds = this.state.timeSeconds;
+        if (!this.backendWreckedSent) {
+          this.backendWreckedSent = true;
+          void postGameStat("wrecked");
+        }
       } else {
         this.wreckedTimeSeconds = null;
       }
@@ -587,6 +1665,8 @@ export class Game {
     const rect = this.canvas.getBoundingClientRect();
     this.mouseX = clientX - rect.left;
     this.mouseY = clientY - rect.top;
+    // Keep world-space aim in sync so tap-to-shoot uses the latest position.
+    this.updateMouseWorldPosition();
   }
 
   public setTouchShootHeld(held: boolean): void {
@@ -604,6 +1684,9 @@ export class Game {
     if (!this.audioUnlocked) {
       this.tryUnlockAudio();
     }
+
+    // Ensure tap-to-shoot uses the most recent touch aim (world-space).
+    this.updateMouseWorldPosition();
 
     // In net client mode, client is authoritative for shooting.
     if (this.netMode === "client") {
@@ -873,7 +1956,8 @@ export class Game {
     const rect = this.canvas.getBoundingClientRect();
     this.mouseX = e.clientX - rect.left;
     this.mouseY = e.clientY - rect.top;
-    // World position will be updated in render() after camera is set
+    // Keep aim responsive for click-to-shoot.
+    this.updateMouseWorldPosition();
   };
 
   private onMouseClick = (): void => {
@@ -893,6 +1977,9 @@ export class Game {
     if (!this.audioUnlocked) {
       this.tryUnlockAudio();
     }
+
+    // Ensure we shoot at the latest cursor position.
+    this.updateMouseWorldPosition();
     this.shoot();
   };
 
@@ -902,6 +1989,8 @@ export class Game {
     const rect = this.canvas.getBoundingClientRect();
     this.mouseX = e.clientX - rect.left;
     this.mouseY = e.clientY - rect.top;
+    // Keep world-space aim in sync so taps don't lag a frame.
+    this.updateMouseWorldPosition();
   };
 
   private onShootPointerDown = (e: PointerEvent): void => {
@@ -929,6 +2018,93 @@ export class Game {
     if (this.netMode === "client") return;
     this.shoot();
   };
+
+  private emitMuzzleFlash(opts: { x: number; y: number; angleRad: number; weaponType: WeaponType }): void {
+    // Dramatic flash/sparks to make shooting feel punchier.
+    const ax = Math.cos(opts.angleRad);
+    const ay = Math.sin(opts.angleRad);
+    const originX = opts.x + ax * 1.05;
+    const originY = opts.y + ay * 1.05;
+
+    let burst = 10;
+    let size = 0.18;
+    let life = 0.085;
+    let flashStrength = 0.55;
+    if (opts.weaponType === WeaponType.AK47) { burst = 12; size = 0.17; life = 0.08; flashStrength = 0.50; }
+    if (opts.weaponType === WeaponType.RIFLE) { burst = 14; size = 0.18; life = 0.085; flashStrength = 0.62; }
+    if (opts.weaponType === WeaponType.SHOTGUN) { burst = 22; size = 0.22; life = 0.095; flashStrength = 0.95; }
+
+    // Brief screen bloom (decays in render).
+    this.gunFlash01 = Math.max(this.gunFlash01, Math.min(1, flashStrength));
+
+    // Core flash: big + very short.
+    const coreCount = opts.weaponType === WeaponType.SHOTGUN ? 2 : 1;
+    this.emitParticles({
+      x: originX,
+      y: originY,
+      vx: ax * 1.2,
+      vy: ay * 1.2,
+      lifetime: life * 0.55,
+      sizeM: size * 2.4,
+      color: "rgba(255, 255, 245, 0.98)",
+      count: coreCount
+    });
+
+    // Cone flash.
+    const groups = 3;
+    const perGroup = Math.max(1, Math.floor(burst / groups));
+    for (let i = 0; i < groups; i++) {
+      const jitter = (Math.random() - 0.5) * 0.80;
+      const a = opts.angleRad + jitter;
+      const s = 7.0 + Math.random() * 6.5;
+      this.emitParticles({
+        x: originX,
+        y: originY,
+        vx: Math.cos(a) * s,
+        vy: Math.sin(a) * s,
+        lifetime: life,
+        sizeM: size,
+        color: "rgba(255, 235, 195, 0.95)",
+        count: perGroup
+      });
+    }
+
+    // Orange sparks.
+    const sparkCount = Math.max(3, Math.floor(burst * 0.35));
+    for (let i = 0; i < 3; i++) {
+      const jitter = (Math.random() - 0.5) * 0.95;
+      const a = opts.angleRad + jitter;
+      const s = 9.0 + Math.random() * 9.0;
+      this.emitParticles({
+        x: originX,
+        y: originY,
+        vx: Math.cos(a) * s,
+        vy: Math.sin(a) * s,
+        lifetime: 0.15,
+        sizeM: 0.12,
+        color: "rgba(255, 160, 70, 0.92)",
+        count: Math.max(1, Math.floor(sparkCount / 3))
+      });
+    }
+
+    // A little smoke bloom behind the flash.
+    const smokeCount = opts.weaponType === WeaponType.SHOTGUN ? 3 : 2;
+    for (let i = 0; i < smokeCount; i++) {
+      const jitter = (Math.random() - 0.5) * 1.1;
+      const a = opts.angleRad + jitter;
+      const s = 0.8 + Math.random() * 1.4;
+      this.emitParticles({
+        x: originX - ax * 0.25,
+        y: originY - ay * 0.25,
+        vx: Math.cos(a) * s,
+        vy: Math.sin(a) * s,
+        lifetime: 0.35,
+        sizeM: 0.24 + Math.random() * 0.10,
+        color: "rgba(60, 60, 60, 0.22)",
+        count: 1
+      });
+    }
+  }
 
   private onShootPointerUp = (e: PointerEvent): void => {
     if (this.shootPointerId !== e.pointerId) return;
@@ -1089,6 +2265,10 @@ export class Game {
     if (!this.audioUnlocked) return;
     // Play locally
     this.effectsAudio.playEffect(effect, volume, pitch);
+    // Capture for local replay recording (solo/host).
+    if (this.replayRecording) {
+      this.replayLocalAudioEvents.push({ effect, volume, pitch });
+    }
     // Queue for network sync (host sends to client)
     if (this.netMode === "host") {
       this.netAudioEvents.push({ effect, volume, pitch });
@@ -1127,6 +2307,8 @@ export class Game {
     const dx = this.mouseWorldX - carX;
     const dy = this.mouseWorldY - carY;
     const baseAngle = Math.atan2(dy, dx);
+
+    this.emitMuzzleFlash({ x: carX, y: carY, angleRad: baseAngle, weaponType: stats.type });
     
     for (let i = 0; i < stats.projectileCount; i++) {
       const spread = (Math.random() - 0.5) * stats.spread;
@@ -1190,6 +2372,8 @@ export class Game {
     const dy = aimY - carY;
     const baseAngle = Math.atan2(dy, dx);
 
+    this.emitMuzzleFlash({ x: carX, y: carY, angleRad: baseAngle, weaponType: stats.type });
+
     for (let i = 0; i < stats.projectileCount; i++) {
       // Apply spread
       const spread = (Math.random() - 0.5) * stats.spread;
@@ -1229,6 +2413,8 @@ export class Game {
   }
 
   private setTrack(def: TrackDefinition): void {
+    this.resetFinishPanel();
+
     // Ensure stage meta exists deterministically if we have a seed.
     const seed = def.meta?.seed;
     if (typeof seed === "number" && Number.isFinite(seed)) {
@@ -1244,6 +2430,7 @@ export class Game {
     this.currentStageZones = def.meta?.zones ?? [];
 
     const trackSeed = def.meta?.seed ?? 1;
+    this.currentQuietZones = quietZonesFromSeed(trackSeed);
     this.trackSegmentFillStyles = [];
     this.trackSegmentShoulderStyles = [];
     this.trackSegmentSurfaceNames = [];
@@ -1334,11 +2521,27 @@ export class Game {
 
     const treeSeed = Math.floor(def.meta?.seed ?? 20260123);
     this.trees = generateTrees(this.track, { seed: treeSeed, themeKind: themeRef.kind });
-    this.waterBodies = generateWaterBodies(this.track, { seed: treeSeed + 777 });
-    const enemies = generateEnemies(this.track, { seed: treeSeed + 1337 });
-    this.enemyPool.setEnemies(enemies);
+    this.waterBodies = generateWaterBodies(this.track, { seed: treeSeed + 777, quietZones: this.currentQuietZones });
+    const spawnEnemies = !(this.netMode === "solo" && this.soloMode === "practice");
+    if (spawnEnemies) {
+      const enemies = generateEnemies(this.track, { seed: treeSeed + 1337, quietZones: this.currentQuietZones });
+      this.enemyPool.setEnemies(enemies);
+    } else {
+      this.enemyPool.clear();
+    }
+
+    // If we're the host, broadcast track changes so clients refresh immediately (minimap, hazards, etc).
+    if (this.netMode === "host" && this.netBroadcastTrackDef) {
+      try {
+        this.netBroadcastTrackDef(this.getSerializedTrackDef());
+      } catch {
+        // ignore
+      }
+    }
 
     // Reset stage-related state when swapping tracks.
+    this.stopReplayPlayback();
+    this.stopReplayRecording(false);
     this.raceActive = false;
     this.raceStartTimeSeconds = this.state.timeSeconds;
     this.raceFinished = false;
@@ -1399,8 +2602,22 @@ export class Game {
 
   private step(dtSeconds: number): void {
     if (this.editorMode) return;
-    // Always update inputs so net-clients can send them.
-    this.lastInputState = this.input.getState();
+
+    const timeBeforeSeconds = this.state.timeSeconds;
+
+    if (this.replayPlayback) {
+      this.stepReplayPlayback(dtSeconds);
+      return;
+    }
+
+    if (this.replayInputPlayback) {
+      // Drive the sim using recorded inputs, and scale time by replay speed.
+      this.stepInputReplayPlayback(timeBeforeSeconds);
+      dtSeconds *= this.replayInputPlayback.speed;
+    } else {
+      // Always update inputs so net-clients can send them.
+      this.lastInputState = this.input.getState();
+    }
 
     // After finish (or other hard locks), ignore controls entirely.
     if (this.controlsLocked) {
@@ -1418,6 +2635,10 @@ export class Game {
       return;
     }
 
+    // Snapshot previous position for robust gate-crossing detection.
+    this.prevCarX = this.state.car.xM;
+    this.prevCarY = this.state.car.yM;
+
     this.state.timeSeconds += dtSeconds;
 
     this.applyTuning();
@@ -1434,8 +2655,18 @@ export class Game {
     const driverInput = (this.netMode === "host" && this.netRemoteDriver) ? this.netRemoteDriver : rawInput;
     const isDriverRemote = this.netMode === "host" && !!this.netRemoteDriver;
 
+    // Record the driver input timeline for input replay (host/solo only).
+    if (!this.replayInputPlayback) {
+      this.recordReplayInputAtTime(timeBeforeSeconds, {
+        steer: driverInput.steer,
+        throttle: driverInput.throttle,
+        brake: driverInput.brake,
+        handbrake: driverInput.handbrake
+      });
+    }
+
     // Driver actions
-    const steer = inputsEnabled && (isDriverLocal || isDriverRemote) ? driverInput.steer : 0;
+    let steer = inputsEnabled && (isDriverLocal || isDriverRemote) ? driverInput.steer : 0;
     const throttleForward = inputsEnabled && (isDriverLocal || isDriverRemote) ? driverInput.throttle : 0;
     const brakeOrReverse = inputsEnabled && (isDriverLocal || isDriverRemote) ? driverInput.brake : 0;
     const handbrake = inputsEnabled && (isDriverLocal || isDriverRemote) ? driverInput.handbrake : 0;
@@ -1472,6 +2703,9 @@ export class Game {
       brake = 0;
     }
 
+    // Feel: invert steering while reversing so left/right match driver expectation.
+    if (this.gear === "R") steer = -steer;
+
     const projectionBefore = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
     const roadHalfWidthM = projectionBefore.widthM * 0.5;
     const offTrack = projectionBefore.distanceToCenterlineM > roadHalfWidthM;
@@ -1480,9 +2714,7 @@ export class Game {
       ? zonesAtSM(this.track.totalLengthM, projectionBefore.sM, this.currentStageZones)
       : [];
 
-    const rainIntensity = activeZones
-      .filter((z) => z.kind === "rain")
-      .reduce((m, z) => Math.max(m, z.intensity01), 0);
+    const rainIntensity = zoneIntensityAtSM(this.track.totalLengthM, projectionBefore.sM, this.currentStageZones, "rain", { rampM: 35 });
     const sandIntensity = activeZones
       .filter((z) => z.kind === "sandstorm")
       .reduce((m, z) => Math.max(m, z.intensity01), 0);
@@ -1674,6 +2906,11 @@ export class Game {
     this.checkWaterHazards(dtSeconds);
     if (this.damage01 >= 1) {
       if (this.wreckedTimeSeconds === null) this.wreckedTimeSeconds = this.state.timeSeconds;
+      if (!this.backendWreckedSent) {
+        this.backendWreckedSent = true;
+        void postGameStat("wrecked");
+      }
+      this.stopReplayRecording(true);
       this.damage01 = 1;
       this.state.car.vxMS = 0;
       this.state.car.vyMS = 0;
@@ -1684,15 +2921,32 @@ export class Game {
     } else {
       this.wreckedTimeSeconds = null;
     }
+
+    this.recordReplayFrame(dtSeconds);
+
+    // End input replay once we reach a terminal race state.
+    if (this.replayInputPlayback && !this.replayInputPlayback.ended && (this.raceFinished || this.damage01 >= 1)) {
+      this.replayInputPlayback.ended = true;
+      this.updateReplayPanelUi();
+    }
   }
 
   private render(): void {
     const { width, height } = this.renderer.resizeToDisplay();
 
+    // Independent render-time decay (net client may not advance sim time).
+    {
+      const nowMs = performance.now();
+      if (this.gunFlashLastUpdateMs === 0) this.gunFlashLastUpdateMs = nowMs;
+      const dt = clamp((nowMs - this.gunFlashLastUpdateMs) / 1000, 0, 0.05);
+      this.gunFlashLastUpdateMs = nowMs;
+      this.gunFlash01 = Math.max(0, this.gunFlash01 - dt * 16);
+    }
+
     // Hide touch controls after finish (or when hard-locked) so the UI matches the lockout.
     const driverGroup = document.getElementById("driver-group");
     const navGroup = document.getElementById("navigator-group");
-    if (this.raceFinished || this.controlsLocked) {
+    if (this.raceFinished || this.controlsLocked || this.replayPlayback || this.replayInputPlayback) {
       if (driverGroup) driverGroup.style.display = "none";
       if (navGroup) navGroup.style.display = "none";
     } else {
@@ -1703,7 +2957,7 @@ export class Game {
 
     // Wrecked reset button visibility (DOM overlay)
     const resetBtn = document.getElementById("btn-reset") as HTMLButtonElement | null;
-    if (resetBtn) resetBtn.style.display = this.damage01 >= 1 && this.netMode !== "client" ? "block" : "none";
+    if (resetBtn) resetBtn.style.display = this.damage01 >= 1 && this.netMode !== "client" && !this.replayPlayback ? "block" : "none";
 
     // Client smoothing/prediction (net mode)
     if (this.netMode === "client") {
@@ -1795,11 +3049,12 @@ export class Game {
 
     const isTouch = isTouchMode();
 
-    // Show NEW TRACK button when finished (desktop + touch).
+    // Show NEW TRACK button when finished.
+    const showNewTrack = this.raceFinished && this.netMode !== "client" && !this.replayPlayback;
     const newTrackBtn = document.getElementById("btn-new-track") as HTMLButtonElement | null;
-    if (newTrackBtn) {
-      newTrackBtn.style.display = this.raceFinished && this.netMode !== "client" ? "block" : "none";
-    }
+    if (newTrackBtn) newTrackBtn.style.display = showNewTrack ? "block" : "none";
+
+    this.setFinishPanelVisible(this.raceFinished && this.finishPanelShown);
 
     // Camera framing
     // Goal: ensure the car is always visible even on short landscape viewports.
@@ -1900,7 +3155,9 @@ export class Game {
     this.renderer.drawWater(this.waterBodies);
     this.renderer.drawTrees(this.trees);
     this.renderer.drawDebris(this.debris);
-    const enemiesToDraw = this.netMode === "client" && this.netRemoteEnemies ? this.netRemoteEnemies : this.enemyPool.getActive();
+    const enemiesToDraw = (this.replayPlayback && this.netRemoteEnemies)
+      ? this.netRemoteEnemies
+      : (this.netMode === "client" && this.netRemoteEnemies ? this.netRemoteEnemies : this.enemyPool.getActive());
     this.renderer.drawEnemies(enemiesToDraw);
     this.renderer.drawParticles(this.particlePool.getActiveParticles());
     // Draw start line at the first checkpoint position (edge of starting city)
@@ -1948,7 +3205,14 @@ export class Game {
     });
 
     // Draw enemy fireballs (circular, distinct from bullet tracers)
-    const fireballsToDraw = (this.netMode === "client" && this.netRemoteEnemyProjectiles && this.netRemoteEnemyProjectiles.length > 0)
+    const fireballsToDraw = (this.replayPlayback && this.netRemoteEnemyProjectiles && this.netRemoteEnemyProjectiles.length > 0)
+      ? this.netRemoteEnemyProjectiles.map((p) => ({
+        x: p.x,
+        y: p.y,
+        color: p.color || "rgba(255, 120, 40, 0.95)",
+        size: (p.size !== undefined ? p.size : 0.55)
+      }))
+      : (this.netMode === "client" && this.netRemoteEnemyProjectiles && this.netRemoteEnemyProjectiles.length > 0)
       ? this.netRemoteEnemyProjectiles.map((p) => ({
         x: p.x,
         y: p.y,
@@ -1969,7 +3233,9 @@ export class Game {
     // Client navigator uses their own local projectiles (client-authoritative shooting)
     // Host combines local projectiles with remote projectiles from client navigator
     let projectilesToDraw: { x: number; y: number; vx: number; vy: number; color?: string; size?: number }[] = this.projectilePool.getActive();
-    if (this.netMode === "host" && this.netRemoteProjectiles && this.netRemoteProjectiles.length > 0) {
+    if (this.replayPlayback && this.netRemoteProjectiles) {
+      projectilesToDraw = this.netRemoteProjectiles;
+    } else if (this.netMode === "host" && this.netRemoteProjectiles && this.netRemoteProjectiles.length > 0) {
       // Host renders client's projectiles (received via nav messages)
       projectilesToDraw = [...projectilesToDraw, ...this.netRemoteProjectiles];
     }
@@ -2002,8 +3268,11 @@ export class Game {
     if (this.currentStageZones.length > 0) {
       const activeZones = zonesAtSM(this.track.totalLengthM, proj.sM, this.currentStageZones);
       activeZoneKinds = [...new Set(activeZones.map((z) => z.kind))];
-      activeZoneIndicators = activeZones.map((z) => ({ kind: z.kind, intensity01: z.intensity01 }));
-      rainIntensity = activeZones.filter((z) => z.kind === "rain").reduce((m, z) => Math.max(m, z.intensity01), 0);
+      activeZoneIndicators = activeZones.map((z) => ({
+        kind: z.kind,
+        intensity01: z.kind === "rain" ? z.intensity01 * zoneEdgeFade01(this.track.totalLengthM, proj.sM, z, 35) : z.intensity01
+      }));
+      rainIntensity = zoneIntensityAtSM(this.track.totalLengthM, proj.sM, this.currentStageZones, "rain", { rampM: 35 });
       fogIntensity = activeZones.filter((z) => z.kind === "fog").reduce((m, z) => Math.max(m, z.intensity01), 0);
       eclipseIntensity = activeZones.filter((z) => z.kind === "eclipse").reduce((m, z) => Math.max(m, z.intensity01), 0);
       sandIntensity = activeZones.filter((z) => z.kind === "sandstorm").reduce((m, z) => Math.max(m, z.intensity01), 0);
@@ -2131,6 +3400,7 @@ export class Game {
       const rainLookaheadM = 50;
       const narrowLookaheadM = 50;
       const debrisLookaheadM = 50;
+      const hideImminentM = 10;
       const loops = this.track.points.length > 2
         ? Math.hypot(
           this.track.points[0].x - this.track.points[this.track.points.length - 1].x,
@@ -2147,9 +3417,7 @@ export class Game {
       if (calloutsEnabled) {
         // Upcoming rain
         const rainActive = activeZoneKinds.includes("rain");
-        if (rainActive) {
-          warningTextLines.push("RAIN");
-        } else if (this.currentStageZones.length > 0) {
+        if (!rainActive && this.currentStageZones.length > 0) {
           let best = Infinity;
           for (const z of this.currentStageZones) {
             if (z.kind !== "rain") continue;
@@ -2168,9 +3436,7 @@ export class Game {
           // Only warn for VERY narrow segments (avoid spamming on mild squeezes).
           const narrowThreshold = base * 0.64;
           const currentW = this.track.segmentWidthsM[proj.segmentIndex] ?? base;
-          if (currentW <= narrowThreshold) {
-            warningTextLines.push("NARROW ROAD");
-          } else {
+          if (currentW > narrowThreshold) {
             let best = Infinity;
             for (let i = 0; i < this.track.segmentWidthsM.length; i++) {
               const idx = loops ? (proj.segmentIndex + i) % this.track.segmentWidthsM.length : proj.segmentIndex + i;
@@ -2182,7 +3448,7 @@ export class Game {
               if (d > narrowLookaheadM && !loops) break;
               if (d >= 0 && d <= narrowLookaheadM) best = Math.min(best, d);
             }
-            if (Number.isFinite(best) && best <= narrowLookaheadM) {
+            if (Number.isFinite(best) && best <= narrowLookaheadM && best > hideImminentM) {
               warningTextLines.push(`NARROW IN ${Math.round(best)}m`);
             }
           }
@@ -2195,7 +3461,7 @@ export class Game {
             const dist = forwardDistM(d.sM);
             if (dist >= 0 && dist <= debrisLookaheadM) best = Math.min(best, dist);
           }
-          if (Number.isFinite(best) && best <= debrisLookaheadM) {
+          if (Number.isFinite(best) && best <= debrisLookaheadM && best > hideImminentM) {
             warningTextLines.push(`DEBRIS IN ${Math.round(best)}m`);
           }
         }
@@ -2212,9 +3478,11 @@ export class Game {
         ? hudPadding
         : (!isTouch && this.role === PlayerRole.DRIVER ? hudPadding : (width - miniMapSize) * 0.5);
 
-      const minimapEnemies = (this.netMode === "client" && this.netRemoteEnemies)
+      const minimapEnemies = (this.replayPlayback && this.netRemoteEnemies)
         ? this.netRemoteEnemies
-        : this.enemyPool.getActive();
+        : (this.netMode === "client" && this.netRemoteEnemies)
+          ? this.netRemoteEnemies
+          : this.enemyPool.getActive();
 
       this.renderer.drawMinimap({
         track: this.track,
@@ -2431,6 +3699,12 @@ export class Game {
       if (alpha > 0.01) this.renderer.drawScreenOverlay(`rgba(255, 255, 255, ${alpha})`);
     }
 
+    // Gun flash: brief warm bloom across the screen.
+    if (this.gunFlash01 > 0.01) {
+      const a = clamp(0.02 + 0.10 * this.gunFlash01, 0, 0.13);
+      this.renderer.drawScreenOverlay(`rgba(255, 240, 210, ${a})`);
+    }
+
     // Minimap
 
 
@@ -2628,6 +3902,9 @@ export class Game {
   }
 
   private reset(): void {
+    this.stopReplayPlayback();
+    this.stopReplayRecording(false);
+
     // Spawn in the starting city (behind the start line)
     // Start line is at 50m, so spawn at 20m to be in the middle of the city
     const spawn = pointOnTrack(this.track, 20);
@@ -2637,12 +3914,15 @@ export class Game {
       yM: spawn.p.y,
       headingRad: spawn.headingRad
     };
+    this.prevCarX = this.state.car.xM;
+    this.prevCarY = this.state.car.yM;
     this.nextCheckpointIndex = 0;
     this.insideActiveGate = false;
     this.raceActive = false;
     this.raceStartTimeSeconds = this.state.timeSeconds;
     this.raceFinished = false;
     this.finishTimeSeconds = null;
+    this.resetFinishPanel();
     this.controlsLocked = false;
     this.damage01 = 0;
     this.wreckedTimeSeconds = null;
@@ -2653,6 +3933,7 @@ export class Game {
     this.engineState = createEngineState();
     this.particlePool.reset();
     this.particleAccumulator = 0;
+    this.projectilePool.clear();
     this.cameraRotationRad = this.cameraMode === "runner" ? -spawn.headingRad - Math.PI / 2 : 0;
     this.enemyKillCount = 0;
     this.enemyProjectiles = [];
@@ -2662,11 +3943,16 @@ export class Game {
 
     // Respawn enemies when resetting (regenerate from track)
     const treeSeed = Math.floor(this.trackDef.meta?.seed ?? 20260123);
-    const enemies = generateEnemies(this.track, { seed: treeSeed + 1337 });
-    this.enemyPool.setEnemies(enemies);
+    const spawnEnemies = !(this.netMode === "solo" && this.soloMode === "practice");
+    if (spawnEnemies) {
+      const enemies = generateEnemies(this.track, { seed: treeSeed + 1337, quietZones: this.currentQuietZones });
+      this.enemyPool.setEnemies(enemies);
+    } else {
+      this.enemyPool.clear();
+    }
 
     // Deterministic on-road debris (biome-tuned)
-    this.debris = generateDebris(this.track, { seed: treeSeed + 3333, themeKind: this.currentStageThemeKind });
+    this.debris = generateDebris(this.track, { seed: treeSeed + 3333, themeKind: this.currentStageThemeKind, quietZones: this.currentQuietZones });
   }
 
   private wrapDeltaSForward(fromSM: number, toSM: number): number {
@@ -2698,8 +3984,8 @@ export class Game {
       }
     }
 
-    // Only warn when it's close: within ~50m ahead.
-    if (!best || bestDelta < 6 || bestDelta > 50) return;
+    // Only warn when it's close but not already visually imminent.
+    if (!best || bestDelta < 10 || bestDelta > 50) return;
     if (this.lastDebrisWarnId === best.id && (this.state.timeSeconds - this.lastDebrisWarnAtSeconds) < 4.0) return;
 
     this.lastDebrisWarnId = best.id;
@@ -2760,11 +4046,11 @@ export class Game {
       const sinH = Math.sin(this.state.car.headingRad);
       const sideSign = Math.sign(nx * sinH - ny * cosH) || 1;
       const twist = clamp(speed / 28, 0, 1);
-      this.state.car.yawRateRadS += sideSign * (0.44 + 0.95 * twist);
-      this.state.car.vxMS *= 0.962;
-      this.state.car.vyMS *= 0.962;
-      if (speed > 14) {
-        this.damage01 = clamp(this.damage01 + 0.0025 * twist, 0, 1);
+      this.state.car.yawRateRadS += sideSign * (0.24 + 0.55 * twist);
+      this.state.car.vxMS *= 0.985;
+      this.state.car.vyMS *= 0.985;
+      if (speed > 18) {
+        this.damage01 = clamp(this.damage01 + 0.0012 * twist, 0, 1);
       }
 
       // Shatter into splinters immediately.
@@ -3023,15 +4309,32 @@ export class Game {
     }
 
     const gateSM = this.checkpointSM[this.nextCheckpointIndex];
-    const insideGate =
-      Math.abs(proj.sM - gateSM) < 3.5 &&
-      proj.distanceToCenterlineM < proj.widthM * 0.6;
+    const gate = pointOnTrack(this.track, gateSM);
+    const tx = Math.cos(gate.headingRad);
+    const ty = Math.sin(gate.headingRad);
+
+    const signedNow = (this.state.car.xM - gate.p.x) * tx + (this.state.car.yM - gate.p.y) * ty;
+    const signedPrev = (this.prevCarX - gate.p.x) * tx + (this.prevCarY - gate.p.y) * ty;
+
+    // Effectively infinite gate line (no lateral requirement); keep a modest along-track window
+    // to avoid false triggers when far away.
+    const nearGate = Math.abs(proj.sM - gateSM) < 18;
+
+    const cosH = Math.cos(this.state.car.headingRad);
+    const sinH = Math.sin(this.state.car.headingRad);
+    const vxW = this.state.car.vxMS * cosH - this.state.car.vyMS * sinH;
+    const vyW = this.state.car.vxMS * sinH + this.state.car.vyMS * cosH;
+    const forwardAlongGate = vxW * tx + vyW * ty;
+
+    const crossedForward = signedPrev <= 0 && signedNow > 0 && forwardAlongGate > 0.5;
+    const insideGate = nearGate && crossedForward;
 
     if (insideGate && !this.insideActiveGate) {
       if (this.nextCheckpointIndex === 0) {
         // Start the race timer when crossing the start line
         this.raceActive = true;
         this.raceStartTimeSeconds = this.state.timeSeconds;
+        this.startReplayRecording();
         this.nextCheckpointIndex = 1;
         this.showNotification("GO!");
         this.playNetEffect("checkpoint", 0.8);
@@ -3056,6 +4359,9 @@ export class Game {
         const time = this.finishTimeSeconds.toFixed(2);
         this.showNotification(`FINISH! Time: ${time}s`);
         this.playNetEffect("checkpoint", 1.0); // Louder for finish
+
+        this.stopReplayRecording(true);
+        this.onRaceFinishedUi();
       } else {
         // Regular checkpoint
         this.nextCheckpointIndex += 1;
@@ -3065,7 +4371,7 @@ export class Game {
         this.playNetEffect("checkpoint", 0.7);
       }
       this.insideActiveGate = true;
-    } else if (!insideGate) {
+    } else if (!nearGate) {
       this.insideActiveGate = false;
     }
   }

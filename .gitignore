@@ -6,3 +6,7 @@ perf/runs/
 .context/
 tsconfig.tsbuildinfo
 coverage
+
+# Backend artifacts
+server/*.sqlite
+server/backups/

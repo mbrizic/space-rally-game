@@ -1,5 +1,6 @@
 import { mulberry32 } from "./rng";
-import type { StageThemeKind } from "./stage";
+import { isQuietAtSM, quietZoneContainsSM } from "./stage";
+import type { QuietZone, StageThemeKind } from "./stage";
 import type { Track, Vec2 } from "./track";
 
 export type CircleObstacle = {
@@ -169,9 +170,11 @@ export function pointToSegmentDistance(
 /**
  * Generate water bodies near the track - dangerous hazards that slow the car significantly
  */
-export function generateWaterBodies(track: Track, opts?: { seed?: number }): WaterBody[] {
+export function generateWaterBodies(track: Track, opts?: { seed?: number; quietZones?: QuietZone[] }): WaterBody[] {
   const seed = opts?.seed ?? 4242;
   const rand = mulberry32(seed);
+
+  const quietZones: QuietZone[] = opts?.quietZones ?? [];
 
   const waterBodies: WaterBody[] = [];
   const roadHalfWidthM = track.widthM * 0.5;
@@ -184,6 +187,15 @@ export function generateWaterBodies(track: Track, opts?: { seed?: number }): Wat
   let id = 1;
   
   for (let s = nextWaterAt; s < track.totalLengthM - 100; s = nextWaterAt) {
+    // Quiet stretches: avoid water hazards.
+    if (quietZones.length > 0 && isQuietAtSM(track.totalLengthM, s, quietZones)) {
+      const z = quietZones.find((q) => quietZoneContainsSM(track.totalLengthM, s, q));
+      if (z) {
+        nextWaterAt = Math.max(s + minSpacing, z.end01 * track.totalLengthM + minSpacing);
+        continue;
+      }
+    }
+
     const { p, normal } = pointAndNormalOnTrack(track, s);
     
     // Skip if too close to start or end
@@ -247,9 +259,11 @@ export function generateWaterBodies(track: Track, opts?: { seed?: number }): Wat
  * Generate debris (fallen logs) on the road.
  * These do not deal damage, but destabilize the car if hit at speed.
  */
-export function generateDebris(track: Track, opts?: { seed?: number; themeKind?: StageThemeKind }): DebrisObstacle[] {
+export function generateDebris(track: Track, opts?: { seed?: number; themeKind?: StageThemeKind; quietZones?: QuietZone[] }): DebrisObstacle[] {
   const seed = opts?.seed ?? 9090;
   const rand = mulberry32(seed);
+
+  const quietZones: QuietZone[] = opts?.quietZones ?? [];
 
   const themeKind: StageThemeKind = opts?.themeKind ?? "temperate";
 
@@ -265,6 +279,15 @@ export function generateDebris(track: Track, opts?: { seed?: number; themeKind?:
   let id = 1;
 
   for (let s = nextAt; s < track.totalLengthM - 140; s = nextAt) {
+    // Quiet stretches: avoid debris hazards.
+    if (quietZones.length > 0 && isQuietAtSM(track.totalLengthM, s, quietZones)) {
+      const z = quietZones.find((q) => quietZoneContainsSM(track.totalLengthM, s, q));
+      if (z) {
+        nextAt = Math.max(s + minSpacing, z.end01 * track.totalLengthM + minSpacing);
+        continue;
+      }
+    }
+
     // Skip near start/end.
     if (s < 120 || s > track.totalLengthM - 180) {
       nextAt = s + minSpacing;

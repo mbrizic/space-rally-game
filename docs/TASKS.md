@@ -1,12 +1,10 @@
 # Tasks / Backlog
 
-This file is the **master list of all things we might want** (tasks + ideas). Keep it compact: one-liners only, link out for details.
+This file is the **master list of all things we might want** (tasks + ideas). Keep it compact: one-liners only, link out for details. As soon as something is done, remove it from this file, as the ideal length of this file should be zero.
 
 ## Multiplayer
 
 - [ ] Improve client playback smoothing / reduce drift (details: `MULTIPLAYER_PLAYBACK.md`)
-- [x] Add a simple reconnect UX (detect disconnect → show "reconnect" CTA) (details: `MULTIPLAYER.md`)
-- [x] Add basic network debug overlay / stats (RTT, snapshot rate, mode) (details: `MULTIPLAYER.md`)
 - when track changes, the P2 position is placed randomly on the screen, not actually on the start?
 
 ## Co-op Mode
@@ -21,7 +19,8 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 ## Internet
 - add option to upvote/downvote track at the end of race
     - add backend to support this and show most and least favourite tracks
-- log high scores (we already have backend support) and who those high scores somewhere 
+- log high scores (we already have backend support) and who those high scores somewhere
+- backend for these things should be on a branch "feat/backend-voting-stats"
 
 ## Performance
 
@@ -30,18 +29,22 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 - [ ] WebGPU particle system: 10x particle count, GPU compute/render (details: `WEBGPU_WASM.md`)
 - [ ] WASM physics: Rust-compiled car/enemy/track simulation (details: `WEBGPU_WASM.md`)
 
+## Backend
+- HTML pages are under /api/, this should be cleaned up
+- high scores should be per track (seed)
+- show tracks with most drives
+- show overall track finish with biggest average speed (this will help surface fastest tracks)
+- show tracks with highest crash or notfinished rate
+- prevent the same user from submitting high score multiple times
+
 ## Feel / UX / Polish
 
-- [x] Make finish line prominent + hard-stop/lock controls on crossing
-- [x] Add deterministic road debris hazards (destabilize, no damage) + navigator callouts (~50m)
-- [x] Biome tuning: rainforest denser trees + more debris; arctic less debris
 - [ ] Tune surfaces + audio feel (gravel slide vs drift intensity, ice feel)
 - [ ] Add better tactile feedback (haptics/vibration tied to grip/impacts)
 - [ ] Manual gearbox UX on mobile
 
 ## Bigger Ideas (P3/P4, Weather, etc.)
-- [x] a huge colossus boss that chases + shoots fireballs (we have him, but question is whether we want to keep him, so currently disabled)
-- [] Something is after you: a sandstorm, dark clouds, something, and you need to run from it
+- [ ] Something is after you: a sandstorm, dark clouds, something, and you need to run from it
 - [ ] Player 3 (Engineer): power distribution (shield/engine/weapons) + damage control
 - [ ] Player 4 (Intel/Hacker): forward-scout drone + tagging/hacking gates
 - [ ] Bullet time: cooperative slowdown mechanics

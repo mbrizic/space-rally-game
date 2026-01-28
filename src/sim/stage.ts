@@ -28,6 +28,13 @@ export type TrackZone = {
   intensity01: number;
 };
 
+// Quiet zones are stretches intended to be "just driving" (reduced hazards/enemies).
+// Derived deterministically from the stage seed so multiplayer peers stay in sync.
+export type QuietZone = {
+  start01: number;
+  end01: number;
+};
+
 export function resolveStageTheme(ref: StageThemeRef): StageTheme {
   switch (ref.kind) {
     case "rainforest":
@@ -215,6 +222,40 @@ export function stageMetaFromSeed(seed: number): { theme: StageThemeRef; zones: 
   return { theme: themeRef, zones };
 }
 
+function overlaps01(a: { start01: number; end01: number }, b: { start01: number; end01: number }): boolean {
+  return a.start01 < b.end01 && b.start01 < a.end01;
+}
+
+export function quietZonesFromSeed(seed: number): QuietZone[] {
+  const safeSeed = Math.floor(seed) || 1;
+  const rand = mulberry32((safeSeed ^ 0xa3c59ac3) >>> 0);
+
+  // Keep them away from start/finish cities and common spawn/intro areas.
+  const minStart = 0.12;
+  const maxEnd = 0.88;
+
+  const zones: QuietZone[] = [];
+  const zoneCount = rand() < 0.65 ? 1 : 2;
+
+  for (let i = 0; i < zoneCount; i++) {
+    for (let attempt = 0; attempt < 18; attempt++) {
+      const len01 = 0.06 + rand() * 0.08; // 6-14% of the track
+      const start01 = clamp01(minStart + rand() * Math.max(0, (maxEnd - minStart) - len01));
+      const end01 = clamp01(start01 + len01);
+      if (end01 - start01 < 0.05) continue;
+
+      const candidate: QuietZone = { start01, end01 };
+      if (zones.some((z) => overlaps01(z, candidate))) continue;
+
+      zones.push(candidate);
+      break;
+    }
+  }
+
+  zones.sort((a, b) => a.start01 - b.start01);
+  return zones;
+}
+
 export function zoneContainsSM(totalLengthM: number, sM: number, zone: TrackZone): boolean {
   const total = Math.max(1e-6, totalLengthM);
   const t01 = ((sM % total) + total) % total;
@@ -224,4 +265,63 @@ export function zoneContainsSM(totalLengthM: number, sM: number, zone: TrackZone
 
 export function zonesAtSM(totalLengthM: number, sM: number, zones: TrackZone[]): TrackZone[] {
   return zones.filter((z) => zoneContainsSM(totalLengthM, sM, z));
+}
+
+function smoothstep01(t: number): number {
+  const x = clamp01(t);
+  return x * x * (3 - 2 * x);
+}
+
+/**
+ * Edge fade factor for a zone at a given track position.
+ * Returns 0 at zone edges, ~1 in the middle (when zone is long enough).
+ */
+export function zoneEdgeFade01(totalLengthM: number, sM: number, zone: TrackZone, rampM = 35): number {
+  const total = Math.max(1e-6, totalLengthM);
+  const t = ((sM % total) + total) % total;
+  const startM = clamp01(zone.start01) * total;
+  const endM = clamp01(zone.end01) * total;
+  if (endM <= startM) return 0;
+  if (t < startM || t > endM) return 0;
+
+  const lenM = Math.max(1e-6, endM - startM);
+  const rampEffM = Math.max(1e-6, Math.min(rampM, 0.5 * lenM));
+
+  const intoM = t - startM;
+  const outM = endM - t;
+  const fadeIn = smoothstep01(intoM / rampEffM);
+  const fadeOut = smoothstep01(outM / rampEffM);
+  return Math.min(fadeIn, fadeOut);
+}
+
+/**
+ * Effective intensity for a zone kind at a position, with optional ramp-in/out.
+ */
+export function zoneIntensityAtSM(
+  totalLengthM: number,
+  sM: number,
+  zones: TrackZone[],
+  kind: TrackZoneKind,
+  opts?: { rampM?: number }
+): number {
+  const rampM = opts?.rampM ?? 35;
+  let best = 0;
+  for (const z of zones) {
+    if (z.kind !== kind) continue;
+    if (!zoneContainsSM(totalLengthM, sM, z)) continue;
+    const f = zoneEdgeFade01(totalLengthM, sM, z, rampM);
+    best = Math.max(best, clamp01(z.intensity01) * f);
+  }
+  return best;
+}
+
+export function quietZoneContainsSM(totalLengthM: number, sM: number, zone: QuietZone): boolean {
+  const total = Math.max(1e-6, totalLengthM);
+  const t = ((sM % total) + total) % total;
+  const u = t / total;
+  return u >= zone.start01 && u <= zone.end01;
+}
+
+export function isQuietAtSM(totalLengthM: number, sM: number, zones: QuietZone[]): boolean {
+  return zones.some((z) => quietZoneContainsSM(totalLengthM, sM, z));
 }
