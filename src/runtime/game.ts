@@ -27,6 +27,7 @@ import type { TuningPanel } from "./tuning";
 import { ProjectilePool } from "../sim/projectile";
 import { EnemyPool, EnemyType, generateEnemies } from "../sim/enemy";
 import { createWeaponState, WeaponState, WeaponType } from "../sim/weapons";
+import { getHighScores, getTrackVotes, postGameStat, postHighScore, postTrackVote } from "../net/backend-api";
 
 function isTouchMode(): boolean {
   try {
@@ -95,6 +96,26 @@ export class Game {
   private currentQuietZones: QuietZone[] = [];
   private netBroadcastTrackDef: ((trackDef: string) => void) | null = null;
   private soloMode: SoloMode = "timeTrial";
+
+  private finishPanel = {
+    root: null as HTMLDivElement | null,
+    sub: null as HTMLDivElement | null,
+    name: null as HTMLInputElement | null,
+    submit: null as HTMLButtonElement | null,
+    voteUp: null as HTMLButtonElement | null,
+    voteDown: null as HTMLButtonElement | null,
+    close: null as HTMLButtonElement | null,
+    msg: null as HTMLDivElement | null,
+    board: null as HTMLDivElement | null
+  };
+  private finishPanelSeed: string | null = null;
+  private finishPanelScoreMs: number | null = null;
+  private finishPanelShown = false;
+
+  private backendPlayedSent = false;
+  private backendFinishedSent = false;
+  private backendWreckedSent = false;
+
   private trackDef!: TrackDefinition; // Will be set in constructor
   private track!: ReturnType<typeof createTrackFromDefinition>; // Will be set in constructor
   private trackSegmentFillStyles: string[] = [];
@@ -286,6 +307,13 @@ export class Game {
     // Start with a point-to-point track
     this.setTrack(createPointToPointTrackDefinition(this.proceduralSeed));
 
+    this.initFinishPanel();
+
+    if (!this.backendPlayedSent) {
+      this.backendPlayedSent = true;
+      void postGameStat("played");
+    }
+
     // Touch: New track button (shown when finished)
     const onNewTrackClick = (e: Event): void => {
       e.preventDefault();
@@ -439,6 +467,189 @@ export class Game {
     return this.soloMode;
   }
 
+  private getTrackSeedString(): string {
+    const seed = this.trackDef?.meta?.seed;
+    if (typeof seed === "number" && Number.isFinite(seed)) return String(Math.floor(seed));
+    // Fallback: keep stable-ish for editor/imported tracks.
+    return "0";
+  }
+
+  private resetFinishPanel(): void {
+    this.finishPanelSeed = null;
+    this.finishPanelScoreMs = null;
+    this.finishPanelShown = false;
+    this.backendFinishedSent = false;
+    this.backendWreckedSent = false;
+
+    if (this.finishPanel.msg) this.finishPanel.msg.textContent = "";
+    if (this.finishPanel.board) this.finishPanel.board.textContent = "";
+    this.setFinishPanelVisible(false);
+  }
+
+  private setFinishPanelVisible(visible: boolean): void {
+    const root = this.finishPanel.root;
+    if (!root) return;
+    root.style.display = visible ? "flex" : "none";
+  }
+
+  private initFinishPanel(): void {
+    this.finishPanel.root = document.getElementById("finish-panel") as HTMLDivElement | null;
+    this.finishPanel.sub = document.getElementById("finish-sub") as HTMLDivElement | null;
+    this.finishPanel.name = document.getElementById("finish-name") as HTMLInputElement | null;
+    this.finishPanel.submit = document.getElementById("finish-submit") as HTMLButtonElement | null;
+    this.finishPanel.voteUp = document.getElementById("finish-vote-up") as HTMLButtonElement | null;
+    this.finishPanel.voteDown = document.getElementById("finish-vote-down") as HTMLButtonElement | null;
+    this.finishPanel.close = document.getElementById("finish-close") as HTMLButtonElement | null;
+    this.finishPanel.msg = document.getElementById("finish-msg") as HTMLDivElement | null;
+    this.finishPanel.board = document.getElementById("finish-board") as HTMLDivElement | null;
+
+    const nameEl = this.finishPanel.name;
+    if (nameEl) {
+      const saved = localStorage.getItem("spaceRallyName") ?? "";
+      if (!nameEl.value) nameEl.value = saved;
+      nameEl.addEventListener("change", () => {
+        try {
+          localStorage.setItem("spaceRallyName", nameEl.value.trim().slice(0, 40));
+        } catch {
+          // ignore
+        }
+      });
+    }
+
+    this.finishPanel.close?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.finishPanelShown = false;
+      this.setFinishPanelVisible(false);
+    });
+
+    this.finishPanel.submit?.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const seed = this.finishPanelSeed;
+      const scoreMs = this.finishPanelScoreMs;
+      const name = (this.finishPanel.name?.value ?? "").trim().slice(0, 40) || "anonymous";
+      if (!seed || !scoreMs) return;
+
+      if (this.finishPanel.submit) this.finishPanel.submit.disabled = true;
+      if (this.finishPanel.msg) this.finishPanel.msg.textContent = "Submitting score...";
+
+      try {
+        localStorage.setItem("spaceRallyName", name);
+      } catch {
+        // ignore
+      }
+
+      const res = await postHighScore({ name, scoreMs, seed });
+      if (this.finishPanel.msg) this.finishPanel.msg.textContent = res.ok ? "Score submitted." : "Score submit failed (offline?).";
+      if (this.finishPanel.submit) this.finishPanel.submit.disabled = false;
+
+      void this.refreshFinishPanelData();
+    });
+
+    const vote = async (type: "up" | "down"): Promise<void> => {
+      const seed = this.finishPanelSeed;
+      if (!seed) return;
+      const key = `spaceRallyVote:${seed}`;
+      if (localStorage.getItem(key)) return;
+
+      if (this.finishPanel.voteUp) this.finishPanel.voteUp.disabled = true;
+      if (this.finishPanel.voteDown) this.finishPanel.voteDown.disabled = true;
+      if (this.finishPanel.msg) this.finishPanel.msg.textContent = "Sending vote...";
+
+      const res = await postTrackVote(seed, type);
+      if (res.ok) {
+        try {
+          localStorage.setItem(key, type);
+        } catch {
+          // ignore
+        }
+        if (this.finishPanel.msg) this.finishPanel.msg.textContent = type === "up" ? "Upvoted." : "Downvoted.";
+      } else {
+        if (this.finishPanel.msg) this.finishPanel.msg.textContent = "Vote failed (offline?).";
+      }
+
+      void this.refreshFinishPanelData();
+    };
+
+    this.finishPanel.voteUp?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      void vote("up");
+    });
+    this.finishPanel.voteDown?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      void vote("down");
+    });
+
+    this.setFinishPanelVisible(false);
+  }
+
+  private onRaceFinishedUi(): void {
+    this.finishPanelSeed = this.getTrackSeedString();
+    this.finishPanelScoreMs = this.finishTimeSeconds !== null ? Math.max(1, Math.floor(this.finishTimeSeconds * 1000)) : null;
+    this.finishPanelShown = true;
+
+    if (!this.backendFinishedSent) {
+      this.backendFinishedSent = true;
+      void postGameStat("finished");
+    }
+
+    const timeS = this.finishTimeSeconds !== null ? this.finishTimeSeconds.toFixed(2) : "--";
+    if (this.finishPanel.sub) this.finishPanel.sub.textContent = `Time: ${timeS}s | Track: ${this.finishPanelSeed}`;
+    if (this.finishPanel.msg) this.finishPanel.msg.textContent = "";
+
+    void this.refreshFinishPanelData();
+  }
+
+  private async refreshFinishPanelData(): Promise<void> {
+    const seed = this.finishPanelSeed;
+    if (!seed) return;
+
+    const key = `spaceRallyVote:${seed}`;
+    const voted = ((): "up" | "down" | null => {
+      const v = localStorage.getItem(key);
+      return v === "up" || v === "down" ? v : null;
+    })();
+
+    if (this.finishPanel.voteUp) this.finishPanel.voteUp.disabled = !!voted;
+    if (this.finishPanel.voteDown) this.finishPanel.voteDown.disabled = !!voted;
+
+    const [votes, scores] = await Promise.all([
+      getTrackVotes(seed),
+      getHighScores({ seed, limit: 6 })
+    ]);
+
+    const lines: string[] = [];
+    if (votes.ok) {
+      lines.push(`VOTES:  👍 ${votes.upvotes}   👎 ${votes.downvotes}`);
+    } else {
+      lines.push("VOTES:  (unavailable)");
+    }
+
+    lines.push("");
+    lines.push("TOP TIMES (THIS TRACK)");
+
+    if (scores.ok && scores.scores.length > 0) {
+      for (let i = 0; i < Math.min(6, scores.scores.length); i++) {
+        const s = scores.scores[i];
+        const sec = (s.score / 1000).toFixed(3);
+        lines.push(`${i + 1}. ${sec}s  ${s.name}`);
+      }
+    } else {
+      lines.push("(none yet)");
+    }
+
+    if (voted) {
+      lines.push("");
+      lines.push(voted === "up" ? "You voted: 👍" : "You voted: 👎");
+    }
+
+    if (this.finishPanel.board) this.finishPanel.board.textContent = lines.join("\n");
+  }
+
   public getAndClearClientDamageEvents(): { enemyId: number; damage: number; killed: boolean; x: number; y: number; isTank: boolean; enemyType?: "zombie" | "tank" | "colossus"; radiusM?: number }[] {
     return this.netClientDamageEvents.splice(0, this.netClientDamageEvents.length);
   }
@@ -578,14 +789,23 @@ export class Game {
     if (typeof snapshot.raceActive === "boolean") this.raceActive = snapshot.raceActive;
     if (typeof snapshot.raceStartTimeSeconds === "number") this.raceStartTimeSeconds = snapshot.raceStartTimeSeconds;
     if (typeof snapshot.raceFinished === "boolean") {
+      const wasFinished = this.raceFinished;
       this.raceFinished = snapshot.raceFinished;
       if (this.raceFinished) this.controlsLocked = true;
+      if (!wasFinished && this.raceFinished) {
+        // Ensure the finish UI shows up for net clients too.
+        this.onRaceFinishedUi();
+      }
     }
     if (snapshot.finishTimeSeconds !== undefined) this.finishTimeSeconds = snapshot.finishTimeSeconds;
     if (typeof snapshot.damage01 === "number") {
       this.damage01 = clamp(snapshot.damage01, 0, 1);
       if (this.damage01 >= 1) {
         if (this.wreckedTimeSeconds === null) this.wreckedTimeSeconds = this.state.timeSeconds;
+        if (!this.backendWreckedSent) {
+          this.backendWreckedSent = true;
+          void postGameStat("wrecked");
+        }
       } else {
         this.wreckedTimeSeconds = null;
       }
@@ -1353,6 +1573,8 @@ export class Game {
   }
 
   private setTrack(def: TrackDefinition): void {
+    this.resetFinishPanel();
+
     // Ensure stage meta exists deterministically if we have a seed.
     const seed = def.meta?.seed;
     if (typeof seed === "number" && Number.isFinite(seed)) {
@@ -1818,6 +2040,10 @@ export class Game {
     this.checkWaterHazards(dtSeconds);
     if (this.damage01 >= 1) {
       if (this.wreckedTimeSeconds === null) this.wreckedTimeSeconds = this.state.timeSeconds;
+      if (!this.backendWreckedSent) {
+        this.backendWreckedSent = true;
+        void postGameStat("wrecked");
+      }
       this.damage01 = 1;
       this.state.car.vxMS = 0;
       this.state.car.vyMS = 0;
@@ -1952,6 +2178,8 @@ export class Game {
     const showNewTrack = this.raceFinished && this.netMode !== "client";
     const newTrackBtn = document.getElementById("btn-new-track") as HTMLButtonElement | null;
     if (newTrackBtn) newTrackBtn.style.display = showNewTrack ? "block" : "none";
+
+    this.setFinishPanelVisible(this.raceFinished && this.finishPanelShown);
 
     // Camera framing
     // Goal: ensure the car is always visible even on short landscape viewports.
@@ -2803,6 +3031,7 @@ export class Game {
     this.raceStartTimeSeconds = this.state.timeSeconds;
     this.raceFinished = false;
     this.finishTimeSeconds = null;
+    this.resetFinishPanel();
     this.controlsLocked = false;
     this.damage01 = 0;
     this.wreckedTimeSeconds = null;
@@ -3237,6 +3466,8 @@ export class Game {
         const time = this.finishTimeSeconds.toFixed(2);
         this.showNotification(`FINISH! Time: ${time}s`);
         this.playNetEffect("checkpoint", 1.0); // Louder for finish
+
+        this.onRaceFinishedUi();
       } else {
         // Regular checkpoint
         this.nextCheckpointIndex += 1;

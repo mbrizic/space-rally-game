@@ -172,6 +172,111 @@
       margin-top: 8px;
     }
 
+      /* Finish panel (vote + submit score) */
+      #finish-panel {
+        position: absolute;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: calc(var(--safe-top) + var(--pad)) calc(var(--safe-right) + var(--pad)) calc(var(--safe-bottom) + var(--pad)) calc(var(--safe-left) + var(--pad));
+        background: rgba(0, 0, 0, 0.55);
+        z-index: 210;
+        pointer-events: auto;
+      }
+
+      /* Visibility is controlled by game logic (JS). */
+
+      #finish-panel .card {
+        width: min(640px, 92vw);
+        background: rgba(15, 18, 24, 0.92);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 14px;
+        padding: 18px;
+        box-shadow: 0 16px 45px rgba(0, 0, 0, 0.45);
+        backdrop-filter: blur(8px);
+      }
+
+      #finish-panel .title {
+        font-size: 18px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        color: rgba(255, 255, 255, 0.92);
+      }
+
+      #finish-panel .sub {
+        margin-top: 6px;
+        color: rgba(255, 255, 255, 0.70);
+        font-size: 13px;
+        line-height: 1.25;
+      }
+
+      #finish-panel .row {
+        margin-top: 12px;
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+
+      #finish-panel input.name-input {
+        flex: 1;
+        min-width: 170px;
+        height: 44px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        background: rgba(0, 0, 0, 0.35);
+        color: rgba(255, 255, 255, 0.92);
+        padding: 0 12px;
+        font-size: 15px;
+        outline: none;
+      }
+
+      #finish-panel .finish-btn {
+        min-height: 44px;
+        padding: 10px 14px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: rgba(70, 90, 255, 0.85);
+        color: rgba(255, 255, 255, 0.95);
+        font-weight: 800;
+        letter-spacing: 0.02em;
+        cursor: pointer;
+        user-select: none;
+      }
+
+      #finish-panel .finish-btn:active {
+        transform: translateY(1px);
+      }
+
+      #finish-panel .finish-btn.secondary {
+        background: rgba(55, 65, 81, 0.88);
+      }
+
+      #finish-panel .finish-btn.up {
+        background: rgba(34, 197, 94, 0.88);
+      }
+
+      #finish-panel .finish-btn.down {
+        background: rgba(239, 68, 68, 0.88);
+      }
+
+      #finish-panel .hint {
+        margin-top: 10px;
+        color: rgba(255, 255, 255, 0.62);
+        font-size: 12px;
+      }
+
+      #finish-panel .board {
+        margin-top: 12px;
+        padding-top: 10px;
+        border-top: 1px solid rgba(255, 255, 255, 0.10);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        color: rgba(255, 255, 255, 0.78);
+        font-size: 12px;
+        white-space: pre;
+      }
+
     #net-invite {
       background: #3B82F6;
       color: white;
@@ -560,6 +665,27 @@
 
     <button id="btn-reset" type="button">RESET</button>
     <button id="btn-new-track" type="button">NEW TRACK</button>
+
+      <div id="finish-panel">
+        <div class="card">
+          <div class="title">CONTRACT COMPLETE</div>
+          <div class="sub" id="finish-sub">Time: -- | Track: --</div>
+
+          <div class="row">
+            <input id="finish-name" class="name-input" type="text" placeholder="Name" maxlength="40" />
+            <button id="finish-submit" class="finish-btn" type="button">SUBMIT SCORE</button>
+          </div>
+
+          <div class="row">
+            <button id="finish-vote-up" class="finish-btn up" type="button">👍 UPVOTE TRACK</button>
+            <button id="finish-vote-down" class="finish-btn down" type="button">👎 DOWNVOTE TRACK</button>
+            <button id="finish-close" class="finish-btn secondary" type="button">CLOSE</button>
+          </div>
+
+          <div id="finish-msg" class="hint"></div>
+          <div id="finish-board" class="board"></div>
+        </div>
+      </div>
 
     <div id="start-menu">
       <div class="card">

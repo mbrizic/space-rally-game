@@ -57,7 +57,7 @@ function roomExists(room: string): boolean {
 
 const corsHeaders: Record<string, string> = {
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, OPTIONS",
+  "access-control-allow-methods": "GET, POST, OPTIONS",
   "access-control-allow-headers": "content-type"
 };
 
@@ -187,24 +187,107 @@ const server = Bun.serve<WsData>({
     }
 
     if (path === "/api/vote") {
+      if (req.method === "GET") {
+        const seed = (url.searchParams.get("seed") ?? "").trim();
+        if (!seed) {
+          return new Response(JSON.stringify({ error: "missing seed" }), { status: 400, headers: jsonHeaders });
+        }
+        const row = db.query("SELECT seed, upvotes, downvotes FROM track_votes WHERE seed = ?").get(seed) as any;
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            seed,
+            upvotes: typeof row?.upvotes === "number" ? row.upvotes : 0,
+            downvotes: typeof row?.downvotes === "number" ? row.downvotes : 0
+          }),
+          { headers: jsonHeaders }
+        );
+      }
+
       if (req.method === "POST") {
         try {
           const body = (await req.json()) as { seed: string; type: "up" | "down" };
-          if (!body.seed || (body.type !== "up" && body.type !== "down")) {
+          const seed = (body?.seed ?? "").trim();
+          if (!seed || (body.type !== "up" && body.type !== "down")) {
             return new Response(JSON.stringify({ error: "invalid body" }), { status: 400, headers: jsonHeaders });
           }
 
           if (body.type === "up") {
-            db.run("INSERT INTO track_votes (seed, upvotes, downvotes) VALUES (?, 1, 0) ON CONFLICT(seed) DO UPDATE SET upvotes = upvotes + 1", [body.seed]);
+            db.run(
+              "INSERT INTO track_votes (seed, upvotes, downvotes) VALUES (?, 1, 0) ON CONFLICT(seed) DO UPDATE SET upvotes = upvotes + 1",
+              [seed]
+            );
           } else {
-            db.run("INSERT INTO track_votes (seed, upvotes, downvotes) VALUES (?, 0, 1) ON CONFLICT(seed) DO UPDATE SET downvotes = downvotes + 1", [body.seed]);
+            db.run(
+              "INSERT INTO track_votes (seed, upvotes, downvotes) VALUES (?, 0, 1) ON CONFLICT(seed) DO UPDATE SET downvotes = downvotes + 1",
+              [seed]
+            );
           }
+
+          const row = db.query("SELECT seed, upvotes, downvotes FROM track_votes WHERE seed = ?").get(seed) as any;
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              seed,
+              upvotes: typeof row?.upvotes === "number" ? row.upvotes : 0,
+              downvotes: typeof row?.downvotes === "number" ? row.downvotes : 0
+            }),
+            { headers: jsonHeaders }
+          );
+        } catch {
+          return new Response(JSON.stringify({ error: "json parse error" }), { status: 400, headers: jsonHeaders });
+        }
+      }
+
+      return new Response(JSON.stringify({ error: "method not allowed" }), { status: 405, headers: jsonHeaders });
+    }
+
+    if (path === "/api/highscore") {
+      if (req.method === "POST") {
+        try {
+          const body = (await req.json()) as { name?: string; score?: number; seed?: string };
+          const name = (body?.name ?? "anonymous").toString().trim().slice(0, 40) || "anonymous";
+          const seed = (body?.seed ?? "0").toString().trim().slice(0, 24) || "0";
+          const score = Math.max(0, Math.floor(Number(body?.score ?? 0)));
+          if (!Number.isFinite(score) || score <= 0) {
+            return new Response(JSON.stringify({ error: "invalid score" }), { status: 400, headers: jsonHeaders });
+          }
+
+          db.run("INSERT INTO high_scores (name, score, seed, t) VALUES (?, ?, ?, ?)", [name, score, seed, Date.now()]);
+          // Best-effort social post.
+          void postHighScore(name, score, seed);
 
           return new Response(JSON.stringify({ ok: true }), { headers: jsonHeaders });
         } catch {
           return new Response(JSON.stringify({ error: "json parse error" }), { status: 400, headers: jsonHeaders });
         }
       }
+
+      return new Response(JSON.stringify({ error: "method not allowed" }), { status: 405, headers: jsonHeaders });
+    }
+
+    if (path === "/api/highscores" && req.method === "GET") {
+      const seed = (url.searchParams.get("seed") ?? "").trim();
+      const limitRaw = Number(url.searchParams.get("limit") ?? "10");
+      const limit = Math.max(1, Math.min(50, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : 10));
+
+      const rows = seed
+        ? (db.query("SELECT name, score, seed, t FROM high_scores WHERE seed = ? ORDER BY score ASC LIMIT ?").all(seed, limit) as any[])
+        : (db.query("SELECT name, score, seed, t FROM high_scores ORDER BY score ASC LIMIT ?").all(limit) as any[]);
+
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          seed: seed || null,
+          scores: rows.map((r) => ({
+            name: typeof r?.name === "string" ? r.name : "anonymous",
+            score: typeof r?.score === "number" ? r.score : 0,
+            seed: typeof r?.seed === "string" ? r.seed : "0",
+            t: typeof r?.t === "number" ? r.t : 0
+          }))
+        }),
+        { headers: jsonHeaders }
+      );
     }
 
     if (path === "/api/stats") {
@@ -296,7 +379,7 @@ const server = Bun.serve<WsData>({
       return new Response(html, { headers: { ...corsHeaders, "content-type": "text/html; charset=utf-8" } });
     }
 
-    if (path === "/stats" && req.method === "GET") {
+    if ((path === "/stats" || path === "/api/stats") && req.method === "GET") {
       const topScores = db.query("SELECT name, score, seed FROM high_scores ORDER BY score ASC LIMIT 10").all() as any[];
       const topLiked = db.query("SELECT seed, upvotes FROM track_votes ORDER BY upvotes DESC LIMIT 5").all() as any[];
       const topDisliked = db.query("SELECT seed, downvotes FROM track_votes ORDER BY downvotes DESC LIMIT 5").all() as any[];
