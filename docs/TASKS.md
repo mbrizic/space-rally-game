@@ -2,6 +2,11 @@
 
 This file is the **master list of all things we might want** (tasks + ideas). Keep it compact: one-liners only, link out for details.
 
+## Supported, but currently not active
+
+- Replay system (record/export/import/playback) exists in code, but UI entry points are currently removed.
+- Balrog/Colossus boss exists in code, but currently disabled.
+
 ## Multiplayer
 
 - [ ] Improve client playback smoothing / reduce drift (details: `MULTIPLAYER_PLAYBACK.md`)
@@ -40,6 +45,11 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 
 ## Backend
 - HTML pages are under /api/, this should be cleaned up
+- high scores should be per track (seed)
+- show tracks with most drives
+- show overall track finish with biggest average speed (this will help surface fastest tracks)
+- show tracks with highest crash or notfinished rate
+- prevent the same user from submitting high score multiple times
 
 ## Feel / UX / Polish
 
