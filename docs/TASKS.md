@@ -1,17 +1,10 @@
 # Tasks / Backlog
 
-This file is the **master list of all things we might want** (tasks + ideas). Keep it compact: one-liners only, link out for details.
-
-## Supported, but currently not active
-
-- Replay system (record/export/import/playback) exists in code, but UI entry points are currently removed.
-- Balrog/Colossus boss exists in code, but currently disabled.
+This file is the **master list of all things we might want** (tasks + ideas). Keep it compact: one-liners only, link out for details. As soon as something is done, remove it from this file, as the ideal length of this file should be zero.
 
 ## Multiplayer
 
 - [ ] Improve client playback smoothing / reduce drift (details: `MULTIPLAYER_PLAYBACK.md`)
-- [x] Add a simple reconnect UX (detect disconnect → show "reconnect" CTA) (details: `MULTIPLAYER.md`)
-- [x] Add basic network debug overlay / stats (RTT, snapshot rate, mode) (details: `MULTIPLAYER.md`)
 - when track changes, the P2 position is placed randomly on the screen, not actually on the start?
 
 ## Co-op Mode
@@ -26,15 +19,8 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 ## Internet
 - add option to upvote/downvote track at the end of race
     - add backend to support this and show most and least favourite tracks
-- log high scores (we already have backend support) and who those high scores somewhere 
+- log high scores (we already have backend support) and who those high scores somewhere
 - backend for these things should be on a branch "feat/backend-voting-stats"
-
-## Quick wins
-- [x] add "quiet" pieces of road where the only focus is on driving
-- [x] make rain a bit less loud
-- [x] narrow/debris callouts are right now drawn BEHIND the minimap road. They should maybe be above the map.
-- [x] I don't see a NEW TRACK button on the finished screen anymore?
-- [x] when next track is requested in multiplayer, the client still sees the old map
 
 ## Performance
 
@@ -53,15 +39,12 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 
 ## Feel / UX / Polish
 
-- [x] Add deterministic road debris hazards (destabilize, no damage) + navigator callouts (~50m)
 - [ ] Tune surfaces + audio feel (gravel slide vs drift intensity, ice feel)
-- [x] Fix steering direction when reversing
 - [ ] Add better tactile feedback (haptics/vibration tied to grip/impacts)
 - [ ] Manual gearbox UX on mobile
 
 ## Bigger Ideas (P3/P4, Weather, etc.)
-- [x] a huge colossus boss that chases + shoots fireballs (we have him, but question is whether we want to keep him, so currently disabled)
-- [] Something is after you: a sandstorm, dark clouds, something, and you need to run from it
+- [ ] Something is after you: a sandstorm, dark clouds, something, and you need to run from it
 - [ ] Player 3 (Engineer): power distribution (shield/engine/weapons) + damage control
 - [ ] Player 4 (Intel/Hacker): forward-scout drone + tagging/hacking gates
 - [ ] Bullet time: cooperative slowdown mechanics
