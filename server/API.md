@@ -12,7 +12,7 @@ The official SCRAPS contractor training portal.
 - **Method**: `GET`
 - **Description**: Displays lore, mission briefings, and links to play or view stats.
 
-### Stats Dashboard (`/api/stats-page`)
+### Stats Dashboard (`/api/stats`)
 Real-time telemetry and leaderboard.
 - **Method**: `GET`
 - **Description**: Displays daily games played, total completed/wrecked races, global high scores, and track popularity (likes/dislikes).

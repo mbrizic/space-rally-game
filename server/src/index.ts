@@ -286,7 +286,7 @@ const server = Bun.serve<WsData>({
 
         <div class="cta-group">
             <a href="https://spacerally.supercollider.hr" class="btn btn-primary">ACCEPT CONTRACT (PLAY)</a>
-            <a href="/api/stats-page" class="btn btn-outline">SYSTEM TELEMETRY</a>
+            <a href="/api/stats" class="btn btn-outline">SYSTEM TELEMETRY</a>
         </div>
 
         <div class="footer-tagline">"Space is hard. Shipping shouldn't be." | &copy; 2026 SCRAPS CORP</div>

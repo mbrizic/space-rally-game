@@ -42,6 +42,9 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 - [ ] WebGPU particle system: 10x particle count, GPU compute/render (details: `WEBGPU_WASM.md`)
 - [ ] WASM physics: Rust-compiled car/enemy/track simulation (details: `WEBGPU_WASM.md`)
 
+## Backend
+- HTML pages are under /api/, this should be cleaned up
+
 ## Feel / UX / Polish
 
 - [x] Make finish line prominent + hard-stop/lock controls on crossing
