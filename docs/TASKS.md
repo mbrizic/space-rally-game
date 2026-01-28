@@ -33,9 +33,7 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 - audit backend for safety, injections, etc.
 
 ## Cleanups
-- move replay logic into its separate file (but add tests for it first)
 - audit code for abbreviations and make them cleaner (like quietZoneContainsSM)
-- run code coverage and add bunch more tests
 - remove unused functions and classes
 - try some code analyzer that can find bugs
 
