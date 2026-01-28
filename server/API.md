@@ -7,12 +7,12 @@ When deployed, all endpoints are accessible via the base URL of the signaling se
 
 ## Public Pages
 
-### Landing Page (`/`)
+### Landing Page (`/api/landing`)
 The official SCRAPS contractor training portal.
 - **Method**: `GET`
 - **Description**: Displays lore, mission briefings, and links to play or view stats.
 
-### Stats Dashboard (`/stats`)
+### Stats Dashboard (`/api/stats-page`)
 Real-time telemetry and leaderboard.
 - **Method**: `GET`
 - **Description**: Displays daily games played, total completed/wrecked races, global high scores, and track popularity (likes/dislikes).

@@ -222,7 +222,7 @@ const server = Bun.serve<WsData>({
       }
     }
 
-    if (path === "/" && req.method === "GET") {
+    if (path === "/api/landing" && req.method === "GET") {
       const html = `
 <!DOCTYPE html>
 <html lang="en">
@@ -286,7 +286,7 @@ const server = Bun.serve<WsData>({
 
         <div class="cta-group">
             <a href="https://spacerally.supercollider.hr" class="btn btn-primary">ACCEPT CONTRACT (PLAY)</a>
-            <a href="/stats" class="btn btn-outline">SYSTEM TELEMETRY</a>
+            <a href="/api/stats-page" class="btn btn-outline">SYSTEM TELEMETRY</a>
         </div>
 
         <div class="footer-tagline">"Space is hard. Shipping shouldn't be." | &copy; 2026 SCRAPS CORP</div>
@@ -379,7 +379,7 @@ const server = Bun.serve<WsData>({
     </div>
     
     <div style="text-align: center; margin-top: 2rem;">
-        <a href="/" style="color: #ff00cc; text-decoration: none;">← Back to Landing Page</a>
+        <a href="/api/landing" style="color: #ff00cc; text-decoration: none;">← Back to Landing Page</a>
     </div>
 </body>
 </html>`;
