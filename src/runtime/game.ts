@@ -590,6 +590,7 @@ export class Game {
   }
 
   public setTouchShootHeld(held: boolean): void {
+    if (this.controlsLocked || this.raceFinished || this.damage01 >= 1) return;
     if (this.role !== PlayerRole.NAVIGATOR) return;
     this.shootHeld = held;
     if (held && !this.audioUnlocked) {
@@ -598,6 +599,7 @@ export class Game {
   }
 
   public touchShootPulse(): void {
+    if (this.controlsLocked || this.raceFinished || this.damage01 >= 1) return;
     if (this.role !== PlayerRole.NAVIGATOR) return;
     if (!this.audioUnlocked) {
       this.tryUnlockAudio();
@@ -619,6 +621,7 @@ export class Game {
 
   public getNavigatorShootHeld(): boolean {
     // Touch uses shootHeld; keyboard uses lastInputState.shoot (KeyL).
+    if (this.controlsLocked || this.raceFinished || this.damage01 >= 1) return false;
     return (this.role === PlayerRole.NAVIGATOR) && (this.shootHeld || !!this.lastInputState.shoot);
   }
 
@@ -878,6 +881,8 @@ export class Game {
     const isTouch = isTouchMode();
     if (isTouch) return;
 
+    if (this.controlsLocked || this.raceFinished || this.damage01 >= 1) return;
+
     if (this.netMode === "client" && this.role === PlayerRole.NAVIGATOR) {
       // Client is authoritative for their own shooting
       this.clientShoot();
@@ -902,6 +907,7 @@ export class Game {
   private onShootPointerDown = (e: PointerEvent): void => {
     // Avoid interfering with editor interactions.
     if (this.editorMode) return;
+    if (this.controlsLocked || this.raceFinished || this.damage01 >= 1) return;
     // Only shoot in shooter role.
     if (this.role !== PlayerRole.NAVIGATOR) return;
     // Only use pointerdown shooting for touch/pen to avoid double-firing with click on desktop mouse.
@@ -1683,6 +1689,18 @@ export class Game {
   private render(): void {
     const { width, height } = this.renderer.resizeToDisplay();
 
+    // Hide touch controls after finish (or when hard-locked) so the UI matches the lockout.
+    const driverGroup = document.getElementById("driver-group");
+    const navGroup = document.getElementById("navigator-group");
+    if (this.raceFinished || this.controlsLocked) {
+      if (driverGroup) driverGroup.style.display = "none";
+      if (navGroup) navGroup.style.display = "none";
+    } else {
+      // Restore default behavior (CSS + .active class decide visibility).
+      if (driverGroup) driverGroup.style.display = "";
+      if (navGroup) navGroup.style.display = "";
+    }
+
     // Wrecked reset button visibility (DOM overlay)
     const resetBtn = document.getElementById("btn-reset") as HTMLButtonElement | null;
     if (resetBtn) resetBtn.style.display = this.damage01 >= 1 && this.netMode !== "client" ? "block" : "none";
@@ -1777,12 +1795,10 @@ export class Game {
 
     const isTouch = isTouchMode();
 
-    // Touch UI: show NEW TRACK button when finished.
-    if (isTouch) {
-      const newTrackBtn = document.getElementById("btn-new-track") as HTMLButtonElement | null;
-      if (newTrackBtn) {
-        newTrackBtn.style.display = this.raceFinished && this.netMode !== "client" ? "block" : "none";
-      }
+    // Show NEW TRACK button when finished (desktop + touch).
+    const newTrackBtn = document.getElementById("btn-new-track") as HTMLButtonElement | null;
+    if (newTrackBtn) {
+      newTrackBtn.style.display = this.raceFinished && this.netMode !== "client" ? "block" : "none";
     }
 
     // Camera framing
@@ -2102,7 +2118,6 @@ export class Game {
       rightStackY += 68; // Slim panel
     }
 
-    // 2b. Pacenotes removed.
     // 2c. Minimap
     // Show if:
     // 1. Role is NAVIGATOR (always)
@@ -2186,8 +2201,10 @@ export class Game {
         }
       }
 
-      const miniMapSize = (isTouch && this.role === PlayerRole.NAVIGATOR)
-        ? Math.min(width * 0.56, height * 0.56)
+      const miniMapSize = this.role === PlayerRole.NAVIGATOR
+        ? (isTouch
+          ? Math.min(width * 0.62, height * 0.62)
+          : Math.min(height * 0.52, 360))
         : (isTouch ? width : Math.min(height * 0.4, 300));
       const startMM = pointOnTrack(this.track, this.checkpointSM[0]).p;
       const finishMM = pointOnTrack(this.track, this.checkpointSM[this.checkpointSM.length - 1]).p;
@@ -2380,8 +2397,6 @@ export class Game {
       this.perfTimingsMs.hud = now - perfMarkMs;
       perfMarkMs = now;
     }
-
-    // Pacenotes removed.
 
     // Drift indicator removed (future: vibration-driven feedback)
 
@@ -3030,6 +3045,7 @@ export class Game {
         // Hard stop: freeze the car exactly at the line and ignore controls.
         this.controlsLocked = true;
         this.lastInputState = { steer: 0, throttle: 0, brake: 0, handbrake: 0, shoot: false, fromKeyboard: false };
+        this.shootHeld = false;
         this.state.car.vxMS = 0;
         this.state.car.vyMS = 0;
         this.state.car.yawRateRadS = 0;

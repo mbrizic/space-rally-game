@@ -258,8 +258,9 @@ export function generateDebris(track: Track, opts?: { seed?: number; themeKind?:
 
   // Place debris clusters with biome tuning.
   // Rainforest: more debris. Arctic: less debris.
-  const minSpacing = themeKind === "rainforest" ? 80 : (themeKind === "arctic" ? 180 : 120);
-  const maxSpacing = themeKind === "rainforest" ? 160 : (themeKind === "arctic" ? 320 : 220);
+  // Slightly reduced rainforest density to keep it spicy but less spammy.
+  const minSpacing = themeKind === "rainforest" ? 95 : (themeKind === "arctic" ? 180 : 120);
+  const maxSpacing = themeKind === "rainforest" ? 190 : (themeKind === "arctic" ? 320 : 220);
   let nextAt = 100 + rand() * 80;
   let id = 1;
 
@@ -276,13 +277,14 @@ export function generateDebris(track: Track, opts?: { seed?: number; themeKind?:
 
     // Logs per cluster.
     const count = themeKind === "rainforest"
-      ? (3 + Math.floor(rand() * 6))
+      ? (2 + Math.floor(rand() * 5))
       : (themeKind === "arctic" ? (1 + Math.floor(rand() * 3)) : (2 + Math.floor(rand() * 5)));
 
     const tangentAngle = Math.atan2(ty, tx);
 
-    // Occasionally place a true "blocker" log roughly perpendicular to the road, near center.
-    const hasBlocker = rand() < 0.28;
+    // Occasionally place a true "blocker" log roughly across the road, near center.
+    // Keep these rarer so they feel like events, not spam.
+    const hasBlocker = rand() < 0.16;
 
     for (let i = 0; i < count; i++) {
       const isBlocker = hasBlocker && i === 0;
@@ -296,27 +298,29 @@ export function generateDebris(track: Track, opts?: { seed?: number; themeKind?:
       const x = p.x + normal.x * lateral + tx * along;
       const y = p.y + normal.y * lateral + ty * along;
 
-      // Rotation styles: along-road, diagonal, and perpendicular blockers.
+      // Rotation styles: along-road, diagonal, and (rarer) across-road.
       const styleRoll = rand();
-      const crossish = isBlocker || styleRoll < 0.18;
-      const diagonal = !crossish && styleRoll < 0.34;
+      const crossish = isBlocker || styleRoll < 0.10;
+      const diagonal = !crossish && styleRoll < 0.42;
 
       let rotationRad = tangentAngle;
       if (crossish) {
-        rotationRad = tangentAngle + Math.PI / 2;
+        // Avoid the "perfect 90°" look; bias to across-road but with noticeable tilt.
+        rotationRad = tangentAngle + Math.PI / 2 + (rand() - 0.5) * 0.55;
       } else if (diagonal) {
         const sign = rand() < 0.5 ? -1 : 1;
         rotationRad = tangentAngle + sign * (Math.PI / 4);
       }
 
       // Jitter (smaller for blockers so they read as deliberate road blocks).
-      const jitter = (rand() - 0.5) * (crossish ? 0.35 : 0.85);
+      const jitter = (rand() - 0.5) * (crossish ? 0.25 : 0.95);
       rotationRad += jitter;
 
       // Size.
+      const shortLog = !isBlocker && rand() < 0.35;
       const lengthM = isBlocker
-        ? (track.widthM * (1.05 + rand() * 0.35))
-        : (2.4 + rand() * 3.4); // 2.4-5.8m
+        ? (track.widthM * (0.70 + rand() * 0.55))
+        : (shortLog ? (1.0 + rand() * 1.6) : (2.2 + rand() * 4.2));
       const widthM = isBlocker
         ? (0.28 + rand() * 0.32)
         : (0.22 + rand() * 0.30); // 0.22-0.52m

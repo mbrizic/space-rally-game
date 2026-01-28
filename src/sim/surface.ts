@@ -15,14 +15,14 @@ function surfaceRand(seed: number): number {
 function offtrackSurfaceForTheme(themeKind?: StageThemeKind): Surface {
   switch (themeKind) {
     case "desert":
-      return { name: "offtrack", frictionMu: 0.62, rollingResistanceN: 320 };
+      return { name: "offtrack", frictionMu: 0.66, rollingResistanceN: 300 };
     case "arctic":
-      return { name: "offtrack", frictionMu: 0.35, rollingResistanceN: 280 };
+      return { name: "offtrack", frictionMu: 0.38, rollingResistanceN: 260 };
     case "rainforest":
-      return { name: "offtrack", frictionMu: 0.52, rollingResistanceN: 320 };
+      return { name: "offtrack", frictionMu: 0.56, rollingResistanceN: 300 };
     case "temperate":
     default:
-      return { name: "offtrack", frictionMu: 0.55, rollingResistanceN: 300 };
+      return { name: "offtrack", frictionMu: 0.58, rollingResistanceN: 280 };
   }
 }
 
@@ -57,7 +57,7 @@ export function surfaceForTrackSM(
     if (onRoad.name === "ice") {
       return {
         ...off,
-        frictionMu: Math.min(off.frictionMu, onRoad.frictionMu * 0.75)
+        frictionMu: Math.min(off.frictionMu, onRoad.frictionMu * 0.85)
       };
     }
     return off;

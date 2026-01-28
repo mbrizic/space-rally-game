@@ -76,10 +76,21 @@ const updateFullscreenUi = (): void => {
   exitFsBtn.style.display = document.body.classList.contains("started") ? "block" : "none";
 };
 
+// iOS Safari often rejects fullscreen requests unless they happen directly inside
+// a user gesture. We therefore "arm" a retry and perform it on the next pointer
+// interaction instead of calling requestFullscreen from orientationchange.
+let fullscreenRetryArmed = false;
+
 const enterFullscreenLandscape = async (): Promise<void> => {
   try {
     if (!isFullscreen()) {
-      if (rootAny.requestFullscreen) await rootAny.requestFullscreen();
+      // IMPORTANT: fullscreen the overall app/root (not just the canvas), otherwise
+      // the HTML touch controls (which are siblings of the canvas) disappear.
+      const appEl = document.getElementById("app") as HTMLElement | null;
+      const targetAny: any = (appEl ?? document.documentElement) as any;
+      if (targetAny.requestFullscreen) await targetAny.requestFullscreen();
+      else if (targetAny.webkitRequestFullscreen) await targetAny.webkitRequestFullscreen();
+      else if (rootAny.requestFullscreen) await rootAny.requestFullscreen();
       else if (rootAny.webkitRequestFullscreen) await rootAny.webkitRequestFullscreen();
     }
   } catch {
@@ -271,6 +282,9 @@ const beginJoin = async (): Promise<void> => {
   pendingMultiplayerStart = { mode: "client", started: false };
   setReconnectUi("hidden");
 
+  // Dismiss the mobile keyboard as soon as we attempt to join.
+  try { joinCodeInput?.blur(); } catch { }
+
   if (hostBox) hostBox.style.display = "none";
   setJoinUi("expanded");
 
@@ -343,8 +357,28 @@ mpReconnectBtn?.addEventListener("click", (e) => {
 window.addEventListener("orientationchange", () => {
   if (!document.body.classList.contains("started")) return;
   if (!looksTouch) return;
-  if (wantsFullscreen) void enterFullscreenLandscape();
+  if (wantsFullscreen) fullscreenRetryArmed = true;
+  // Still do the non-fullscreen bits.
+  try { window.scrollTo(0, 1); } catch { }
 });
+
+// Perform fullscreen retry only from a user gesture.
+document.addEventListener(
+  "pointerdown",
+  () => {
+    if (!looksTouch) return;
+    if (!document.body.classList.contains("started")) return;
+    if (!wantsFullscreen) return;
+    if (isFullscreen()) {
+      fullscreenRetryArmed = false;
+      return;
+    }
+    if (!fullscreenRetryArmed) return;
+    fullscreenRetryArmed = false;
+    void enterFullscreenLandscape();
+  },
+  { passive: true }
+);
 
 startBtn?.addEventListener("click", (e) => {
   e.preventDefault();

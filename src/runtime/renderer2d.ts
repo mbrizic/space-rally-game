@@ -1013,6 +1013,18 @@ export class Renderer2D {
       const baseColor = proj.color || "rgba(255, 220, 100, 0.95)";
       const sizeM = proj.size !== undefined ? proj.size : 0.2;
 
+      // LAYER 0: DARK UNDERLAY (contrast on bright/icy scenes)
+      ctx.save();
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
+      ctx.lineWidth = sizeM * 2.1;
+      ctx.lineCap = "round";
+      ctx.shadowBlur = 0;
+      ctx.beginPath();
+      ctx.moveTo(tailX, tailY);
+      ctx.lineTo(proj.x, proj.y);
+      ctx.stroke();
+      ctx.restore();
+
       // LAYER 1: OUTER GLOW (Thick, blured color)
       ctx.save();
       ctx.strokeStyle = baseColor;
@@ -1206,11 +1218,6 @@ export class Renderer2D {
     ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
     ctx.fillText(`TIME: ${opts.time.toFixed(2)}s`, cx, cy + speedSize * 0.8);
     ctx.fillText(`KILLS: ${opts.kills} / ${opts.totalEnemies}`, cx, cy + speedSize * 1.1);
-
-    // Instruction
-    ctx.font = `${Math.floor(statsSize * 0.7)}px 'Space Mono', monospace`;
-    ctx.fillStyle = "rgba(180, 220, 255, 0.6)";
-    ctx.fillText("Press N to drive new track", cx, h - 60);
 
     ctx.restore();
   }
@@ -1547,7 +1554,12 @@ export class Renderer2D {
     // Dynamic font sizing based on text length and screen width
     const padding = 40;
     const maxTextWidth = w - padding;
-    let fontSize = 48;
+
+    const isCheckpoint = /^Checkpoint\s+\d+\s*\/\s*\d+$/i.test(text);
+    const isCallout = /\b(RAIN|DEBRIS|NARROW|FOG|SANDSTORM|ECLIPSE|ELECTRICAL)\b/i.test(text);
+
+    // Checkpoints + co-driver callouts should be readable but not gigantic.
+    let fontSize = isCheckpoint ? 34 : (isCallout ? 32 : 48);
 
     ctx.font = `bold ${fontSize}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
     let metrics = ctx.measureText(text);
@@ -1560,13 +1572,23 @@ export class Renderer2D {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
 
+    const textRgb: { r: number; g: number; b: number } = isCheckpoint
+      ? { r: 255, g: 255, b: 255 }
+      : /\bRAIN\b/i.test(text)
+        ? { r: 140, g: 205, b: 255 }
+        : /\bDEBRIS\b/i.test(text)
+          ? { r: 255, g: 175, b: 90 }
+          : /\bNARROW\b/i.test(text)
+            ? { r: 255, g: 240, b: 170 }
+            : { r: 255, g: 255, b: 255 };
+
     // Black outline
     ctx.strokeStyle = `rgba(0, 0, 0, ${alpha * 0.8})`;
     ctx.lineWidth = Math.max(2, fontSize / 6);
     ctx.strokeText(text, centerX, centerY);
 
-    // White text
-    ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+    // Colored text
+    ctx.fillStyle = `rgba(${textRgb.r}, ${textRgb.g}, ${textRgb.b}, ${alpha})`;
     ctx.fillText(text, centerX, centerY);
 
     ctx.restore();
@@ -1704,20 +1726,53 @@ export class Renderer2D {
       ctx.translate(minimapX + 10, minimapY + 10);
       ctx.textAlign = "left";
       ctx.textBaseline = "top";
-      ctx.font = "700 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
 
-      for (let i = 0; i < Math.min(3, opts.warningTextLines.length); i++) {
-        const text = opts.warningTextLines[i] ?? "";
-        if (!text) continue;
-        const y = i * 14;
-        ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
-        ctx.fillText(text, 1, y + 1);
-        ctx.fillStyle = text.includes("RAIN")
-          ? "rgba(120, 190, 255, 0.95)"
-          : text.includes("DEBRIS")
-            ? "rgba(255, 165, 80, 0.95)"
-            : "rgba(255, 245, 220, 0.95)";
-        ctx.fillText(text, 0, y);
+      ctx.font = "800 13px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+
+      const roundRect = (x: number, y: number, w: number, h: number, r: number): void => {
+        const rr = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+        ctx.beginPath();
+        ctx.moveTo(x + rr, y);
+        ctx.lineTo(x + w - rr, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+        ctx.lineTo(x + w, y + h - rr);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+        ctx.lineTo(x + rr, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
+        ctx.lineTo(x, y + rr);
+        ctx.quadraticCurveTo(x, y, x + rr, y);
+        ctx.closePath();
+      };
+
+      const colorFor = (text: string): { bg: string; fg: string; prefix: string } => {
+        if (text.includes("RAIN")) return { bg: "rgba(35, 90, 140, 0.72)", fg: "rgba(210, 240, 255, 0.98)", prefix: "!" };
+        if (text.includes("DEBRIS")) return { bg: "rgba(140, 70, 25, 0.74)", fg: "rgba(255, 235, 210, 0.98)", prefix: "!" };
+        if (text.includes("NARROW")) return { bg: "rgba(120, 110, 30, 0.74)", fg: "rgba(255, 248, 210, 0.98)", prefix: "!" };
+        return { bg: "rgba(0, 0, 0, 0.65)", fg: "rgba(255, 245, 220, 0.95)", prefix: "!" };
+      };
+
+      let y = 0;
+      for (let i = 0; i < Math.min(4, opts.warningTextLines.length); i++) {
+        const raw = opts.warningTextLines[i] ?? "";
+        if (!raw) continue;
+        const { bg, fg, prefix } = colorFor(raw);
+        const text = `${prefix} ${raw}`;
+        const tw = ctx.measureText(text).width;
+        const boxW = Math.min(tw + 18, minimapSize - 22);
+        const boxH = 18;
+
+        // Background pill
+        ctx.fillStyle = bg;
+        roundRect(0, y, boxW, boxH, 8);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Text
+        ctx.fillStyle = fg;
+        ctx.fillText(text, 9, y + 3);
+        y += boxH + 6;
       }
 
       ctx.restore();

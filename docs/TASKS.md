@@ -7,6 +7,7 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 - [ ] Improve client playback smoothing / reduce drift (details: `MULTIPLAYER_PLAYBACK.md`)
 - [x] Add a simple reconnect UX (detect disconnect → show "reconnect" CTA) (details: `MULTIPLAYER.md`)
 - [x] Add basic network debug overlay / stats (RTT, snapshot rate, mode) (details: `MULTIPLAYER.md`)
+- when track changes, the P2 position is placed randomly on the screen, not actually on the start?
 
 ## Co-op Mode
 
@@ -16,19 +17,6 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 
 - [ ] Improve track variety without breaking safety constraints (details: `TRACK_VARIETY_NOTES.md`)
 - [ ] Track generator: reduce “safe/repetitive” bias from overlap-retry logic (details: `TRACK_VARIETY_NOTES.md`)
-
-## Quick wins
-- reduce debris amount/frequency on rainforest tracks by a bit
-- reduce offtrack grip/traction penalty by a bit
-- change size of "CHeckpoint 3/3" text to be smaller
-- remove pacenotes fully from the project
-- remove "Press N to play new track" and instead always display the "NEW TRACK" button, even in desktop use (on mobile, the NEW TRACK button is across the )
-- make the RAIN/DEBRIS/ETC callouts on the minimal more prominent (e.g.) a marker on the map? Or a highlighted text on top of the screen (like the co-driver is seeing it in front? but current one is too big and too boring)
-- bullets not as visible on ice, as they're very similar colors
-- increase the minimap for the co-driver a bit
-- bug: after the track is finished, controls still shown on the screen, co-driver can even shoot guns
-- when you enter the join code, the phone keyboard should dismiss on its own
-- bug: auto full-screen doesn't really work on iPhones
 
 ## Internet
 - add option to upvote/downvote track at the end of race
