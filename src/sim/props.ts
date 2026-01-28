@@ -1,5 +1,6 @@
 import { mulberry32 } from "./rng";
-import type { StageThemeKind } from "./stage";
+import { isQuietAtSM, quietZoneContainsSM } from "./stage";
+import type { QuietZone, StageThemeKind } from "./stage";
 import type { Track, Vec2 } from "./track";
 
 export type CircleObstacle = {
@@ -169,9 +170,11 @@ export function pointToSegmentDistance(
 /**
  * Generate water bodies near the track - dangerous hazards that slow the car significantly
  */
-export function generateWaterBodies(track: Track, opts?: { seed?: number }): WaterBody[] {
+export function generateWaterBodies(track: Track, opts?: { seed?: number; quietZones?: QuietZone[] }): WaterBody[] {
   const seed = opts?.seed ?? 4242;
   const rand = mulberry32(seed);
+
+  const quietZones: QuietZone[] = opts?.quietZones ?? [];
 
   const waterBodies: WaterBody[] = [];
   const roadHalfWidthM = track.widthM * 0.5;
@@ -184,6 +187,15 @@ export function generateWaterBodies(track: Track, opts?: { seed?: number }): Wat
   let id = 1;
   
   for (let s = nextWaterAt; s < track.totalLengthM - 100; s = nextWaterAt) {
+    // Quiet stretches: avoid water hazards.
+    if (quietZones.length > 0 && isQuietAtSM(track.totalLengthM, s, quietZones)) {
+      const z = quietZones.find((q) => quietZoneContainsSM(track.totalLengthM, s, q));
+      if (z) {
+        nextWaterAt = Math.max(s + minSpacing, z.end01 * track.totalLengthM + minSpacing);
+        continue;
+      }
+    }
+
     const { p, normal } = pointAndNormalOnTrack(track, s);
     
     // Skip if too close to start or end
@@ -247,9 +259,11 @@ export function generateWaterBodies(track: Track, opts?: { seed?: number }): Wat
  * Generate debris (fallen logs) on the road.
  * These do not deal damage, but destabilize the car if hit at speed.
  */
-export function generateDebris(track: Track, opts?: { seed?: number; themeKind?: StageThemeKind }): DebrisObstacle[] {
+export function generateDebris(track: Track, opts?: { seed?: number; themeKind?: StageThemeKind; quietZones?: QuietZone[] }): DebrisObstacle[] {
   const seed = opts?.seed ?? 9090;
   const rand = mulberry32(seed);
+
+  const quietZones: QuietZone[] = opts?.quietZones ?? [];
 
   const themeKind: StageThemeKind = opts?.themeKind ?? "temperate";
 
@@ -258,12 +272,22 @@ export function generateDebris(track: Track, opts?: { seed?: number; themeKind?:
 
   // Place debris clusters with biome tuning.
   // Rainforest: more debris. Arctic: less debris.
-  const minSpacing = themeKind === "rainforest" ? 80 : (themeKind === "arctic" ? 180 : 120);
-  const maxSpacing = themeKind === "rainforest" ? 160 : (themeKind === "arctic" ? 320 : 220);
+  // Slightly reduced rainforest density to keep it spicy but less spammy.
+  const minSpacing = themeKind === "rainforest" ? 95 : (themeKind === "arctic" ? 180 : 120);
+  const maxSpacing = themeKind === "rainforest" ? 190 : (themeKind === "arctic" ? 320 : 220);
   let nextAt = 100 + rand() * 80;
   let id = 1;
 
   for (let s = nextAt; s < track.totalLengthM - 140; s = nextAt) {
+    // Quiet stretches: avoid debris hazards.
+    if (quietZones.length > 0 && isQuietAtSM(track.totalLengthM, s, quietZones)) {
+      const z = quietZones.find((q) => quietZoneContainsSM(track.totalLengthM, s, q));
+      if (z) {
+        nextAt = Math.max(s + minSpacing, z.end01 * track.totalLengthM + minSpacing);
+        continue;
+      }
+    }
+
     // Skip near start/end.
     if (s < 120 || s > track.totalLengthM - 180) {
       nextAt = s + minSpacing;
@@ -276,13 +300,14 @@ export function generateDebris(track: Track, opts?: { seed?: number; themeKind?:
 
     // Logs per cluster.
     const count = themeKind === "rainforest"
-      ? (3 + Math.floor(rand() * 6))
+      ? (2 + Math.floor(rand() * 5))
       : (themeKind === "arctic" ? (1 + Math.floor(rand() * 3)) : (2 + Math.floor(rand() * 5)));
 
     const tangentAngle = Math.atan2(ty, tx);
 
-    // Occasionally place a true "blocker" log roughly perpendicular to the road, near center.
-    const hasBlocker = rand() < 0.28;
+    // Occasionally place a true "blocker" log roughly across the road, near center.
+    // Keep these rarer so they feel like events, not spam.
+    const hasBlocker = rand() < 0.16;
 
     for (let i = 0; i < count; i++) {
       const isBlocker = hasBlocker && i === 0;
@@ -296,27 +321,29 @@ export function generateDebris(track: Track, opts?: { seed?: number; themeKind?:
       const x = p.x + normal.x * lateral + tx * along;
       const y = p.y + normal.y * lateral + ty * along;
 
-      // Rotation styles: along-road, diagonal, and perpendicular blockers.
+      // Rotation styles: along-road, diagonal, and (rarer) across-road.
       const styleRoll = rand();
-      const crossish = isBlocker || styleRoll < 0.18;
-      const diagonal = !crossish && styleRoll < 0.34;
+      const crossish = isBlocker || styleRoll < 0.10;
+      const diagonal = !crossish && styleRoll < 0.42;
 
       let rotationRad = tangentAngle;
       if (crossish) {
-        rotationRad = tangentAngle + Math.PI / 2;
+        // Avoid the "perfect 90°" look; bias to across-road but with noticeable tilt.
+        rotationRad = tangentAngle + Math.PI / 2 + (rand() - 0.5) * 0.55;
       } else if (diagonal) {
         const sign = rand() < 0.5 ? -1 : 1;
         rotationRad = tangentAngle + sign * (Math.PI / 4);
       }
 
       // Jitter (smaller for blockers so they read as deliberate road blocks).
-      const jitter = (rand() - 0.5) * (crossish ? 0.35 : 0.85);
+      const jitter = (rand() - 0.5) * (crossish ? 0.25 : 0.95);
       rotationRad += jitter;
 
       // Size.
+      const shortLog = !isBlocker && rand() < 0.35;
       const lengthM = isBlocker
-        ? (track.widthM * (1.05 + rand() * 0.35))
-        : (2.4 + rand() * 3.4); // 2.4-5.8m
+        ? (track.widthM * (0.70 + rand() * 0.55))
+        : (shortLog ? (1.0 + rand() * 1.6) : (2.2 + rand() * 4.2));
       const widthM = isBlocker
         ? (0.28 + rand() * 0.32)
         : (0.22 + rand() * 0.30); // 0.22-0.52m

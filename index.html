@@ -23,6 +23,12 @@
       display: grid;
       grid-template-rows: 1fr;
       position: relative;
+
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-right: env(safe-area-inset-right, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --safe-left: env(safe-area-inset-left, 0px);
+      --pad: clamp(10px, 2.2vmin, 22px);
     }
 
     canvas {
@@ -87,6 +93,11 @@
       gap: 12px;
       justify-content: center;
       flex-wrap: wrap;
+    }
+
+    /* Root menu: the two big entry buttons are stacked (one per row). */
+    #menu-root .row + .row {
+      margin-top: 12px;
     }
 
     #start-menu .menu-btn {
@@ -229,11 +240,6 @@
       /* Shown via JS */
       user-select: none;
 
-      --safe-top: env(safe-area-inset-top, 0px);
-      --safe-right: env(safe-area-inset-right, 0px);
-      --safe-bottom: env(safe-area-inset-bottom, 0px);
-      --safe-left: env(safe-area-inset-left, 0px);
-      --pad: clamp(10px, 2.2vmin, 22px);
       --btn: clamp(58px, 11vmin, 96px);
       --btn-sm: clamp(46px, 9vmin, 76px);
       --joy: clamp(140px, 26vmin, 240px);
@@ -553,6 +559,7 @@
     <div id="fps-counter">-- FPS</div>
 
     <button id="btn-reset" type="button">RESET</button>
+    <button id="btn-new-track" type="button">NEW TRACK</button>
 
     <div id="start-menu">
       <div class="card">
@@ -562,41 +569,65 @@
           <b>MULTIPLAYER</b>: driver hosts and shows a 4‑digit code; gunner enters it.
         </div>
 
-        <div class="row">
-          <button id="btn-start" class="menu-btn" type="button">START SOLO</button>
-        </div>
-
-        <div class="divider"></div>
-
-        <div class="row">
-          <button id="btn-host-driver" class="menu-btn" type="button">START MULTIPLAYER (YOU ARE THE DRIVER)</button>
-        </div>
-
-        <div id="mp-host" style="display:none;">
-          <div class="code" id="mp-code">0000</div>
-          <div class="hint" id="mp-host-hint">Tell your gunner this code.</div>
-        </div>
-
-        <div class="divider"></div>
-
-        <div class="row" id="mp-join-cta">
-          <button id="btn-join-codriver" class="menu-btn" type="button">JOIN MULTIPLAYER (AS GUNNER)</button>
-        </div>
-
-        <div id="mp-join-form" style="display:none;">
-          <div class="row" style="margin-top: 10px;">
-            <input id="mp-join-code" class="code-input" inputmode="numeric" autocomplete="one-time-code" placeholder="1234" maxlength="4" />
-            <button id="btn-join-confirm" class="menu-btn" type="button">JOIN</button>
+        <!-- Entry point: pick Singleplayer / Multiplayer -->
+        <div id="menu-root">
+          <div class="row">
+            <button id="btn-menu-singleplayer" class="menu-btn" type="button">SINGLEPLAYER</button>
           </div>
-          <div class="row" style="margin-top: 10px;">
-            <button id="btn-join-back" class="menu-btn" type="button" style="background:#374151;color:rgba(255,255,255,0.95);">BACK</button>
+          <div class="row">
+            <button id="btn-menu-multiplayer" class="menu-btn" type="button">MULTIPLAYER</button>
           </div>
         </div>
 
-        <div id="mp-error" class="error"></div>
+        <!-- Singleplayer submenu -->
+        <div id="menu-singleplayer" style="display:none;">
+          <div class="row">
+            <button id="btn-sp-time-trial" class="menu-btn" type="button">TIME TRIAL</button>
+          </div>
+          <div class="row">
+            <button id="btn-sp-practice" class="menu-btn" type="button" style="background:#334155;color:rgba(255,255,255,0.95);">DRIVING PRACTICE</button>
+          </div>
+          <div class="row" style="margin-top: 10px;">
+            <button id="btn-sp-back" class="menu-btn" type="button" style="background:#374151;color:rgba(255,255,255,0.95);">BACK</button>
+          </div>
+        </div>
 
-        <div id="mp-reconnect" class="row" style="display:none; margin-top: 10px;">
-          <button id="btn-reconnect" class="menu-btn" type="button" style="background:#16a34a;">RECONNECT</button>
+        <!-- Multiplayer submenu (existing UI) -->
+        <div id="menu-multiplayer" style="display:none;">
+          <div class="row">
+            <button id="btn-host-driver" class="menu-btn" type="button">START MULTIPLAYER (YOU ARE THE DRIVER)</button>
+          </div>
+
+          <div id="mp-host" style="display:none;">
+            <div class="code" id="mp-code">0000</div>
+            <div class="hint" id="mp-host-hint">Tell your gunner this code.</div>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="row" id="mp-join-cta">
+            <button id="btn-join-codriver" class="menu-btn" type="button">JOIN MULTIPLAYER (AS GUNNER)</button>
+          </div>
+
+          <div id="mp-join-form" style="display:none;">
+            <div class="row" style="margin-top: 10px;">
+              <input id="mp-join-code" class="code-input" inputmode="numeric" autocomplete="one-time-code" placeholder="1234" maxlength="4" />
+              <button id="btn-join-confirm" class="menu-btn" type="button">JOIN</button>
+            </div>
+            <div class="row" style="margin-top: 10px;">
+              <button id="btn-join-back" class="menu-btn" type="button" style="background:#374151;color:rgba(255,255,255,0.95);">BACK</button>
+            </div>
+          </div>
+
+          <div id="mp-error" class="error"></div>
+
+          <div id="mp-reconnect" class="row" style="display:none; margin-top: 10px;">
+            <button id="btn-reconnect" class="menu-btn" type="button" style="background:#16a34a;">RECONNECT</button>
+          </div>
+
+          <div class="row" style="margin-top: 10px;">
+            <button id="btn-mp-back" class="menu-btn" type="button" style="background:#374151;color:rgba(255,255,255,0.95);">BACK</button>
+          </div>
         </div>
       </div>
     </div>
@@ -623,8 +654,6 @@
 
         <button id="role-toggle" type="button">Driver</button>
         <button id="fullscreen-toggle" type="button" aria-label="Toggle fullscreen">FULL</button>
-      <button id="btn-new-track" type="button">NEW TRACK</button>
-
       <!-- Driver Controls -->
       <div id="driver-group" class="control-group active">
         <div id="steering-zone" class="touch-auto">

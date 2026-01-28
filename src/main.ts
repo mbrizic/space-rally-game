@@ -76,10 +76,21 @@ const updateFullscreenUi = (): void => {
   exitFsBtn.style.display = document.body.classList.contains("started") ? "block" : "none";
 };
 
+// iOS Safari often rejects fullscreen requests unless they happen directly inside
+// a user gesture. We therefore "arm" a retry and perform it on the next pointer
+// interaction instead of calling requestFullscreen from orientationchange.
+let fullscreenRetryArmed = false;
+
 const enterFullscreenLandscape = async (): Promise<void> => {
   try {
     if (!isFullscreen()) {
-      if (rootAny.requestFullscreen) await rootAny.requestFullscreen();
+      // IMPORTANT: fullscreen the overall app/root (not just the canvas), otherwise
+      // the HTML touch controls (which are siblings of the canvas) disappear.
+      const appEl = document.getElementById("app") as HTMLElement | null;
+      const targetAny: any = (appEl ?? document.documentElement) as any;
+      if (targetAny.requestFullscreen) await targetAny.requestFullscreen();
+      else if (targetAny.webkitRequestFullscreen) await targetAny.webkitRequestFullscreen();
+      else if (rootAny.requestFullscreen) await rootAny.requestFullscreen();
       else if (rootAny.webkitRequestFullscreen) await rootAny.webkitRequestFullscreen();
     }
   } catch {
@@ -112,7 +123,18 @@ const exitFullscreen = async (): Promise<void> => {
 let wantsFullscreen = true;
 
 const startMenu = document.getElementById("start-menu");
-const startBtn = document.getElementById("btn-start") as HTMLButtonElement | null;
+const menuRoot = document.getElementById("menu-root") as HTMLDivElement | null;
+const menuSingle = document.getElementById("menu-singleplayer") as HTMLDivElement | null;
+const menuMulti = document.getElementById("menu-multiplayer") as HTMLDivElement | null;
+
+const menuSingleBtn = document.getElementById("btn-menu-singleplayer") as HTMLButtonElement | null;
+const menuMultiBtn = document.getElementById("btn-menu-multiplayer") as HTMLButtonElement | null;
+
+const spTimeTrialBtn = document.getElementById("btn-sp-time-trial") as HTMLButtonElement | null;
+const spPracticeBtn = document.getElementById("btn-sp-practice") as HTMLButtonElement | null;
+const spBackBtn = document.getElementById("btn-sp-back") as HTMLButtonElement | null;
+const mpBackBtn = document.getElementById("btn-mp-back") as HTMLButtonElement | null;
+
 const hostDriverBtn = document.getElementById("btn-host-driver") as HTMLButtonElement | null;
 const joinCtaBtn = document.getElementById("btn-join-codriver") as HTMLButtonElement | null;
 const joinConfirmBtn = document.getElementById("btn-join-confirm") as HTMLButtonElement | null;
@@ -197,6 +219,20 @@ const setJoinUi = (mode: "collapsed" | "expanded"): void => {
   }
 };
 
+const setMenu = (mode: "root" | "single" | "multi"): void => {
+  if (menuRoot) menuRoot.style.display = mode === "root" ? "block" : "none";
+  if (menuSingle) menuSingle.style.display = mode === "single" ? "block" : "none";
+  if (menuMulti) menuMulti.style.display = mode === "multi" ? "block" : "none";
+
+  // Reset MP sub-UI when leaving MP menu.
+  if (mode !== "multi") {
+    setMpError(null);
+    setReconnectUi("hidden");
+    setJoinUi("collapsed");
+    if (hostBox) hostBox.style.display = "none";
+  }
+};
+
 const finalizeStart = async (opts?: { multiplayer?: boolean }): Promise<void> => {
   // Wait for touch devices to settle into landscape before first frame.
   if (looksTouch && !isLandscape()) {
@@ -228,11 +264,12 @@ const finalizeStart = async (opts?: { multiplayer?: boolean }): Promise<void> =>
   updateFullscreenUi();
 };
 
-const beginSolo = (): void => {
+const beginSolo = (mode: "timeTrial" | "practice"): void => {
   setMpError(null);
   pendingMultiplayerStart = null;
   setJoinUi("collapsed");
   setReconnectUi("hidden");
+  game.setSoloMode(mode);
   game.unlockAudioFromUserGesture();
   if (looksTouch && wantsFullscreen) void enterFullscreenLandscape();
   void finalizeStart({ multiplayer: false });
@@ -270,6 +307,9 @@ const beginJoin = async (): Promise<void> => {
   setMpError(null);
   pendingMultiplayerStart = { mode: "client", started: false };
   setReconnectUi("hidden");
+
+  // Dismiss the mobile keyboard as soon as we attempt to join.
+  try { joinCodeInput?.blur(); } catch { }
 
   if (hostBox) hostBox.style.display = "none";
   setJoinUi("expanded");
@@ -343,12 +383,57 @@ mpReconnectBtn?.addEventListener("click", (e) => {
 window.addEventListener("orientationchange", () => {
   if (!document.body.classList.contains("started")) return;
   if (!looksTouch) return;
-  if (wantsFullscreen) void enterFullscreenLandscape();
+  if (wantsFullscreen) fullscreenRetryArmed = true;
+  // Still do the non-fullscreen bits.
+  try { window.scrollTo(0, 1); } catch { }
 });
 
-startBtn?.addEventListener("click", (e) => {
+// Perform fullscreen retry only from a user gesture.
+document.addEventListener(
+  "pointerdown",
+  () => {
+    if (!looksTouch) return;
+    if (!document.body.classList.contains("started")) return;
+    if (!wantsFullscreen) return;
+    if (isFullscreen()) {
+      fullscreenRetryArmed = false;
+      return;
+    }
+    if (!fullscreenRetryArmed) return;
+    fullscreenRetryArmed = false;
+    void enterFullscreenLandscape();
+  },
+  { passive: true }
+);
+
+menuSingleBtn?.addEventListener("click", (e) => {
   e.preventDefault();
-  beginSolo();
+  setMenu("single");
+});
+
+menuMultiBtn?.addEventListener("click", (e) => {
+  e.preventDefault();
+  setMenu("multi");
+});
+
+spTimeTrialBtn?.addEventListener("click", (e) => {
+  e.preventDefault();
+  beginSolo("timeTrial");
+});
+
+spPracticeBtn?.addEventListener("click", (e) => {
+  e.preventDefault();
+  beginSolo("practice");
+});
+
+spBackBtn?.addEventListener("click", (e) => {
+  e.preventDefault();
+  setMenu("root");
+});
+
+mpBackBtn?.addEventListener("click", (e) => {
+  e.preventDefault();
+  setMenu("root");
 });
 
 hostDriverBtn?.addEventListener("click", (e) => {
@@ -406,8 +491,11 @@ window.addEventListener("keydown", (e) => {
   if (document.body.classList.contains("started")) return;
   if (e.code === "Enter") {
     e.preventDefault();
-    beginSolo();
+    beginSolo("timeTrial");
   }
 });
+
+// Ensure the default menu state is visible on load.
+setMenu("root");
 
 // URL-based join links removed (use 4-digit code instead).

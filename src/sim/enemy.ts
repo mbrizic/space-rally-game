@@ -1,4 +1,6 @@
 import { mulberry32 } from "./rng";
+import type { QuietZone } from "./stage";
+import { isQuietAtSM, quietZoneContainsSM } from "./stage";
 import type { Track } from "./track";
 import { pointOnTrack } from "./track";
 
@@ -221,9 +223,11 @@ export function stepEnemy(enemy: Enemy, dtSeconds: number, track: Track): Enemy 
 /**
  * Generate enemies along the track
  */
-export function generateEnemies(track: Track, opts?: { seed?: number; count?: number }): Enemy[] {
+export function generateEnemies(track: Track, opts?: { seed?: number; count?: number; quietZones?: QuietZone[] }): Enemy[] {
   const seed = opts?.seed ?? 6666;
   const rand = mulberry32(seed);
+
+  const quietZones: QuietZone[] = opts?.quietZones ?? [];
 
   const enemies: Enemy[] = [];
   const roadHalfWidthM = track.widthM * 0.5;
@@ -232,7 +236,12 @@ export function generateEnemies(track: Track, opts?: { seed?: number; count?: nu
   // NOTE: This is deterministic via the seeded RNG (mulberry32).
   const minSpacing = 14; // allow clusters
   const maxSpacing = 52; // allow gaps
-  const desiredCount = opts?.count ?? Math.floor(track.totalLengthM / 25); // ~1 per 25m (4x more than original)
+  // Previous baseline (cap): ~1 per 25m.
+  const maxCount = Math.floor(track.totalLengthM / 25);
+  // Reduce overall density and vary per-stage deterministically, never exceeding the old baseline.
+  const densityScale = 0.45 + 0.40 * rand(); // 0.45..0.85
+  const desiredCountRaw = opts?.count ?? Math.floor(maxCount * densityScale);
+  const desiredCount = Math.max(0, Math.min(maxCount, desiredCountRaw));
 
   const sampleSpacing = (): number => {
     // Biased distribution: more small spacings than large ones, plus occasional big gaps.
@@ -246,6 +255,15 @@ export function generateEnemies(track: Track, opts?: { seed?: number; count?: nu
   let nextEnemyAt = sampleSpacing();
 
   for (let i = 0; i < desiredCount && nextEnemyAt < track.totalLengthM - 100; i++) {
+    // Quiet stretches: avoid enemies so the player can focus on driving.
+    if (quietZones.length > 0 && isQuietAtSM(track.totalLengthM, nextEnemyAt, quietZones)) {
+      const z = quietZones.find((q) => quietZoneContainsSM(track.totalLengthM, nextEnemyAt, q));
+      if (z) {
+        nextEnemyAt = Math.max(nextEnemyAt + minSpacing, z.end01 * track.totalLengthM + minSpacing);
+        continue;
+      }
+    }
+
     const { p, headingRad } = pointOnTrack(track, nextEnemyAt);
 
     // Skip if too close to start or end

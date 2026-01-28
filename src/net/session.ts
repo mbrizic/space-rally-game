@@ -363,6 +363,14 @@ export function initNetSession(
       if (state.mode === "host") {
         game.setNetMode("host");
         game.setRoleExternal(hostRole);
+        (game as any).setNetTrackDefBroadcaster?.((trackDef: string) => {
+          if (!dc || dc.readyState !== "open") return;
+          try {
+            dc.send(JSON.stringify({ type: "track", trackDef }));
+          } catch {
+            // ignore
+          }
+        });
         try {
           dc.send(JSON.stringify({ type: "init", trackDef: game.getSerializedTrackDef(), hostRole }));
         } catch { }
@@ -381,6 +389,7 @@ export function initNetSession(
       if (state.mode === "client") {
         game.setNetMode("client");
         game.setRoleExternal(clientRole);
+        (game as any).setNetTrackDefBroadcaster?.(null);
         // shootPulse is no longer used - client handles shooting locally
         game.setNetShootPulseHandler(null);
 
@@ -462,6 +471,14 @@ export function initNetSession(
         peerReady = true;
         game.notify("Connected");
         opts?.onPeerReady?.("client");
+        return;
+      }
+
+      if (msg?.type === "track" && state.mode === "client") {
+        const ok = typeof msg.trackDef === "string" ? game.loadSerializedTrackDef(msg.trackDef) : false;
+        if (!ok) {
+          setError("bad trackDef");
+        }
         return;
       }
 
