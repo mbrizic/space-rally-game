@@ -29,6 +29,9 @@ import { postHighScore } from "./twitter";
 
 const db = new Database("scores.sqlite", { create: true });
 db.run("CREATE TABLE IF NOT EXISTS high_scores (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, score INTEGER, seed TEXT, t INTEGER)");
+db.run("CREATE TABLE IF NOT EXISTS track_votes (seed TEXT PRIMARY KEY, upvotes INTEGER DEFAULT 0, downvotes INTEGER DEFAULT 0)");
+db.run("CREATE TABLE IF NOT EXISTS game_stats (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, t INTEGER)");
+
 // Ensure seed column exists for existing databases
 try {
   db.run("ALTER TABLE high_scores ADD COLUMN seed TEXT DEFAULT '0'");
@@ -183,41 +186,221 @@ const server = Bun.serve<WsData>({
       return ok ? undefined : new Response("upgrade failed\n", { status: 400 });
     }
 
-    if (path === "/api/high-scores") {
-      if (req.method === "GET") {
-        const seed = url.searchParams.get("seed");
-        let query = "SELECT name, score, seed, t FROM high_scores";
-        const params: any[] = [];
-
-        if (seed) {
-          query += " WHERE seed = ?";
-          params.push(seed);
-        }
-
-        query += " ORDER BY score ASC LIMIT 10";
-        const scores = db.query(query).all(...params);
-        return new Response(JSON.stringify(scores), { headers: jsonHeaders });
-      }
-
+    if (path === "/api/vote") {
       if (req.method === "POST") {
         try {
-          const body = (await req.json()) as { name: string; score: number; seed: string };
-          if (!body.name || typeof body.score !== "number" || !body.seed) {
+          const body = (await req.json()) as { seed: string; type: "up" | "down" };
+          if (!body.seed || (body.type !== "up" && body.type !== "down")) {
             return new Response(JSON.stringify({ error: "invalid body" }), { status: 400, headers: jsonHeaders });
           }
-          db.run("INSERT INTO high_scores (name, score, seed, t) VALUES (?, ?, ?, ?)", [body.name, body.score, body.seed, Date.now()]);
 
-          // Check if it's the new all-time high score for THIS track to tweet
-          const top = db.query("SELECT score FROM high_scores WHERE seed = ? ORDER BY score ASC LIMIT 1").get(body.seed) as { score: number };
-          if (!top || body.score <= top.score) {
-            // Non-blocking tweet
-            postHighScore(body.name, body.score, body.seed).catch(console.error);
+          if (body.type === "up") {
+            db.run("INSERT INTO track_votes (seed, upvotes, downvotes) VALUES (?, 1, 0) ON CONFLICT(seed) DO UPDATE SET upvotes = upvotes + 1", [body.seed]);
+          } else {
+            db.run("INSERT INTO track_votes (seed, upvotes, downvotes) VALUES (?, 0, 1) ON CONFLICT(seed) DO UPDATE SET downvotes = downvotes + 1", [body.seed]);
           }
 
           return new Response(JSON.stringify({ ok: true }), { headers: jsonHeaders });
         } catch {
           return new Response(JSON.stringify({ error: "json parse error" }), { status: 400, headers: jsonHeaders });
         }
+      }
+    }
+
+    if (path === "/api/stats") {
+      if (req.method === "POST") {
+        try {
+          const body = (await req.json()) as { type: "played" | "finished" | "wrecked" };
+          if (body.type !== "played" && body.type !== "finished" && body.type !== "wrecked") {
+            return new Response(JSON.stringify({ error: "invalid type" }), { status: 400, headers: jsonHeaders });
+          }
+          db.run("INSERT INTO game_stats (type, t) VALUES (?, ?)", [body.type, Date.now()]);
+          return new Response(JSON.stringify({ ok: true }), { headers: jsonHeaders });
+        } catch {
+          return new Response(JSON.stringify({ error: "json parse error" }), { status: 400, headers: jsonHeaders });
+        }
+      }
+    }
+
+    if (path === "/" && req.method === "GET") {
+      const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SCRAPS: Salvage Contracts & Risk-Adjusted Procurement Service</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;700&family=Space+Mono&display=swap" rel="stylesheet">
+    <style>
+        :root { --primary: #3333ff; --accent: #ff00cc; --bg: #050505; --card-bg: rgba(255, 255, 255, 0.03); }
+        body { background: var(--bg); color: #ccc; font-family: 'Outfit', sans-serif; margin: 0; padding: 0; line-height: 1.6; }
+        .hero { height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; overflow: hidden; padding: 2rem; text-align: center; box-sizing: border-box; }
+        .hero::before { content: ""; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: radial-gradient(circle at center, rgba(51, 51, 255, 0.1) 0%, transparent 70%); pointer-events: none; }
+        
+        .scraps-logo { font-family: 'Space Mono', monospace; font-weight: 700; font-size: 1.2rem; color: var(--accent); letter-spacing: 0.3rem; margin-bottom: 2rem; border: 1px solid var(--accent); padding: 0.5rem 1rem; }
+        
+        h1 { font-size: 3.5rem; margin: 0; font-weight: 700; letter-spacing: -0.05rem; line-height: 1.1; background: linear-gradient(to right, #fff, #888); -webkit-background-clip: text; -webkit-text-fill-color: transparent; max-width: 900px; }
+        .subtitle { font-size: 1.1rem; color: #888; margin: 1.5rem 0 3rem; max-width: 600px; font-weight: 300; font-family: 'Space Mono', monospace; }
+        
+        .lore-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; max-width: 900px; text-align: left; margin-bottom: 4rem; z-index: 10; }
+        .lore-card { background: var(--card-bg); border: 1px solid rgba(255, 255, 255, 0.1); padding: 1.5rem; border-radius: 8px; transition: border-color 0.3s; }
+        .lore-card:hover { border-color: var(--primary); }
+        .lore-card h3 { color: var(--primary); margin-top: 0; font-size: 0.9rem; letter-spacing: 0.1rem; text-transform: uppercase; }
+        .lore-card p { margin: 0.5rem 0 0; font-size: 0.95rem; color: #aaa; }
+
+        .cta-group { display: flex; gap: 1rem; margin-top: 1rem; flex-wrap: wrap; justify-content: center; }
+        .btn { padding: 1rem 2rem; border-radius: 6px; font-weight: 700; text-decoration: none; transition: 0.2s; font-size: 1rem; }
+        .btn-primary { background: var(--primary); color: white; border: none; }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(51, 51, 255, 0.4); }
+        .btn-outline { border: 1px solid #444; color: #888; }
+        .btn-outline:hover { border-color: #888; color: #fff; }
+
+        .footer-tagline { position: absolute; bottom: 2rem; font-family: 'Space Mono', monospace; font-size: 0.8rem; color: #444; }
+        
+        @media (max-width: 768px) {
+            h1 { font-size: 2.5rem; }
+            .hero { height: auto; padding-top: 8rem; padding-bottom: 8rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="hero">
+        <div class="scraps-logo">SCRAPS</div>
+        <h1>Salvage Contracts & Risk-Adjusted Procurement Service</h1>
+        <p class="subtitle">Welcome to the frontier, Contractor. <br>Your SLA is non-negotiable.</p>
+        
+        <div class="lore-grid">
+            <div class="lore-card">
+                <h3>The Mission</h3>
+                <p>Run planet-side delivery routes between isolated settlements. Our spreadsheet says there are roads. Your telemetry may disagree.</p>
+            </div>
+            <div class="lore-card">
+                <h3>Risk Adjustment</h3>
+                <p>Everything outside the road is hostile. Weather, terrain, and local "biomatter" will attempt to destabilize your payload. Drive fast.</p>
+            </div>
+            <div class="lore-card">
+                <h3>Volatile Cargo</h3>
+                <p>Deliver intact for maximum payout. Stability is non-negotiable. Payout is a joke. Hazard pay is a bigger one.</p>
+            </div>
+        </div>
+
+        <div class="cta-group">
+            <a href="https://spacerally.supercollider.hr" class="btn btn-primary">ACCEPT CONTRACT (PLAY)</a>
+            <a href="/stats" class="btn btn-outline">SYSTEM TELEMETRY</a>
+        </div>
+
+        <div class="footer-tagline">"Space is hard. Shipping shouldn't be." | &copy; 2026 SCRAPS CORP</div>
+    </div>
+</body>
+</html>`;
+      return new Response(html, { headers: { ...corsHeaders, "content-type": "text/html; charset=utf-8" } });
+    }
+
+    if (path === "/stats" && req.method === "GET") {
+      const topScores = db.query("SELECT name, score, seed FROM high_scores ORDER BY score ASC LIMIT 10").all() as any[];
+      const topLiked = db.query("SELECT seed, upvotes FROM track_votes ORDER BY upvotes DESC LIMIT 5").all() as any[];
+      const topDisliked = db.query("SELECT seed, downvotes FROM track_votes ORDER BY downvotes DESC LIMIT 5").all() as any[];
+
+      const todayStart = new Date().setHours(0, 0, 0, 0);
+      const playedToday = (db.query("SELECT COUNT(*) as count FROM game_stats WHERE type = 'played' AND t >= ?").get(todayStart) as any)?.count ?? 0;
+      const totalFinished = (db.query("SELECT COUNT(*) as count FROM game_stats WHERE type = 'finished'").get() as any)?.count ?? 0;
+      const totalWrecked = (db.query("SELECT COUNT(*) as count FROM game_stats WHERE type = 'wrecked'").get() as any)?.count ?? 0;
+
+      const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Space Rally - Stats</title>
+    <style>
+        body { background: #050510; color: #eee; font-family: 'Outfit', sans-serif; padding: 2rem; max-width: 1000px; margin: auto; }
+        h1 { text-align: center; color: #ff00cc; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-top: 2rem; }
+        .card { background: rgba(255, 255, 255, 0.05); padding: 1.5rem; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.1); }
+        h2 { border-bottom: 2px solid #3333ff; padding-bottom: 0.5rem; margin-top: 0; }
+        table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+        th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
+        .stats-summary { display: flex; justify-content: space-around; margin-bottom: 2rem; }
+        .stat-box { text-align: center; }
+        .stat-value { font-size: 2rem; font-weight: bold; color: #3333ff; }
+        .stat-label { color: #888; font-size: 0.9rem; }
+        .seed { font-family: monospace; color: #00ffaa; }
+    </style>
+</head>
+<body>
+    <h1>Dashboard</h1>
+    
+    <div class="stats-summary">
+        <div class="stat-box">
+            <div class="stat-value">${playedToday}</div>
+            <div class="stat-label">Games Played Today</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-value">${totalFinished}</div>
+            <div class="stat-label">Total Completed</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-value">${totalWrecked}</div>
+            <div class="stat-label">Total Wrecked</div>
+        </div>
+    </div>
+
+    <div class="grid">
+        <div class="card" style="grid-column: span 2;">
+            <h2>Top 10 Fast Laps</h2>
+            <table>
+                <thead><tr><th>Rank</th><th>Name</th><th>Time (s)</th><th>Track Seed</th></tr></thead>
+                <tbody>
+                    ${topScores.map((s, i) => `<tr><td>${i + 1}</td><td>${s.name}</td><td>${(s.score / 1000).toFixed(3)}</td><td class="seed">${s.seed}</td></tr>`).join('')}
+                </tbody>
+            </table>
+        </div>
+        
+        <div class="card">
+            <h2>Hottest Tracks</h2>
+            <table>
+                <thead><tr><th>Seed</th><th>Likes</th></tr></thead>
+                <tbody>
+                    ${topLiked.map(s => `<tr><td class="seed">${s.seed}</td><td>👍 ${s.upvotes}</td></tr>`).join('')}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card">
+            <h2>Coldest Tracks</h2>
+            <table>
+                <thead><tr><th>Seed</th><th>Dislikes</th></tr></thead>
+                <tbody>
+                    ${topDisliked.map(s => `<tr><td class="seed">${s.seed}</td><td>👎 ${s.downvotes}</td></tr>`).join('')}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <div style="text-align: center; margin-top: 2rem;">
+        <a href="/" style="color: #ff00cc; text-decoration: none;">← Back to Landing Page</a>
+    </div>
+</body>
+</html>`;
+      return new Response(html, { headers: { ...corsHeaders, "content-type": "text/html; charset=utf-8" } });
+    }
+
+    if (path === "/api/backup" && req.method === "GET") {
+      const backupPath = `backup-${Date.now()}.sqlite`;
+      try {
+        // Safe hot backup using VACUUM INTO
+        db.run(`VACUUM INTO '${backupPath}'`);
+        const file = Bun.file(backupPath);
+        return new Response(file, {
+          headers: {
+            ...corsHeaders,
+            "content-type": "application/x-sqlite3",
+            "content-disposition": `attachment; filename="${backupPath}"`
+          }
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: "backup failed", details: String(e) }), { status: 500, headers: jsonHeaders });
       }
     }
 
