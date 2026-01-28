@@ -16,12 +16,6 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 - [ ] Improve track variety without breaking safety constraints (details: `TRACK_VARIETY_NOTES.md`)
 - [ ] Track generator: reduce “safe/repetitive” bias from overlap-retry logic (details: `TRACK_VARIETY_NOTES.md`)
 
-## Internet
-- add option to upvote/downvote track at the end of race
-    - add backend to support this and show most and least favourite tracks
-- log high scores (we already have backend support) and who those high scores somewhere
-- backend for these things should be on a branch "feat/backend-voting-stats"
-
 ## Performance
 
 - [ ] Rendering perf benchmark (browser): record + deterministic playback + Playwright runner (details: `PERF.md`)
@@ -36,6 +30,14 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 - show overall track finish with biggest average speed (this will help surface fastest tracks)
 - show tracks with highest crash or notfinished rate
 - prevent the same user from submitting high score multiple times
+- audit backend for safety, injections, etc.
+
+## Cleanups
+- move replay logic into its separate file (but add tests for it first)
+- audit code for abbreviations and make them cleaner (like quietZoneContainsSM)
+- run code coverage and add bunch more tests
+- remove unused functions and classes
+- try some code analyzer that can find bugs
 
 ## Feel / UX / Polish
 

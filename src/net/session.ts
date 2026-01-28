@@ -1,5 +1,15 @@
 import type { Game } from "../runtime/game";
 import { PlayerRole } from "../runtime/game";
+import {
+  type AnswerMsg,
+  type ErrorMsg,
+  type IceMsg,
+  type OfferMsg,
+  type RestartIceMsg,
+  type ServerMsg,
+  type WelcomeMsg,
+  parseDataChannelMessage
+} from "./net-protocol";
 
 type NetState = {
   room: string;
@@ -18,33 +28,6 @@ type NetStats = {
   dcTxHz: number | null;
   dcLastRxAtMs: number | null;
 };
-
-type WelcomeMsg = {
-  type: "welcome";
-  room: string;
-  peer: string;
-  peers: string[];
-};
-
-type PeerEventMsg =
-  | { type: "peer-joined"; peer: string }
-  | { type: "peer-left"; peer: string };
-
-type OfferMsg = { type: "offer"; from: string; to: string; sdp: RTCSessionDescriptionInit };
-type AnswerMsg = { type: "answer"; from: string; to: string; sdp: RTCSessionDescriptionInit };
-type IceMsg = { type: "ice"; from: string; to: string; candidate: RTCIceCandidateInit };
-type RestartIceMsg = { type: "restart-ice"; from: string; to: string; reason?: string };
-type ErrorMsg = { type: "error"; code: string; to?: string };
-
-type ServerMsg =
-  | WelcomeMsg
-  | PeerEventMsg
-  | OfferMsg
-  | AnswerMsg
-  | IceMsg
-  | RestartIceMsg
-  | ErrorMsg
-  | { type: string;[k: string]: unknown };
 
 // (share-link style room ids removed; multiplayer uses 4-digit numeric codes)
 
@@ -408,6 +391,7 @@ export function initNetSession(
               aimY: aim.y,
               shootHeld: game.getNavigatorShootHeld(),
               weaponIndex: game.getCurrentWeaponIndex(),
+              bulletTimeHeld: (game as any).getBulletTimeHeld?.() ?? false,
               // Client-authoritative damage events (hits from client's projectiles)
               damageEvents: damageEvents.length > 0 ? damageEvents : undefined,
               // Send projectile positions for rendering on host
@@ -436,24 +420,22 @@ export function initNetSession(
     };
     dc.onmessage = (e) => {
       if (typeof e.data !== "string") return;
-      let msg: any;
-      try { msg = JSON.parse(e.data); } catch { return; }
+      const msg = parseDataChannelMessage(e.data);
+      if (!msg) return;
 
       // Snapshot stats
       stats.dcLastRxAtMs = Date.now();
-      if (typeof msg?.type === "string") {
-        if (msg.type === "state") dcRxCount += 1;
-      }
+      if (msg.type === "state") dcRxCount += 1;
 
-      if (msg?.type === "ready" && state.mode === "host") {
+      if (msg.type === "ready" && state.mode === "host") {
         peerReady = true;
         game.notify("Client connected");
         opts?.onPeerReady?.("host");
         return;
       }
 
-      if (msg?.type === "init" && state.mode === "client") {
-        const ok = typeof msg.trackDef === "string" ? game.loadSerializedTrackDef(msg.trackDef) : false;
+      if (msg.type === "init" && state.mode === "client") {
+        const ok = game.loadSerializedTrackDef(msg.trackDef);
         if (!ok) {
           setError("bad trackDef");
           return;
@@ -474,47 +456,45 @@ export function initNetSession(
         return;
       }
 
-      if (msg?.type === "track" && state.mode === "client") {
-        const ok = typeof msg.trackDef === "string" ? game.loadSerializedTrackDef(msg.trackDef) : false;
+      if (msg.type === "track" && state.mode === "client") {
+        const ok = game.loadSerializedTrackDef(msg.trackDef);
         if (!ok) {
           setError("bad trackDef");
         }
         return;
       }
 
-      if (msg?.type === "state" && state.mode === "client") {
-        if (msg && typeof msg.t === "number" && msg.car) {
-          game.applyNetSnapshot(msg);
-        }
+      if (msg.type === "state" && state.mode === "client") {
+        game.applyNetSnapshot(msg as any);
         return;
       }
 
-      if (msg?.type === "nav" && state.mode === "host") {
-        if (!msg) return;
+      if (msg.type === "nav" && state.mode === "host") {
         game.applyRemoteNavigatorInput({
-          aimX: typeof msg.aimX === "number" ? msg.aimX : 0,
-          aimY: typeof msg.aimY === "number" ? msg.aimY : 0,
-          shootHeld: !!msg.shootHeld,
+          aimX: msg.aimX,
+          aimY: msg.aimY,
+          shootHeld: msg.shootHeld,
           shootPulse: false, // No longer used - client handles shooting
-          weaponIndex: typeof msg.weaponIndex === "number" ? msg.weaponIndex : 0
+          weaponIndex: msg.weaponIndex,
+          bulletTimeHeld: !!msg.bulletTimeHeld
         });
         // Process damage events from client (client-authoritative shooting)
-        if (Array.isArray(msg.damageEvents) && msg.damageEvents.length > 0) {
-          game.applyRemoteDamageEvents(msg.damageEvents);
+        const damageEvents = (msg as any).damageEvents;
+        if (Array.isArray(damageEvents) && damageEvents.length > 0) {
+          game.applyRemoteDamageEvents(damageEvents);
         }
         // Apply projectile positions from client for rendering on host
-        if (Array.isArray(msg.projectiles)) {
-          game.applyRemoteNavigatorProjectiles(msg.projectiles);
+        const projectiles = (msg as any).projectiles;
+        if (Array.isArray(projectiles)) {
+          game.applyRemoteNavigatorProjectiles(projectiles);
         } else {
           game.applyRemoteNavigatorProjectiles([]);
         }
         return;
       }
 
-      if (msg?.type === "driver" && state.mode === "host") {
-        if (msg.input) {
-          game.applyRemoteDriverInput(msg.input);
-        }
+      if (msg.type === "driver" && state.mode === "host") {
+        game.applyRemoteDriverInput(msg.input);
         return;
       }
     };

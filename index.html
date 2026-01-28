@@ -363,6 +363,10 @@
       display: none;
       /* Shown via JS */
       user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-user-drag: none;
 
       --btn: clamp(58px, 11vmin, 96px);
       --btn-sm: clamp(46px, 9vmin, 76px);
@@ -373,6 +377,10 @@
     #mobile-overlay .touch-auto {
       pointer-events: auto;
       touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
     }
 
     /* Role toggle button (touch only; wired in game.ts) */
@@ -439,12 +447,14 @@
       font-size: 14px;
       pointer-events: none;
       user-select: none;
+      z-index: 170;
     }
 
     /* Hide touch controls until the user starts (start menu handles the first gesture). */
     body:not(.started) #mobile-overlay .control-group,
     body:not(.started) #role-toggle,
-    body:not(.started) #fullscreen-toggle {
+    body:not(.started) #fullscreen-toggle,
+    body:not(.started) #bullet-time-zone {
       display: none;
     }
 
@@ -508,6 +518,7 @@
       position: absolute;
       inset: 0;
       pointer-events: none;
+      z-index: 110;
     }
 
     .control-group.active {
@@ -558,6 +569,10 @@
       font-size: 11px;
       letter-spacing: 0.06em;
       user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-user-drag: none;
       box-shadow: 0 12px 26px rgba(0, 0, 0, 0.28);
     }
 
@@ -633,6 +648,7 @@
       background: transparent;
       border: none;
       pointer-events: auto;
+      z-index: 110;
     }
 
     /* Navigator weapon buttons float bottom-right; shooting is tap/hold anywhere in aim-zone */
@@ -643,6 +659,31 @@
       display: flex;
       gap: 10px;
       pointer-events: auto;
+      z-index: 170;
+    }
+
+    /* Navigator bullet-time button (bottom-left) */
+    #bullet-time-zone {
+      position: absolute;
+      left: calc(var(--pad) + var(--safe-left));
+      bottom: calc(var(--pad) + var(--safe-bottom));
+      pointer-events: auto;
+      z-index: 180;
+    }
+
+    #btn-bullet-time {
+      width: var(--btn-sm);
+      height: var(--btn-sm);
+      border-radius: 14px;
+      background: rgba(120, 160, 255, 0.14);
+      border-color: rgba(120, 160, 255, 0.28);
+      font-size: 10px;
+      letter-spacing: 0.02em;
+    }
+
+    #btn-bullet-time.used {
+      opacity: 0.38;
+      filter: saturate(0.35);
     }
 
     .mobile-button.weapon {
@@ -799,6 +840,10 @@
 
         <button id="role-toggle" type="button">Driver</button>
         <button id="fullscreen-toggle" type="button" aria-label="Toggle fullscreen">FULL</button>
+
+      <div id="bullet-time-zone">
+        <div id="btn-bullet-time" class="mobile-button" title="Bullet-time (hold, 30s per map)">SLOW</div>
+      </div>
       <!-- Driver Controls -->
       <div id="driver-group" class="control-group active">
         <div id="steering-zone" class="touch-auto">

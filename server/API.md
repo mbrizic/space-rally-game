@@ -3,7 +3,7 @@
 This document describes the backend infrastructure for the **SCRAPS: Salvage Contracts & Risk-Adjusted Procurement Service** signaling and stats server.
 
 ## Deployment Information
-When deployed, all endpoints are accessible via the base URL of the signaling server (e.g., `https://signaling.spacerally.supercollider.hr`).
+When deployed, all endpoints are accessible via the base URL of the signaling server (e.g., `https://spacerally.supercollider.hr/api/`).
 
 ## Public Pages
 

@@ -2,6 +2,7 @@ import { KeyboardInput, TouchInput, CompositeInput, type GameInput, type InputSt
 import { Renderer2D } from "./renderer2d";
 import { clamp } from "./math";
 import { createCarState, defaultCarParams, stepCar, type CarTelemetry } from "../sim/car";
+import type { NetSnapshot } from "./net-snapshot";
 import {
   createPointToPointTrackDefinition,
   createTrackFromDefinition,
@@ -28,6 +29,13 @@ import { ProjectilePool } from "../sim/projectile";
 import { EnemyPool, EnemyType, generateEnemies } from "../sim/enemy";
 import { createWeaponState, WeaponState, WeaponType } from "../sim/weapons";
 import { getHighScores, getTrackVotes, postGameStat, postHighScore, postTrackVote } from "../net/backend-api";
+import { importReplayFromJsonText as importReplayFromJsonTextPure, parseReplayBundle, type ReplayBundleV2 } from "./replay";
+import { computeCameraFraming } from "./camera-framing";
+import {
+  computeBulletTimeWeaponAdvantage,
+  computeEffectiveFireIntervalSeconds,
+  computeEffectiveProjectileSpeed
+} from "./weapons-runtime";
 
 function isTouchMode(): boolean {
   try {
@@ -47,65 +55,6 @@ export enum PlayerRole {
 
 export type SoloMode = "timeTrial" | "practice";
 
-type NetSnapshot = {
-  t: number;
-  car: { xM: number; yM: number; headingRad: number; vxMS: number; vyMS: number; yawRateRadS: number; steerAngleRad: number; alphaFrontRad: number; alphaRearRad: number };
-  enemies: { id: number; x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank" | "colossus"; health?: number; maxHealth?: number }[];
-  projectiles: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age: number; maxAge: number }[];
-  enemyProjectiles: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age: number; maxAge: number }[];
-  particleEvents: (
-    | { type: "emit"; opts: { x: number; y: number; vx: number; vy: number; lifetime: number; sizeM: number; color: string; count?: number } }
-    | { type: "enemyDeath"; x: number; y: number; isTank: boolean; radiusM?: number }
-  )[];
-  debrisDestroyed: number[];
-  audioEvents: { effect: "gunshot" | "explosion" | "impact" | "checkpoint"; volume: number; pitch: number }[];
-  continuousAudio: { engineRpm: number; engineThrottle: number; slideIntensity: number; surfaceName: string };
-  raceActive: boolean;
-  raceStartTimeSeconds: number;
-  raceFinished: boolean;
-  finishTimeSeconds: number | null;
-  damage01: number;
-  enemyKillCount: number;
-  cameraMode: "follow" | "runner";
-  cameraRotationRad: number;
-  shakeX: number;
-  shakeY: number;
-};
-
-type ReplayRecordingV1 = {
-  v: 1;
-  createdAtMs: number;
-  seed: string;
-  trackDef: string;
-  sampleHz: number;
-  frames: NetSnapshot[];
-};
-
-type ReplayInputEventV1 = {
-  t: number;
-  steer: number;
-  throttle: number;
-  brake: number;
-  handbrake: number;
-};
-
-type ReplayBundleV2 = {
-  v: 2;
-  createdAtMs: number;
-  seed: string;
-  trackDef: string;
-  state: {
-    sampleHz: number;
-    frames: NetSnapshot[];
-  };
-  inputs: {
-    startTimeSeconds: number;
-    startCar: ReturnType<typeof createCarState>;
-    startEngine: EngineState;
-    startGear: "F" | "R";
-    events: ReplayInputEventV1[];
-  } | null;
-};
 
 type GameState = {
   timeSeconds: number;
@@ -127,7 +76,7 @@ export class Game {
   private netRemoteEnemies: { id: number; x: number; y: number; radius: number; vx: number; vy: number; type?: "zombie" | "tank" | "colossus"; health?: number; maxHealth?: number }[] | null = null;
   private netRemoteProjectiles: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age?: number; maxAge?: number }[] | null = null;
   private netRemoteEnemyProjectiles: { x: number; y: number; vx: number; vy: number; color?: string; size?: number; age?: number; maxAge?: number }[] | null = null;
-  private netRemoteNavigator: { aimX: number; aimY: number; shootHeld: boolean; shootPulse: boolean; weaponIndex: number } | null = null;
+  private netRemoteNavigator: { aimX: number; aimY: number; shootHeld: boolean; shootPulse: boolean; weaponIndex: number; bulletTimeHeld?: boolean } | null = null;
   private netRemoteDriver: InputState | null = null;
   private netStatusLines: string[] = [];
   // Damage events from client navigator to host (client-authoritative shooting)
@@ -255,6 +204,21 @@ export class Game {
   private collisionFlashAlpha = 0;
   private cameraMode: "follow" | "runner" = "runner";
   private cameraRotationRad = 0;
+  // Bullet-time: a per-map time budget (seconds) that is consumed while held.
+  private bulletTimeRemainingS = 0;
+  private bulletTimeHeldLocal = false;
+  private bulletTimeActive = false;
+  // Client view of host bullet-time activation.
+  private bulletTimeActiveFromHost = false;
+  private readonly bulletTimeBudgetS = 30.0;
+  private readonly bulletTimeScale = 0.4;
+  // "Player advantage" during bullet time: counteract (and exceed) the slowed sim time.
+  // These values are multipliers relative to normal real-time behavior.
+  private readonly bulletTimeSteerAdvantage = 2.2;
+  private readonly bulletTimeBrakeAdvantage = 1.6;
+  // Weapons are capped to never be faster than normal-time.
+  // (During bullet time, bullets may still *feel* faster relative to the slowed world.)
+  private readonly bulletTimeWeaponAdvantage = 0.32;
   private editorMode = false;
   private editorDragIndex: number | null = null;
   private editorHoverIndex: number | null = null;
@@ -404,6 +368,7 @@ export class Game {
     ];
     this.currentWeaponIndex = 0; // Default to Handgun
     this.setupWeaponButtons();
+    this.setupBulletTimeButton();
 
     // Start with a point-to-point track
     this.setTrack(createPointToPointTrackDefinition(this.proceduralSeed));
@@ -453,17 +418,24 @@ export class Game {
     // Ensure label matches initial state (without triggering a notification)
     if (roleToggle) roleToggle.textContent = this.role === PlayerRole.DRIVER ? "Driver" : "Shooter";
 
-    window.addEventListener("keydown", (e) => {
+    const shouldIgnoreKey = (e: KeyboardEvent): boolean => {
       // Don't allow game controls before the game loop is running.
-      if (!this.running) return;
+      if (!this.running) return true;
 
       // Avoid interfering with browser/system shortcuts (copy/paste, find, etc).
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return true;
 
       // If focus is in an input/textarea, don't steal keys.
       const target = e.target as any;
       const tag = (target?.tagName as string | undefined)?.toLowerCase?.() ?? "";
-      if (tag === "input" || tag === "textarea" || target?.isContentEditable) return;
+      if (tag === "input" || tag === "textarea" || target?.isContentEditable) return true;
+
+      return false;
+    };
+
+    window.addEventListener("keydown", (e) => {
+      // Don't allow game controls before the game loop is running.
+      if (shouldIgnoreKey(e)) return;
 
       if (this.replayPlayback) {
         if (e.code === "Escape") {
@@ -509,6 +481,7 @@ export class Game {
         const nextRole = this.role === PlayerRole.DRIVER ? PlayerRole.NAVIGATOR : PlayerRole.DRIVER;
         this.setRole(nextRole);
       }
+      if (e.code === "KeyU") this.setBulletTimeHeld(true);
       if (e.code === "KeyO") {
         if (this.tuning) {
           this.tuning.values.manualTransmission = !this.tuning.values.manualTransmission;
@@ -530,6 +503,11 @@ export class Game {
       if (!this.audioUnlocked) {
         this.tryUnlockAudio();
       }
+    });
+
+    window.addEventListener("keyup", (e) => {
+      if (shouldIgnoreKey(e)) return;
+      if (e.code === "KeyU") this.setBulletTimeHeld(false);
     });
 
     this.canvas.addEventListener("contextmenu", (e) => {
@@ -864,47 +842,6 @@ export class Game {
     }
   }
 
-  private parseReplayBundle(parsed: any): ReplayBundleV2 | null {
-    if (!parsed) return null;
-
-    if (parsed.v === 2) {
-      if (typeof parsed.seed !== "string" || typeof parsed.trackDef !== "string") return null;
-      if (!parsed.state || typeof parsed.state.sampleHz !== "number" || !Array.isArray(parsed.state.frames)) return null;
-
-      if (parsed.inputs != null) {
-        const inp = parsed.inputs;
-        if (typeof inp.startTimeSeconds !== "number") return null;
-        if (!inp.startCar || typeof inp.startCar !== "object") return null;
-        if (!inp.startEngine || typeof inp.startEngine !== "object") return null;
-        // Back/forward compat: accept "F"|"R" (current) or coerce numeric to a gear.
-        let gear: any = inp.startGear;
-        if (typeof gear === "number") gear = gear < 0 ? "R" : "F";
-        if (gear !== "F" && gear !== "R") return null;
-        inp.startGear = gear;
-        if (!Array.isArray(inp.events)) return null;
-      }
-
-      return parsed as ReplayBundleV2;
-    }
-
-    if (parsed.v === 1) {
-      if (typeof parsed.seed !== "string" || typeof parsed.trackDef !== "string") return null;
-      if (typeof parsed.sampleHz !== "number" || !Number.isFinite(parsed.sampleHz) || parsed.sampleHz <= 0) return null;
-      if (!Array.isArray(parsed.frames)) return null;
-      const v1 = parsed as ReplayRecordingV1;
-      return {
-        v: 2,
-        createdAtMs: v1.createdAtMs,
-        seed: v1.seed,
-        trackDef: v1.trackDef,
-        state: { sampleHz: v1.sampleHz, frames: v1.frames },
-        inputs: null
-      };
-    }
-
-    return null;
-  }
-
   private commitLastReplay(rec: ReplayBundleV2): void {
     this.lastReplay = rec;
     try {
@@ -946,15 +883,10 @@ export class Game {
   }
 
   public importReplayFromJsonText(text: string): { ok: true } | { ok: false; error: string } {
-    try {
-      const parsed: any = JSON.parse(text);
-      const rec = this.parseReplayBundle(parsed);
-      if (!rec) return { ok: false, error: "Invalid replay file." };
-      this.commitLastReplay(rec);
-      return { ok: true };
-    } catch {
-      return { ok: false, error: "Could not parse JSON." };
-    }
+    const res = importReplayFromJsonTextPure(text);
+    if (!res.ok) return res;
+    this.commitLastReplay(res.rec);
+    return { ok: true };
   }
 
   public playLastReplay(mode: "auto" | "state" | "inputs" = "auto"): boolean {
@@ -992,7 +924,7 @@ export class Game {
       const raw = localStorage.getItem(this.replayStorageKey);
       if (!raw) return;
       const parsed: any = JSON.parse(raw);
-      const rec = this.parseReplayBundle(parsed);
+      const rec = parseReplayBundle(parsed);
       if (!rec) return;
       this.lastReplay = rec;
       (globalThis as any).__SPACE_RALLY_LAST_REPLAY__ = this.lastReplay;
@@ -1564,11 +1496,17 @@ export class Game {
     cameraRotationRad?: number;
     shakeX?: number;
     shakeY?: number;
+    bulletTimeRemainingS?: number;
+    bulletTimeActive?: boolean;
   }): void {
     // In client mode, smooth toward target to avoid jitter.
     this.state = { ...this.state, timeSeconds: snapshot.t };
     if (snapshot.cameraMode) this.cameraMode = snapshot.cameraMode;
-    if (snapshot.cameraRotationRad !== undefined) this.cameraRotationRad = snapshot.cameraRotationRad;
+    if (snapshot.cameraRotationRad !== undefined) {
+      const mode = snapshot.cameraMode ?? this.cameraMode;
+      const offset = (this.role === PlayerRole.NAVIGATOR && mode === "runner") ? (Math.PI / 2) : 0;
+      this.cameraRotationRad = snapshot.cameraRotationRad + offset;
+    }
     if (snapshot.shakeX !== undefined) this.cameraShakeX = snapshot.shakeX;
     if (snapshot.shakeY !== undefined) this.cameraShakeY = snapshot.shakeY;
     
@@ -1647,13 +1585,22 @@ export class Game {
       }
     }
     if (typeof snapshot.enemyKillCount === "number") this.enemyKillCount = snapshot.enemyKillCount;
+
+    if (typeof snapshot.bulletTimeRemainingS === "number") {
+      this.bulletTimeRemainingS = Math.max(0, snapshot.bulletTimeRemainingS);
+      this.updateBulletTimeUi();
+    }
+    if (typeof snapshot.bulletTimeActive === "boolean") {
+      this.bulletTimeActiveFromHost = snapshot.bulletTimeActive;
+      this.updateBulletTimeUi();
+    }
   }
 
-  public applyRemoteNavigatorInput(input: { aimX: number; aimY: number; shootHeld: boolean; shootPulse: boolean; weaponIndex: number }): void {
+  public applyRemoteNavigatorInput(input: { aimX: number; aimY: number; shootHeld: boolean; shootPulse: boolean; weaponIndex: number; bulletTimeHeld?: boolean }): void {
     this.netRemoteNavigator = input;
   }
 
-  public applyRemoteDriverInput(input: InputState): void {
+  public applyRemoteDriverInput(input: InputState, _opts?: { bulletTimeHeld?: boolean }): void {
     this.netRemoteDriver = input;
   }
 
@@ -1746,6 +1693,7 @@ export class Game {
     }
 
     this.updateAmmoDisplay();
+    this.updateBulletTimeUi();
   }
 
   private toggleEditorMode(): void {
@@ -2148,6 +2096,140 @@ export class Game {
     this.updateAmmoDisplay();
   }
 
+  private setupBulletTimeButton(): void {
+    const btn = document.getElementById("btn-bullet-time") as HTMLDivElement | null;
+    if (!btn) return;
+
+    btn.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        btn.setPointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+      this.setBulletTimeHeld(true);
+      if (!this.audioUnlocked) {
+        this.tryUnlockAudio();
+      }
+    });
+
+    btn.addEventListener("pointerup", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.setBulletTimeHeld(false);
+      try {
+        btn.releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+    });
+
+    btn.addEventListener("pointercancel", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.setBulletTimeHeld(false);
+    });
+
+    this.updateBulletTimeUi();
+  }
+
+  private canRequestBulletTimeLocal(): boolean {
+    // Only the co-driver (navigator) can request bullet time in multiplayer.
+    // Exception: in solo desktop mode, allow any role (debug/playground convenience).
+    const isTouch = isTouchMode();
+    if (this.netMode === "solo" && !isTouch) return true;
+    return this.role === PlayerRole.NAVIGATOR;
+  }
+
+  private updateBulletTimeUi(): void {
+    const btn = document.getElementById("btn-bullet-time") as HTMLDivElement | null;
+    if (!btn) return;
+
+    const started = document.body.classList.contains("started");
+    const isTouch = isTouchMode();
+    const shouldShow = started && isTouch && this.role === PlayerRole.NAVIGATOR;
+    if (!shouldShow) {
+      btn.style.display = "none";
+      return;
+    }
+
+    btn.style.display = "flex";
+
+    const remaining = Math.max(0, this.bulletTimeRemainingS);
+    const active = this.bulletTimeActive;
+    const empty = remaining <= 1e-6;
+
+    btn.classList.toggle("used", empty && !active);
+    btn.classList.toggle("active", active);
+
+    if (active) {
+      btn.textContent = `${remaining.toFixed(1)}s`;
+    } else if (empty) {
+      btn.textContent = "0.0s";
+    } else {
+      btn.textContent = "SLOW";
+    }
+  }
+
+  private getBulletTimeScale(): number {
+    return this.bulletTimeActive ? this.bulletTimeScale : 1.0;
+  }
+
+  private computeDesiredBulletTimeActive(): boolean {
+    if (this.editorMode) return false;
+    if (this.controlsLocked || this.raceFinished || this.damage01 >= 1) return false;
+    if (this.bulletTimeRemainingS <= 1e-6) return false;
+
+    // In client mode, host is authoritative; we follow the host's active flag.
+    if (this.netMode === "client") {
+      return this.bulletTimeActiveFromHost;
+    }
+
+    const remoteNavHeld = !!this.netRemoteNavigator?.bulletTimeHeld;
+    const localHeld = this.canRequestBulletTimeLocal() ? this.bulletTimeHeldLocal : false;
+    // Driver-held bullet time is intentionally ignored in multiplayer.
+    return localHeld || remoteNavHeld;
+  }
+
+  private updateBulletTime(realDtSeconds: number): void {
+    const desired = this.computeDesiredBulletTimeActive();
+    if (desired && !this.bulletTimeActive) {
+      this.showNotification("BULLET TIME");
+    }
+    this.bulletTimeActive = desired;
+
+    // Only the host/solo drains budget (client follows snapshots).
+    if (this.netMode !== "client" && this.bulletTimeActive) {
+      this.bulletTimeRemainingS = Math.max(0, this.bulletTimeRemainingS - realDtSeconds);
+      if (this.bulletTimeRemainingS <= 1e-6) this.bulletTimeActive = false;
+    }
+
+    this.updateBulletTimeUi();
+  }
+
+  private setBulletTimeHeld(held: boolean): void {
+    if (held && !this.canRequestBulletTimeLocal()) {
+      // Force-clear any accidental/old state (e.g. driver role or pre-start).
+      if (this.bulletTimeHeldLocal) this.bulletTimeHeldLocal = false;
+      this.updateBulletTimeUi();
+      return;
+    }
+    if (held === this.bulletTimeHeldLocal) return;
+    this.bulletTimeHeldLocal = held;
+
+    // In multiplayer client mode, inform the user we're requesting it.
+    if (held && this.netMode === "client" && this.bulletTimeRemainingS > 1e-6) {
+      this.showNotification("BULLET TIME (REQUESTED)");
+    }
+
+    this.updateBulletTimeUi();
+  }
+
+  public getBulletTimeHeld(): boolean {
+    return this.canRequestBulletTimeLocal() ? this.bulletTimeHeldLocal : false;
+  }
+
   private updateWeaponButtons(): void {
     const buttons = Array.from(document.querySelectorAll<HTMLElement>(".mobile-button.weapon[data-weapon-index]"));
     for (const btn of buttons) {
@@ -2198,6 +2280,8 @@ export class Game {
     cameraRotationRad: number;
     shakeX: number;
     shakeY: number;
+    bulletTimeRemainingS: number;
+    bulletTimeActive: boolean;
   } {
     return {
       t: this.state.timeSeconds,
@@ -2246,7 +2330,9 @@ export class Game {
       cameraMode: this.cameraMode,
       cameraRotationRad: this.cameraRotationRad,
       shakeX: this.cameraShakeX,
-      shakeY: this.cameraShakeY
+      shakeY: this.cameraShakeY,
+      bulletTimeRemainingS: this.bulletTimeRemainingS,
+      bulletTimeActive: this.bulletTimeActive
     };
   }
 
@@ -2288,9 +2374,12 @@ export class Game {
     // Check ammo
     if (weapon.ammo === 0) return;
     
-    // Rate limit
+    // Rate limit (timeSeconds is scaled by bullet-time; compensate to make shooting faster during bullet time)
     const now = this.state.timeSeconds;
-    if (now - weapon.lastFireTime < weapon.stats.fireInterval) return;
+    const bulletScale = this.getBulletTimeScale();
+    const weaponAdv = computeBulletTimeWeaponAdvantage(this.bulletTimeActive, bulletScale, this.bulletTimeWeaponAdvantage);
+    const interval = computeEffectiveFireIntervalSeconds(weapon.stats.fireInterval, this.bulletTimeActive, bulletScale, weaponAdv);
+    if (now - weapon.lastFireTime < interval) return;
     weapon.lastFireTime = now;
     
     // Consume ammo
@@ -2317,9 +2406,11 @@ export class Game {
       const targetX = carX + Math.cos(angle) * dist;
       const targetY = carY + Math.sin(angle) * dist;
       
+      const projectileSpeed = computeEffectiveProjectileSpeed(stats.projectileSpeed, this.bulletTimeActive, bulletScale, weaponAdv);
+
       this.projectilePool.spawn(
         carX, carY, targetX, targetY,
-        stats.projectileSpeed,
+        projectileSpeed,
         stats.damage,
         stats.projectileColor,
         stats.projectileSize
@@ -2350,9 +2441,12 @@ export class Game {
       return;
     }
 
-    // Rate limit
+    // Rate limit (timeSeconds is scaled by bullet-time; compensate to make shooting faster during bullet time)
     const now = this.state.timeSeconds;
-    if (now - weapon.lastFireTime < weapon.stats.fireInterval) return;
+    const bulletScale = this.getBulletTimeScale();
+    const weaponAdv = computeBulletTimeWeaponAdvantage(this.bulletTimeActive, bulletScale, this.bulletTimeWeaponAdvantage);
+    const interval = computeEffectiveFireIntervalSeconds(weapon.stats.fireInterval, this.bulletTimeActive, bulletScale, weaponAdv);
+    if (now - weapon.lastFireTime < interval) return;
 
     weapon.lastFireTime = now;
     if (weapon.ammo > 0) {
@@ -2384,12 +2478,14 @@ export class Game {
       const targetX = carX + Math.cos(angle) * dist;
       const targetY = carY + Math.sin(angle) * dist;
 
+      const projectileSpeed = computeEffectiveProjectileSpeed(stats.projectileSpeed, this.bulletTimeActive, bulletScale, weaponAdv);
+
       this.projectilePool.spawn(
         carX,
         carY,
         targetX,
         targetY,
-        stats.projectileSpeed,
+        projectileSpeed,
         stats.damage,
         stats.projectileColor,
         stats.projectileSize
@@ -2414,6 +2510,13 @@ export class Game {
 
   private setTrack(def: TrackDefinition): void {
     this.resetFinishPanel();
+
+    // Track change == new map: reset bullet-time availability.
+    this.bulletTimeRemainingS = this.bulletTimeBudgetS;
+    this.bulletTimeHeldLocal = false;
+    this.bulletTimeActive = false;
+    this.bulletTimeActiveFromHost = false;
+    this.updateBulletTimeUi();
 
     // Ensure stage meta exists deterministically if we have a seed.
     const seed = def.meta?.seed;
@@ -2603,6 +2706,11 @@ export class Game {
   private step(dtSeconds: number): void {
     if (this.editorMode) return;
 
+    const realDtSeconds = dtSeconds;
+
+    this.updateBulletTime(realDtSeconds);
+    dtSeconds *= this.getBulletTimeScale();
+
     const timeBeforeSeconds = this.state.timeSeconds;
 
     if (this.replayPlayback) {
@@ -2683,7 +2791,7 @@ export class Game {
     // Host just receives damage events from client via applyRemoteDamageEvents()
     if (this.netRemoteNavigator) {
       // Still clear the pulse flag to prevent stale data
-      this.netRemoteNavigator = { ...this.netRemoteNavigator, shootPulse: false };
+      this.netRemoteNavigator = { ...this.netRemoteNavigator, shootPulse: false, bulletTimeHeld: false };
     }
 
     // Gear logic: holding brake from (near) standstill engages reverse.
@@ -2755,9 +2863,24 @@ export class Game {
     // Adjust effective throttle for car physics based on engine power band and gear torque
     const effectiveThrottle = throttle * engineResult.powerMultiplier * engineResult.torqueScale;
 
+    const bulletScale = this.getBulletTimeScale();
+    const steerRateScale =
+      this.bulletTimeActive && bulletScale > 1e-6 ? this.bulletTimeSteerAdvantage / bulletScale : 1.0;
+    const brakeForceScale =
+      this.bulletTimeActive && bulletScale > 1e-6 ? this.bulletTimeBrakeAdvantage / bulletScale : 1.0;
+    const carParamsForStep =
+      steerRateScale !== 1.0 || brakeForceScale !== 1.0
+        ? {
+            ...this.carParams,
+            maxSteerRateRadS: this.carParams.maxSteerRateRadS * steerRateScale,
+            brakeForceN: this.carParams.brakeForceN * brakeForceScale,
+            handbrakeForceN: this.carParams.handbrakeForceN * brakeForceScale
+          }
+        : this.carParams;
+
     const stepped = stepCar(
       this.state.car,
-      this.carParams,
+      carParamsForStep,
       { steer, throttle: effectiveThrottle, brake, handbrake },
       dtSeconds,
       { frictionMu: this.lastSurface.frictionMu, rollingResistanceN: this.lastSurface.rollingResistanceN }
@@ -2878,7 +3001,8 @@ export class Game {
 
     // Smooth camera rotation for runner mode
     if (this.cameraMode === "runner") {
-      const targetRot = -this.state.car.headingRad - Math.PI / 2;
+      const roleOffset = this.role === PlayerRole.NAVIGATOR ? 0 : Math.PI / 2;
+      const targetRot = -this.state.car.headingRad - roleOffset;
       // Normalize angle difference to [-PI, PI]
       let angleDiff = targetRot - this.cameraRotationRad;
       while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
@@ -3056,47 +3180,20 @@ export class Game {
 
     this.setFinishPanelVisible(this.raceFinished && this.finishPanelShown);
 
-    // Camera framing
-    // Goal: ensure the car is always visible even on short landscape viewports.
-    // Strategy:
-    // - Use a "safe" on-screen car position so it can't disappear under touch UI.
-    // - Derive zoom from a target forward visibility (meters ahead), so short viewports zoom out.
-    const basePixelsPerMeter = 24;
-    const minPixelsPerMeter = 10;
+    const framing = computeCameraFraming({
+      widthCssPx: width,
+      heightCssPx: height,
+      isTouch,
+      cameraMode: this.cameraMode,
+      role: this.role === PlayerRole.NAVIGATOR ? "navigator" : "driver",
+      carHeadingRad: this.state.car.headingRad
+    });
 
-    // Reserve space for touch controls at the bottom so the car remains visible.
-    // (The controls are HTML overlays and can obscure the canvas.)
-    const bottomUiSafePx = isTouch ? Math.min(280, height * 0.34) : 0;
-    const marginPx = isTouch ? 12 : 0;
-    const minCarYPx = marginPx;
-    const maxCarYPx = height - bottomUiSafePx - marginPx;
-
-    // In runner mode, the camera rotates so "forward" is up on the screen.
-    // Keep the car a bit higher on touch to avoid being covered by controls.
-    const desiredCarYFrac = this.cameraMode === "runner" ? (isTouch ? 0.66 : 0.72) : 0.64;
-    const screenCenterYCssPx = clamp(height * desiredCarYFrac, minCarYPx, maxCarYPx);
-
-    // Target meters of view ahead of the car (toward the top of the screen in runner mode).
-    // Using screenCenterY means aheadMeters ≈ screenCenterY / pixelsPerMeter.
-    const targetAheadMeters = this.cameraMode === "runner" ? (isTouch ? 14 : 18) : 14;
-    const pixelsPerMeter = clamp(screenCenterYCssPx / Math.max(1e-6, targetAheadMeters), minPixelsPerMeter, basePixelsPerMeter);
-
-    // Fallback look-ahead for non-runner (no camera rotation): keep a small forward offset.
-    let offsetX = 0;
-    let offsetY = 0;
-    let screenCenterYCssPxOverride: number | undefined = undefined;
-    if (this.cameraMode === "runner") {
-      screenCenterYCssPxOverride = screenCenterYCssPx;
-    } else {
-      const cosH = Math.cos(this.state.car.headingRad);
-      const sinH = Math.sin(this.state.car.headingRad);
-      const lookAheadM = 4.5;
-      offsetX = cosH * lookAheadM;
-      offsetY = sinH * lookAheadM;
-    }
-
-    // Don't shift screen center based on role - keep cameras identical for multiplayer
-    const screenCenterXCssPx = undefined;
+    const pixelsPerMeter = framing.pixelsPerMeter;
+    const offsetX = framing.offsetXM;
+    const offsetY = framing.offsetYM;
+    const screenCenterXCssPx = framing.screenCenterXCssPx;
+    const screenCenterYCssPxOverride = framing.screenCenterYCssPx;
 
     // Use zero camera shake for client (shake is local to host simulation)
     const shakeX = this.netMode === "client" ? 0 : this.cameraShakeX;
@@ -3108,7 +3205,7 @@ export class Game {
 
     // Draw background BEFORE beginCamera but using the same pivot point
     const theme = resolveStageTheme({ kind: this.currentStageThemeKind });
-    this.renderer.drawBg(theme.bgColor, cameraCenterX, cameraCenterY, this.cameraRotationRad, screenCenterYCssPxOverride);
+    this.renderer.drawBg(theme.bgColor, cameraCenterX, cameraCenterY, this.cameraRotationRad, screenCenterXCssPx, screenCenterYCssPxOverride);
     {
       const now = performance.now();
       this.perfTimingsMs.bg = now - perfMarkMs;
@@ -3905,6 +4002,22 @@ export class Game {
     this.stopReplayPlayback();
     this.stopReplayRecording(false);
 
+    // Reset transient gameplay state (debug hard-reset)
+    this.bulletTimeRemainingS = this.bulletTimeBudgetS;
+    this.bulletTimeHeldLocal = false;
+    this.bulletTimeActive = false;
+    this.bulletTimeActiveFromHost = false;
+
+    this.netRemoteNavigator = null;
+    this.netRemoteDriver = null;
+    this.netRemoteEnemies = null;
+    this.netRemoteProjectiles = null;
+    this.netRemoteEnemyProjectiles = null;
+    this.netClientDamageEvents = [];
+    this.netParticleEvents = [];
+    this.netAudioEvents = [];
+    this.netDebrisDestroyedIds = [];
+
     // Spawn in the starting city (behind the start line)
     // Start line is at 50m, so spawn at 20m to be in the middle of the city
     const spawn = pointOnTrack(this.track, 20);
@@ -3939,7 +4052,7 @@ export class Game {
     this.enemyProjectiles = [];
     this.colossusShotCooldownS = 0;
     this.colossusShotPhase = 0;
-    this.netDebrisDestroyedIds = [];
+    // netDebrisDestroyedIds cleared above (hard reset)
 
     // Respawn enemies when resetting (regenerate from track)
     const treeSeed = Math.floor(this.trackDef.meta?.seed ?? 20260123);

@@ -99,6 +99,9 @@ export class TouchInput implements GameInput {
     const knob = document.getElementById("joystick-knob");
     if (!zone || !knob) return;
 
+    // Avoid long-press selection/callouts on mobile browsers.
+    zone.addEventListener("contextmenu", (e) => e.preventDefault());
+
     const deadzone = 0.08;
     const expo = 1.25;
 
@@ -135,17 +138,27 @@ export class TouchInput implements GameInput {
     };
 
     zone.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
       zone.setPointerCapture(e.pointerId);
       handleMove(e);
     });
     zone.addEventListener("pointermove", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
       if (zone.hasPointerCapture(e.pointerId)) handleMove(e);
     });
     zone.addEventListener("pointerup", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
       try { zone.releasePointerCapture(e.pointerId); } catch { }
       handleEnd();
     });
-    zone.addEventListener("pointercancel", () => handleEnd());
+    zone.addEventListener("pointercancel", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      handleEnd();
+    });
   }
 
   private setupButtons(): void {
@@ -155,15 +168,25 @@ export class TouchInput implements GameInput {
 
     const bind = (el: HTMLElement | null, action: (down: boolean) => void) => {
       if (!el) return;
+      // Avoid long-press selection/callouts on mobile browsers.
+      el.addEventListener("contextmenu", (e) => e.preventDefault());
       el.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         el.setPointerCapture(e.pointerId);
         action(true);
       });
       el.addEventListener("pointerup", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         try { el.releasePointerCapture(e.pointerId); } catch { }
         action(false);
       });
-      el.addEventListener("pointercancel", () => action(false));
+      el.addEventListener("pointercancel", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        action(false);
+      });
     };
 
     bind(throttle, (down) => this.throttle = down ? 1 : 0);
@@ -176,42 +199,59 @@ export class TouchInput implements GameInput {
     const shootBtn = document.getElementById("btn-shoot");
 
     if (aimZone && this.opts.setAimClientPoint) {
+      // Avoid long-press selection/callouts on mobile browsers.
+      aimZone.addEventListener("contextmenu", (e) => e.preventDefault());
+
       const updateAim = (e: PointerEvent) => {
         this.opts.setAimClientPoint?.(e.clientX, e.clientY);
       };
 
       aimZone.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         aimZone.setPointerCapture(e.pointerId);
         updateAim(e);
         // Tap/hold anywhere to shoot (especially useful for automatic weapons)
         this.opts.shootPulse?.();
         this.opts.setShootHeld?.(true);
-        e.preventDefault();
       });
       aimZone.addEventListener("pointermove", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         if (aimZone.hasPointerCapture(e.pointerId)) updateAim(e);
       });
       aimZone.addEventListener("pointerup", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         try { aimZone.releasePointerCapture(e.pointerId); } catch { }
         this.opts.setShootHeld?.(false);
       });
-      aimZone.addEventListener("pointercancel", () => {
+      aimZone.addEventListener("pointercancel", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         this.opts.setShootHeld?.(false);
       });
     }
 
     if (shootBtn) {
+      // Avoid long-press selection/callouts on mobile browsers.
+      shootBtn.addEventListener("contextmenu", (e) => e.preventDefault());
       shootBtn.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         shootBtn.setPointerCapture(e.pointerId);
         this.opts.shootPulse?.();
         this.opts.setShootHeld?.(true);
-        e.preventDefault();
       });
       shootBtn.addEventListener("pointerup", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         try { shootBtn.releasePointerCapture(e.pointerId); } catch { }
         this.opts.setShootHeld?.(false);
       });
-      shootBtn.addEventListener("pointercancel", () => {
+      shootBtn.addEventListener("pointercancel", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         this.opts.setShootHeld?.(false);
       });
     }

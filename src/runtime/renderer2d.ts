@@ -111,7 +111,7 @@ export class Renderer2D {
     return { x: rx + this.camera.centerX, y: ry + this.camera.centerY };
   }
 
-  drawBg(bgColor?: string, cameraX?: number, cameraY?: number, cameraRotationRad?: number, screenCenterYCssPx?: number): void {
+  drawBg(bgColor?: string, cameraX?: number, cameraY?: number, cameraRotationRad?: number, screenCenterXCssPx?: number, screenCenterYCssPx?: number): void {
     const ctx = this.ctx;
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0); // Identity (pixel space)
@@ -125,12 +125,12 @@ export class Renderer2D {
 
     // Subtle terrain texture so the world doesn't feel like a flat card.
     // Now in world-space so it moves with the camera.
-    this.drawTerrainDecorations(bgColor ?? "rgba(15, 20, 25, 1)", cameraX ?? 0, cameraY ?? 0, cameraRotationRad ?? 0, screenCenterYCssPx);
+    this.drawTerrainDecorations(bgColor ?? "rgba(15, 20, 25, 1)", cameraX ?? 0, cameraY ?? 0, cameraRotationRad ?? 0, screenCenterXCssPx, screenCenterYCssPx);
 
     ctx.restore();
   }
 
-  private drawTerrainDecorations(bgColor: string, cameraX: number, cameraY: number, cameraRotationRad: number, screenCenterYCssPx?: number): void {
+  private drawTerrainDecorations(bgColor: string, cameraX: number, cameraY: number, cameraRotationRad: number, screenCenterXCssPx?: number, screenCenterYCssPx?: number): void {
     const ctx = this.ctx;
     const parsed = parseRgba(bgColor);
     if (!parsed) return;
@@ -226,7 +226,7 @@ export class Renderer2D {
 
     // Use the same screen center as the camera for rotation pivot.
     // If not specified, use canvas center.
-    const cx = w / 2;
+    const cx = screenCenterXCssPx !== undefined ? screenCenterXCssPx * this.dpr : w / 2;
     const cy = screenCenterYCssPx !== undefined ? screenCenterYCssPx * this.dpr : h / 2;
 
     // Diagonal of the screen - need to cover corners when rotated

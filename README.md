@@ -12,6 +12,7 @@
 - ⚙️ **Automatic/Manual gearbox** - 6-speed transmission with automatic shifting (default), or toggle to manual with J/K shifting
 - ❄️ **Multiple surfaces** - Tarmac, gravel, dirt, and ice with different friction characteristics
 - 🎮 **Two camera modes** - Fixed follow and stabilized runner mode (toggle with `C`)
+- ⏱️ **Bullet time (debug)** - Hold-to-slow with a 30s per-map budget (hold `U`)
 - 🎵 **Procedural audio** - Engine and tire sounds that react to your driving
 - 🏁 **Procedural tracks** - Generate rally stages (press `N` for a new one)
 - 💨 **Drift scoring** - Show off your Scandinavian flicks
