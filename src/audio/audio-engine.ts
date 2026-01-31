@@ -100,7 +100,7 @@ export class EngineAudio {
      * @param rpmNormalized 0..1 (idle to redline)
      * @param throttle 0..1
      */
-    update(rpmNormalized: number, throttle: number): void {
+    update(rpmNormalized: number, throttle: number, opts?: { timeScale?: number }): void {
         if (!this.isRunning || !this.masterGain) return;
 
         const ctx = getAudioContext();
@@ -109,6 +109,12 @@ export class EngineAudio {
         this.currentRpmNorm = Math.max(0, Math.min(1.1, rpmNormalized));
         this.currentThrottle = Math.max(0, Math.min(1, throttle));
 
+        const timeScale = Math.max(0.2, Math.min(1.0, Number(opts?.timeScale ?? 1.0)));
+        // In bullet time, we want engine noise to feel slowed (stronger pitch drop)
+        // without going comically low.
+        const pitchScale = 0.10 + 0.90 * timeScale;
+        const volumeScale = 0.85 + 0.15 * timeScale;
+
         // Calculate frequency from RPM
         const freq = this.params.baseFrequency +
             (this.params.maxFrequency - this.params.baseFrequency) * this.currentRpmNorm;
@@ -116,7 +122,7 @@ export class EngineAudio {
         // Update oscillator frequencies smoothly
         const now = ctx.currentTime;
         for (let i = 0; i < this.oscillators.length; i++) {
-            const targetFreq = freq * this.params.harmonics[i];
+            const targetFreq = freq * pitchScale * this.params.harmonics[i];
             this.oscillators[i].frequency.setTargetAtTime(targetFreq, now, 0.02);
         }
 
@@ -124,7 +130,7 @@ export class EngineAudio {
         // Engine is on dedicated channel, so can be more prominent
         const baseVolume = 0.3 + this.currentThrottle * 0.6; // Increased base volume
         const rpmBoost = this.currentRpmNorm * 0.25; // More RPM presence
-        const targetVolume = Math.min(1.0, baseVolume + rpmBoost);
+        const targetVolume = Math.min(1.0, (baseVolume + rpmBoost) * volumeScale);
 
         this.masterGain.gain.setTargetAtTime(targetVolume, now, 0.05);
     }

@@ -56,7 +56,7 @@ export function resolveStageTheme(ref: StageThemeRef): StageTheme {
     case "desert":
       return {
         kind: "desert",
-        name: "Desert Rally",
+        name: "Desert Route",
         // Warm sandy background - visible but not overpowering.
         terrainColor: "rgba(140, 115, 75, 1)",
         bgColor: "rgba(120, 100, 65, 1)",
@@ -72,7 +72,7 @@ export function resolveStageTheme(ref: StageThemeRef): StageTheme {
     case "arctic":
       return {
         kind: "arctic",
-        name: "Arctic Rally",
+        name: "Arctic Route",
         // Light grayish snow/ice background.
         terrainColor: "rgba(170, 175, 180, 1)",
         bgColor: "rgba(155, 160, 165, 1)",

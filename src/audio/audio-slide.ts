@@ -189,7 +189,7 @@ export class SlideAudio {
      * @param slipIntensity 0..1 (no slip to maximum slide)
      * @param surface current surface type
      */
-    update(slipIntensity: number, surface: Surface): void {
+    update(slipIntensity: number, surface: Surface, opts?: { timeScale?: number }): void {
         if (!this.isRunning || !this.filter || !this.gainNode) return;
 
         const ctx = getAudioContext();
@@ -197,6 +197,10 @@ export class SlideAudio {
 
         const surfaceName = surface.name;
         const surfaceParams = this.params.surfaces[surfaceName] ?? this.params.surfaces.tarmac;
+
+        const timeScale = Math.max(0.2, Math.min(1.0, Number(opts?.timeScale ?? 1.0)));
+        // Bullet time should feel lower/slower; shift perceived pitch down by lowering filter center.
+        const pitchScale = 0.10 + 0.90 * timeScale;
 
         // Switch noise type if surface changed
         if (surfaceName !== this.currentSurface) {
@@ -209,7 +213,7 @@ export class SlideAudio {
         const now = ctx.currentTime;
 
         // Update filter based on surface
-        this.filter.frequency.setTargetAtTime(surfaceParams.filterFreq, now, 0.05);
+        this.filter.frequency.setTargetAtTime(surfaceParams.filterFreq * pitchScale, now, 0.05);
         this.filter.Q.setTargetAtTime(surfaceParams.filterQ, now, 0.05);
 
         // Volume based on intensity and surface gain

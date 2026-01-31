@@ -101,7 +101,7 @@ export class RainAudio {
     this.isRunning = false;
   }
 
-  update(intensity01: number): void {
+  update(intensity01: number, opts?: { timeScale?: number }): void {
     if (!this.isRunning || !this.gainNode || !this.filterLow) return;
 
     const ctx = getAudioContext();
@@ -110,12 +110,15 @@ export class RainAudio {
     const i = clamp01(intensity01);
     const now = ctx.currentTime;
 
+    const timeScale = Math.max(0.2, Math.min(1.0, Number(opts?.timeScale ?? 1.0)));
+    const pitchScale = 0.10 + 0.90 * timeScale;
+
     // Keep rain present but not fatiguing.
     const targetGain = 0.01 + 0.35 * i;
     this.gainNode.gain.setTargetAtTime(targetGain, now, 0.08);
 
     // Heavier rain = slightly brighter hiss.
-    const targetLowpass = 2400 + 2400 * i;
+    const targetLowpass = (2400 + 2400 * i) * pitchScale;
     this.filterLow.frequency.setTargetAtTime(targetLowpass, now, 0.12);
   }
 

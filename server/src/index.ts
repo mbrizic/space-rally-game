@@ -28,16 +28,38 @@ import { Database } from "bun:sqlite";
 import { postHighScore } from "./twitter";
 
 const db = new Database("scores.sqlite", { create: true });
-db.run("CREATE TABLE IF NOT EXISTS high_scores (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, score INTEGER, seed TEXT, t INTEGER)");
+db.run(
+  "CREATE TABLE IF NOT EXISTS high_scores (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, score INTEGER, seed TEXT, user_id TEXT, mode TEXT, avg_speed_kmh REAL, t INTEGER)"
+);
 db.run("CREATE TABLE IF NOT EXISTS track_votes (seed TEXT PRIMARY KEY, upvotes INTEGER DEFAULT 0, downvotes INTEGER DEFAULT 0)");
-db.run("CREATE TABLE IF NOT EXISTS game_stats (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, t INTEGER)");
+db.run("CREATE TABLE IF NOT EXISTS track_vote_events (user_id TEXT, seed TEXT, type TEXT, t INTEGER, PRIMARY KEY(user_id, seed))");
+db.run(
+  "CREATE TABLE IF NOT EXISTS game_stats (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, seed TEXT, user_id TEXT, mode TEXT, name TEXT, score_ms INTEGER, avg_speed_kmh REAL, t INTEGER)"
+);
 
-// Ensure seed column exists for existing databases
-try {
-  db.run("ALTER TABLE high_scores ADD COLUMN seed TEXT DEFAULT '0'");
-} catch {
-  // Column already exists
+function ensureColumn(opts: { table: string; column: string; ddl: string }): void {
+  try {
+    db.run(`ALTER TABLE ${opts.table} ADD COLUMN ${opts.column} ${opts.ddl}`);
+  } catch {
+    // ignore (already exists)
+  }
 }
+
+// Best-effort migrations for existing DBs.
+ensureColumn({ table: "high_scores", column: "seed", ddl: "TEXT DEFAULT '0'" });
+ensureColumn({ table: "high_scores", column: "user_id", ddl: "TEXT" });
+ensureColumn({ table: "high_scores", column: "mode", ddl: "TEXT" });
+ensureColumn({ table: "high_scores", column: "avg_speed_kmh", ddl: "REAL" });
+
+ensureColumn({ table: "game_stats", column: "seed", ddl: "TEXT" });
+ensureColumn({ table: "game_stats", column: "user_id", ddl: "TEXT" });
+ensureColumn({ table: "game_stats", column: "mode", ddl: "TEXT" });
+ensureColumn({ table: "game_stats", column: "name", ddl: "TEXT" });
+ensureColumn({ table: "game_stats", column: "score_ms", ddl: "INTEGER" });
+ensureColumn({ table: "game_stats", column: "avg_speed_kmh", ddl: "REAL" });
+
+// Dedupe: one score per user per seed.
+db.run("CREATE UNIQUE INDEX IF NOT EXISTS high_scores_user_seed ON high_scores(user_id, seed)");
 
 
 
@@ -95,6 +117,32 @@ function normalizeRoom(s: string): string {
 
 function normalizePeer(s: string): string {
   return s.trim().slice(0, 64);
+}
+
+function normalizeSeed(s: unknown): string {
+  const raw = (s ?? "0").toString().trim();
+  if (!raw) return "0";
+  // Seeds are intended to be compact (0..999). Clamp numeric values into range.
+  if (/^\d+$/.test(raw)) {
+    const n = Number.parseInt(raw, 10);
+    if (!Number.isFinite(n)) return "0";
+    return String(Math.max(0, Math.min(999, n)));
+  }
+  return raw.slice(0, 24);
+}
+
+function normalizeName(s: unknown): string {
+  return (s ?? "anonymous").toString().trim().slice(0, 40) || "anonymous";
+}
+
+function normalizeUserId(s: unknown): string {
+  return (s ?? "").toString().trim().slice(0, 80);
+}
+
+function normalizeMode(s: unknown): "timeTrial" | "practice" | null {
+  const v = (s ?? "").toString().trim();
+  if (v === "timeTrial" || v === "practice") return v;
+  return null;
 }
 
 function sendJson(ws: ServerWebSocket<WsData>, msg: unknown): void {
@@ -206,22 +254,51 @@ const server = Bun.serve<WsData>({
 
       if (req.method === "POST") {
         try {
-          const body = (await req.json()) as { seed: string; type: "up" | "down" };
-          const seed = (body?.seed ?? "").trim();
+          const body = (await req.json()) as { seed: string; type: "up" | "down"; userId?: string; mode?: string };
+          const seed = normalizeSeed(body?.seed);
+          const userId = normalizeUserId(body?.userId);
+          const mode = normalizeMode(body?.mode);
           if (!seed || (body.type !== "up" && body.type !== "down")) {
             return new Response(JSON.stringify({ error: "invalid body" }), { status: 400, headers: jsonHeaders });
           }
 
-          if (body.type === "up") {
-            db.run(
-              "INSERT INTO track_votes (seed, upvotes, downvotes) VALUES (?, 1, 0) ON CONFLICT(seed) DO UPDATE SET upvotes = upvotes + 1",
-              [seed]
-            );
-          } else {
-            db.run(
-              "INSERT INTO track_votes (seed, upvotes, downvotes) VALUES (?, 0, 1) ON CONFLICT(seed) DO UPDATE SET downvotes = downvotes + 1",
-              [seed]
-            );
+          // Never record votes from practice runs.
+          if (mode === "practice") {
+            return new Response(JSON.stringify({ ok: false, error: "practice_disabled" }), { status: 403, headers: jsonHeaders });
+          }
+
+          // Best-effort server-side vote dedupe per user per track.
+          let shouldApply = true;
+          if (userId) {
+            db.run("BEGIN");
+            try {
+              db.run("INSERT OR IGNORE INTO track_vote_events (user_id, seed, type, t) VALUES (?, ?, ?, ?)", [userId, seed, body.type, Date.now()]);
+              const inserted = (db.query("SELECT changes() as c").get() as any)?.c ?? 0;
+              shouldApply = inserted > 0;
+              db.run("COMMIT");
+            } catch {
+              try {
+                db.run("ROLLBACK");
+              } catch {
+                // ignore
+              }
+              // If dedupe fails, fall back to accepting the vote.
+              shouldApply = true;
+            }
+          }
+
+          if (shouldApply) {
+            if (body.type === "up") {
+              db.run(
+                "INSERT INTO track_votes (seed, upvotes, downvotes) VALUES (?, 1, 0) ON CONFLICT(seed) DO UPDATE SET upvotes = upvotes + 1",
+                [seed]
+              );
+            } else {
+              db.run(
+                "INSERT INTO track_votes (seed, upvotes, downvotes) VALUES (?, 0, 1) ON CONFLICT(seed) DO UPDATE SET downvotes = downvotes + 1",
+                [seed]
+              );
+            }
           }
 
           const row = db.query("SELECT seed, upvotes, downvotes FROM track_votes WHERE seed = ?").get(seed) as any;
@@ -245,15 +322,45 @@ const server = Bun.serve<WsData>({
     if (path === "/api/highscore") {
       if (req.method === "POST") {
         try {
-          const body = (await req.json()) as { name?: string; score?: number; seed?: string };
-          const name = (body?.name ?? "anonymous").toString().trim().slice(0, 40) || "anonymous";
-          const seed = (body?.seed ?? "0").toString().trim().slice(0, 24) || "0";
+          const body = (await req.json()) as { name?: string; score?: number; seed?: string; userId?: string; mode?: string; avgSpeedKmH?: number };
+          const name = normalizeName(body?.name);
+          const seed = normalizeSeed(body?.seed);
+          const userId = normalizeUserId(body?.userId);
+          const mode = normalizeMode(body?.mode);
           const score = Math.max(0, Math.floor(Number(body?.score ?? 0)));
+          const avgSpeedKmH = Number(body?.avgSpeedKmH);
           if (!Number.isFinite(score) || score <= 0) {
             return new Response(JSON.stringify({ error: "invalid score" }), { status: 400, headers: jsonHeaders });
           }
 
-          db.run("INSERT INTO high_scores (name, score, seed, t) VALUES (?, ?, ?, ?)", [name, score, seed, Date.now()]);
+          // Never record highscores from practice runs.
+          if (mode === "practice") {
+            return new Response(JSON.stringify({ ok: false, error: "practice_disabled" }), { status: 403, headers: jsonHeaders });
+          }
+
+          if (!userId) {
+            return new Response(JSON.stringify({ error: "missing userId" }), { status: 400, headers: jsonHeaders });
+          }
+
+          // One score per user per seed; only keep improvements (lower time is better).
+          db.run(
+            "INSERT INTO high_scores (name, score, seed, user_id, mode, avg_speed_kmh, t) VALUES (?, ?, ?, ?, ?, ?, ?) " +
+              "ON CONFLICT(user_id, seed) DO UPDATE SET " +
+              "name = excluded.name, " +
+              "mode = excluded.mode, " +
+              "avg_speed_kmh = excluded.avg_speed_kmh, " +
+              "t = CASE WHEN excluded.score < high_scores.score THEN excluded.t ELSE high_scores.t END, " +
+              "score = CASE WHEN excluded.score < high_scores.score THEN excluded.score ELSE high_scores.score END",
+            [
+              name,
+              score,
+              seed,
+              userId,
+              mode ?? "timeTrial",
+              Number.isFinite(avgSpeedKmH) ? avgSpeedKmH : null,
+              Date.now()
+            ]
+          );
           // Best-effort social post.
           void postHighScore(name, score, seed);
 
@@ -293,11 +400,38 @@ const server = Bun.serve<WsData>({
     if (path === "/api/stats") {
       if (req.method === "POST") {
         try {
-          const body = (await req.json()) as { type: "played" | "finished" | "wrecked" };
+          const body = (await req.json()) as {
+            type: "played" | "finished" | "wrecked";
+            seed?: string;
+            userId?: string;
+            mode?: string;
+            name?: string;
+            scoreMs?: number;
+            avgSpeedKmH?: number;
+          };
           if (body.type !== "played" && body.type !== "finished" && body.type !== "wrecked") {
             return new Response(JSON.stringify({ error: "invalid type" }), { status: 400, headers: jsonHeaders });
           }
-          db.run("INSERT INTO game_stats (type, t) VALUES (?, ?)", [body.type, Date.now()]);
+          const seed = normalizeSeed(body?.seed);
+          const userId = normalizeUserId(body?.userId);
+          const mode = normalizeMode(body?.mode);
+          const name = normalizeName(body?.name);
+          const scoreMs = Math.max(0, Math.floor(Number(body?.scoreMs ?? 0)));
+          const avgSpeedKmH = Number(body?.avgSpeedKmH);
+
+          db.run(
+            "INSERT INTO game_stats (type, seed, user_id, mode, name, score_ms, avg_speed_kmh, t) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+              body.type,
+              seed,
+              userId || null,
+              mode ?? null,
+              name,
+              Number.isFinite(scoreMs) && scoreMs > 0 ? scoreMs : null,
+              Number.isFinite(avgSpeedKmH) ? avgSpeedKmH : null,
+              Date.now()
+            ]
+          );
           return new Response(JSON.stringify({ ok: true }), { headers: jsonHeaders });
         } catch {
           return new Response(JSON.stringify({ error: "json parse error" }), { status: 400, headers: jsonHeaders });
@@ -384,6 +518,45 @@ const server = Bun.serve<WsData>({
       const topLiked = db.query("SELECT seed, upvotes FROM track_votes ORDER BY upvotes DESC LIMIT 5").all() as any[];
       const topDisliked = db.query("SELECT seed, downvotes FROM track_votes ORDER BY downvotes DESC LIMIT 5").all() as any[];
 
+      const mostDriven = db
+        .query(
+          "SELECT seed, COUNT(*) as plays FROM game_stats WHERE type = 'played' AND (mode IS NULL OR mode != 'practice') GROUP BY seed ORDER BY plays DESC LIMIT 10"
+        )
+        .all() as any[];
+
+      const fastestAvgSpeed = db
+        .query(
+          "SELECT seed, MAX(avg_speed_kmh) as max_speed_kmh FROM game_stats WHERE type = 'finished' AND avg_speed_kmh IS NOT NULL AND (mode IS NULL OR mode != 'practice') GROUP BY seed ORDER BY max_speed_kmh DESC LIMIT 10"
+        )
+        .all() as any[];
+
+      const usersByAvgSpeed = db
+        .query(
+          "SELECT user_id, MAX(name) as name, AVG(avg_speed_kmh) as avg_speed_kmh, COUNT(*) as finishes FROM game_stats WHERE type = 'finished' AND user_id IS NOT NULL AND user_id != '' AND avg_speed_kmh IS NOT NULL AND (mode IS NULL OR mode != 'practice') GROUP BY user_id ORDER BY avg_speed_kmh DESC LIMIT 20"
+        )
+        .all() as any[];
+
+      const worstOutcomes = db
+        .query(
+          "WITH agg AS (" +
+            " SELECT seed, " +
+            "   SUM(CASE WHEN type = 'played' THEN 1 ELSE 0 END) as played, " +
+            "   SUM(CASE WHEN type = 'finished' THEN 1 ELSE 0 END) as finished, " +
+            "   SUM(CASE WHEN type = 'wrecked' THEN 1 ELSE 0 END) as wrecked " +
+            " FROM game_stats " +
+            " WHERE (mode IS NULL OR mode != 'practice') " +
+            " GROUP BY seed" +
+            ") " +
+            "SELECT seed, played, finished, wrecked, " +
+            "  CASE WHEN played > 0 THEN CAST(wrecked AS REAL) / played ELSE 0 END as wrecked_rate, " +
+            "  CASE WHEN played > 0 THEN CAST(played - finished AS REAL) / played ELSE 0 END as not_finished_rate " +
+            "FROM agg " +
+            "WHERE played >= 5 " +
+            "ORDER BY wrecked_rate DESC, not_finished_rate DESC " +
+            "LIMIT 10"
+        )
+        .all() as any[];
+
       const todayStart = new Date().setHours(0, 0, 0, 0);
       const playedToday = (db.query("SELECT COUNT(*) as count FROM game_stats WHERE type = 'played' AND t >= ?").get(todayStart) as any)?.count ?? 0;
       const totalFinished = (db.query("SELECT COUNT(*) as count FROM game_stats WHERE type = 'finished'").get() as any)?.count ?? 0;
@@ -395,7 +568,7 @@ const server = Bun.serve<WsData>({
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Space Rally - Stats</title>
+    <title>SCRAPS - System Telemetry</title>
     <style>
         body { background: #050510; color: #eee; font-family: 'Outfit', sans-serif; padding: 2rem; max-width: 1000px; margin: auto; }
         h1 { text-align: center; color: #ff00cc; }
@@ -458,6 +631,48 @@ const server = Bun.serve<WsData>({
                     ${topDisliked.map(s => `<tr><td class="seed">${s.seed}</td><td>👎 ${s.downvotes}</td></tr>`).join('')}
                 </tbody>
             </table>
+        </div>
+
+        <div class="card" style="grid-column: span 2;">
+          <h2>Most Driven Tracks</h2>
+          <table>
+            <thead><tr><th>Seed</th><th>Drives</th></tr></thead>
+            <tbody>
+              ${mostDriven.map(s => `<tr><td class="seed">${s.seed}</td><td>${s.plays}</td></tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card" style="grid-column: span 2;">
+          <h2>Fastest Average Speed (By Track)</h2>
+          <table>
+            <thead><tr><th>Seed</th><th>Max Avg Speed (km/h)</th></tr></thead>
+            <tbody>
+              ${fastestAvgSpeed.map(s => `<tr><td class="seed">${s.seed}</td><td>${Number(s.max_speed_kmh ?? 0).toFixed(1)}</td></tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card" style="grid-column: span 2;">
+          <h2>Fastest Contractors Overall (By Avg Speed Across All Driven Tracks)</h2>
+          <table>
+            <thead><tr><th>Name</th><th>Avg Speed (km/h)</th><th>Finishes</th></tr></thead>
+            <tbody>
+              ${usersByAvgSpeed.map(s => `<tr><td>${(s.name ?? 'anonymous')}</td><td>${Number(s.avg_speed_kmh ?? 0).toFixed(1)}</td><td>${s.finishes}</td></tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card" style="grid-column: span 2;">
+          <h2>Highest Wreck / Not-Finished Rate (By Track)</h2>
+          <table>
+            <thead><tr><th>Seed</th><th>Played</th><th>Finished</th><th>Wrecked</th><th>Wreck Rate</th><th>Not-Finished Rate</th></tr></thead>
+            <tbody>
+              ${worstOutcomes
+                .map(s => `<tr><td class="seed">${s.seed}</td><td>${s.played}</td><td>${s.finished}</td><td>${s.wrecked}</td><td>${(Number(s.wrecked_rate ?? 0) * 100).toFixed(1)}%</td><td>${(Number(s.not_finished_rate ?? 0) * 100).toFixed(1)}%</td></tr>`)
+                .join('')}
+            </tbody>
+          </table>
         </div>
     </div>
     

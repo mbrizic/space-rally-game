@@ -239,7 +239,7 @@ export class Game {
   private continuousAudioState = { engineRpm: 0, engineThrottle: 0, slideIntensity: 0, surfaceName: "tarmac" as string };
   private running = false;
   private controlsLocked = false;
-  private proceduralSeed = 20260124;
+  private proceduralSeed = 0;
   private totalDistanceM = 0; // Total distance driven across all sessions
   private lastSaveTime = 0; // For periodic localStorage saves
   private readonly projectilePool = new ProjectilePool();
@@ -370,6 +370,10 @@ export class Game {
     this.setupWeaponButtons();
     this.setupBulletTimeButton();
 
+    // Keep procedural seeds compact (0..999).
+    // Multiplayer clients will load the host's trackDef after connecting.
+    this.proceduralSeed = Math.floor(Math.random() * 1000);
+
     // Start with a point-to-point track
     this.setTrack(createPointToPointTrackDefinition(this.proceduralSeed));
 
@@ -379,7 +383,12 @@ export class Game {
 
     if (!this.backendPlayedSent) {
       this.backendPlayedSent = true;
-      void postGameStat("played");
+      void postGameStat({
+        type: "played",
+        seed: this.getTrackSeedString(),
+        mode: this.soloMode,
+        name: (localStorage.getItem("spaceRallyName") ?? "").trim().slice(0, 40) || "anonymous"
+      });
     }
 
     // Touch: New track button (shown when finished)
@@ -457,6 +466,7 @@ export class Game {
       }
 
       if (e.code === "KeyR") {
+        if (this.damage01 >= 1) return;
         if (this.netMode !== "client") this.reset();
       }
       if (e.code === "KeyN") this.randomizeTrack();
@@ -636,6 +646,16 @@ export class Game {
       const name = (this.finishPanel.name?.value ?? "").trim().slice(0, 40) || "anonymous";
       if (!seed || !scoreMs) return;
 
+      if (this.netMode === "client") {
+        if (this.finishPanel.msg) this.finishPanel.msg.textContent = "Only the driver can submit.";
+        return;
+      }
+
+      if (this.netMode === "solo" && this.soloMode === "practice") {
+        if (this.finishPanel.msg) this.finishPanel.msg.textContent = "Practice runs can't submit scores.";
+        return;
+      }
+
       if (this.finishPanel.submit) this.finishPanel.submit.disabled = true;
       if (this.finishPanel.msg) this.finishPanel.msg.textContent = "Submitting score...";
 
@@ -645,7 +665,8 @@ export class Game {
         // ignore
       }
 
-      const res = await postHighScore({ name, scoreMs, seed });
+      const avgSpeedKmH = this.finishTimeSeconds !== null ? (this.track.totalLengthM / this.finishTimeSeconds) * 3.6 : undefined;
+      const res = await postHighScore({ name, scoreMs, seed, mode: this.soloMode, avgSpeedKmH });
       if (this.finishPanel.msg) this.finishPanel.msg.textContent = res.ok ? "Score submitted." : "Score submit failed (offline?).";
       if (this.finishPanel.submit) this.finishPanel.submit.disabled = false;
 
@@ -655,6 +676,17 @@ export class Game {
     const vote = async (type: "up" | "down"): Promise<void> => {
       const seed = this.finishPanelSeed;
       if (!seed) return;
+
+      if (this.netMode === "client") {
+        if (this.finishPanel.msg) this.finishPanel.msg.textContent = "Only the driver can vote.";
+        return;
+      }
+
+      if (this.netMode === "solo" && this.soloMode === "practice") {
+        if (this.finishPanel.msg) this.finishPanel.msg.textContent = "Practice runs can't vote.";
+        return;
+      }
+
       const key = `spaceRallyVote:${seed}`;
       if (localStorage.getItem(key)) return;
 
@@ -662,7 +694,7 @@ export class Game {
       if (this.finishPanel.voteDown) this.finishPanel.voteDown.disabled = true;
       if (this.finishPanel.msg) this.finishPanel.msg.textContent = "Sending vote...";
 
-      const res = await postTrackVote(seed, type);
+      const res = await postTrackVote(seed, type, { mode: this.soloMode });
       if (res.ok) {
         try {
           localStorage.setItem(key, type);
@@ -943,7 +975,10 @@ export class Game {
 
     if (!this.backendFinishedSent) {
       this.backendFinishedSent = true;
-      void postGameStat("finished");
+      const scoreMs = this.finishPanelScoreMs;
+      const avgSpeedKmH = this.finishTimeSeconds !== null ? (this.track.totalLengthM / this.finishTimeSeconds) * 3.6 : undefined;
+      const name = (this.finishPanel.name?.value ?? "").trim().slice(0, 40) || (localStorage.getItem("spaceRallyName") ?? "").trim().slice(0, 40) || "anonymous";
+      void postGameStat({ type: "finished", seed: this.finishPanelSeed, mode: this.soloMode, name, scoreMs: scoreMs ?? undefined, avgSpeedKmH });
     }
 
     const timeS = this.finishTimeSeconds !== null ? this.finishTimeSeconds.toFixed(2) : "--";
@@ -963,8 +998,8 @@ export class Game {
       return v === "up" || v === "down" ? v : null;
     })();
 
-    if (this.finishPanel.voteUp) this.finishPanel.voteUp.disabled = !!voted;
-    if (this.finishPanel.voteDown) this.finishPanel.voteDown.disabled = !!voted;
+    if (this.finishPanel.voteUp) this.finishPanel.voteUp.disabled = this.netMode === "client" || !!voted;
+    if (this.finishPanel.voteDown) this.finishPanel.voteDown.disabled = this.netMode === "client" || !!voted;
 
     const [votes, scores] = await Promise.all([
       getTrackVotes(seed),
@@ -1190,9 +1225,9 @@ export class Game {
     // Drive continuous audio during state replay.
     if (this.audioUnlocked) {
       const ca = frame.continuousAudio;
-      this.engineAudio.update(ca.engineRpm, ca.engineThrottle);
+      this.engineAudio.update(ca.engineRpm, ca.engineThrottle, { timeScale: this.getBulletTimeScale() });
       const surfaceForSlide = { name: ca.surfaceName, frictionMu: 1.0, rollingResistanceMu: 0.01 };
-      this.slideAudio.update(ca.slideIntensity, surfaceForSlide as any);
+      this.slideAudio.update(ca.slideIntensity, surfaceForSlide as any, { timeScale: this.getBulletTimeScale() });
     }
   }
 
@@ -1247,9 +1282,9 @@ export class Game {
       const rpm = lerp(ca0.engineRpm, ca1.engineRpm);
       const thr = lerp(ca0.engineThrottle, ca1.engineThrottle);
       const slide = lerp(ca0.slideIntensity, ca1.slideIntensity);
-      this.engineAudio.update(rpm, thr);
+      this.engineAudio.update(rpm, thr, { timeScale: this.getBulletTimeScale() });
       const surfaceForSlide = { name: (t >= 0.5 ? ca1.surfaceName : ca0.surfaceName), frictionMu: 1.0, rollingResistanceMu: 0.01 };
-      this.slideAudio.update(slide, surfaceForSlide as any);
+      this.slideAudio.update(slide, surfaceForSlide as any, { timeScale: this.getBulletTimeScale() });
     }
   }
 
@@ -1555,10 +1590,10 @@ export class Game {
     // Update continuous audio (engine/slide) from host state
     if (snapshot.continuousAudio && this.audioUnlocked) {
       const ca = snapshot.continuousAudio;
-      this.engineAudio.update(ca.engineRpm, ca.engineThrottle);
+      this.engineAudio.update(ca.engineRpm, ca.engineThrottle, { timeScale: this.getBulletTimeScale() });
       // Map surface name to a surface object for slide audio
       const surfaceForSlide = { name: ca.surfaceName, frictionMu: 1.0, rollingResistanceMu: 0.01 };
-      this.slideAudio.update(ca.slideIntensity, surfaceForSlide as any);
+      this.slideAudio.update(ca.slideIntensity, surfaceForSlide as any, { timeScale: this.getBulletTimeScale() });
     }
     if (typeof snapshot.raceActive === "boolean") this.raceActive = snapshot.raceActive;
     if (typeof snapshot.raceStartTimeSeconds === "number") this.raceStartTimeSeconds = snapshot.raceStartTimeSeconds;
@@ -1578,7 +1613,12 @@ export class Game {
         if (this.wreckedTimeSeconds === null) this.wreckedTimeSeconds = this.state.timeSeconds;
         if (!this.backendWreckedSent) {
           this.backendWreckedSent = true;
-          void postGameStat("wrecked");
+          void postGameStat({
+            type: "wrecked",
+            seed: this.getTrackSeedString(),
+            mode: this.soloMode,
+            name: (localStorage.getItem("spaceRallyName") ?? "").trim().slice(0, 40) || "anonymous"
+          });
         }
       } else {
         this.wreckedTimeSeconds = null;
@@ -1851,19 +1891,52 @@ export class Game {
   }
 
   private randomizeTrack(): void {
-    // Deterministic-ish but changing seeds; makes it easy to share a specific stage later.
-    this.proceduralSeed = (this.proceduralSeed + 1) % 1_000_000_000;
+    // Random seed (so "next track" isn't just seed+1).
+    const rand01 = (): number => {
+      try {
+        const c: any = globalThis as any;
+        const cryptoObj: Crypto | undefined = c.crypto;
+        if (cryptoObj?.getRandomValues) {
+          const buf = new Uint32Array(1);
+          cryptoObj.getRandomValues(buf);
+          return (buf[0] ?? 0) / 0x1_0000_0000;
+        }
+      } catch {
+        // ignore
+      }
+      return Math.random();
+    };
+
+    const randomIntInclusive = (min: number, max: number): number => {
+      return min + Math.floor(rand01() * (max - min + 1));
+    };
+
+    let seed = randomIntInclusive(0, 999);
+    for (let i = 0; i < 10 && seed === this.proceduralSeed; i++) {
+      seed = randomIntInclusive(0, 999);
+    }
+
+    this.proceduralSeed = seed;
     const def = createPointToPointTrackDefinition(this.proceduralSeed);
     this.setTrack(def);
     this.reset();
+  }
+
+  private refillAmmo(): void {
+    for (const w of this.weapons) {
+      const cap = w.stats.ammoCapacity;
+      w.ammo = cap === -1 ? -1 : Math.max(0, Math.floor(cap));
+      w.lastFireTime = -100;
+    }
+    this.updateAmmoDisplay();
   }
 
   public pickRandomStartStage(opts?: { minSeed?: number; maxSeed?: number }): number {
     // In multiplayer client mode, the host owns track selection.
     if (this.netMode === "client") return this.trackDef.meta?.seed ?? this.proceduralSeed;
 
-    const minSeed = Math.max(1, Math.floor(opts?.minSeed ?? 1));
-    const maxSeed = Math.max(minSeed, Math.floor(opts?.maxSeed ?? 1000));
+    const minSeed = Math.max(0, Math.floor(opts?.minSeed ?? 0));
+    const maxSeed = Math.min(999, Math.max(minSeed, Math.floor(opts?.maxSeed ?? 999)));
 
     const lastRaw = localStorage.getItem(this.startStageSeedStorageKey);
     const lastSeed = lastRaw ? Number.parseInt(lastRaw, 10) : NaN;
@@ -2160,8 +2233,12 @@ export class Game {
     const active = this.bulletTimeActive;
     const empty = remaining <= 1e-6;
 
+    // In net client mode, bullet time activation is host-authoritative.
+    // Give the navigator immediate feedback that they're *requesting* it.
+    const requesting = this.netMode === "client" && this.canRequestBulletTimeLocal() && this.bulletTimeHeldLocal && !empty;
+
     btn.classList.toggle("used", empty && !active);
-    btn.classList.toggle("active", active);
+    btn.classList.toggle("active", active || requesting);
 
     if (active) {
       btn.textContent = `${remaining.toFixed(1)}s`;
@@ -2217,11 +2294,6 @@ export class Game {
     }
     if (held === this.bulletTimeHeldLocal) return;
     this.bulletTimeHeldLocal = held;
-
-    // In multiplayer client mode, inform the user we're requesting it.
-    if (held && this.netMode === "client" && this.bulletTimeRemainingS > 1e-6) {
-      this.showNotification("BULLET TIME (REQUESTED)");
-    }
 
     this.updateBulletTimeUi();
   }
@@ -2349,15 +2421,17 @@ export class Game {
    */
   private playNetEffect(effect: "gunshot" | "explosion" | "impact" | "checkpoint", volume: number = 1.0, pitch: number = 1.0): void {
     if (!this.audioUnlocked) return;
+    const timeScale = this.getBulletTimeScale();
+    const pitchScale = 0.10 + 0.90 * timeScale;
     // Play locally
-    this.effectsAudio.playEffect(effect, volume, pitch);
+    this.effectsAudio.playEffect(effect, volume, pitch * pitchScale);
     // Capture for local replay recording (solo/host).
     if (this.replayRecording) {
-      this.replayLocalAudioEvents.push({ effect, volume, pitch });
+      this.replayLocalAudioEvents.push({ effect, volume, pitch: pitch * pitchScale });
     }
     // Queue for network sync (host sends to client)
     if (this.netMode === "host") {
-      this.netAudioEvents.push({ effect, volume, pitch });
+      this.netAudioEvents.push({ effect, volume, pitch: pitch * pitchScale });
     }
   }
 
@@ -2421,7 +2495,7 @@ export class Game {
     if (this.audioUnlocked) {
       let vol = 1.0;
       let pitch = 1.0;
-      if (stats.type === WeaponType.RIFLE) { vol = 0.9; pitch = 0.75; }
+      if (stats.type === WeaponType.RIFLE) { vol = 1.25; pitch = 0.65; }
       else if (stats.type === WeaponType.AK47) { vol = 0.7; pitch = 1.2; }
       else if (stats.type === WeaponType.SHOTGUN) { vol = 1.1; pitch = 0.6; }
       this.effectsAudio.playEffect("gunshot", vol, pitch);
@@ -2495,7 +2569,7 @@ export class Game {
     // Play gunshot sound - use weapon specific pitch/volume
     let vol = 1.0;
     let pitch = 1.0;
-    if (stats.type === WeaponType.RIFLE) { vol = 0.9; pitch = 0.75; }
+    if (stats.type === WeaponType.RIFLE) { vol = 1.25; pitch = 0.65; }
     else if (stats.type === WeaponType.AK47) { vol = 0.7; pitch = 1.2; }
     else if (stats.type === WeaponType.SHOTGUN) { vol = 1.1; pitch = 0.6; } // Deep boom
     this.playNetEffect("gunshot", vol, pitch);
@@ -2517,6 +2591,9 @@ export class Game {
     this.bulletTimeActive = false;
     this.bulletTimeActiveFromHost = false;
     this.updateBulletTimeUi();
+
+    // New contract == reload.
+    this.refillAmmo();
 
     // Ensure stage meta exists deterministically if we have a seed.
     const seed = def.meta?.seed;
@@ -2791,7 +2868,7 @@ export class Game {
     // Host just receives damage events from client via applyRemoteDamageEvents()
     if (this.netRemoteNavigator) {
       // Still clear the pulse flag to prevent stale data
-      this.netRemoteNavigator = { ...this.netRemoteNavigator, shootPulse: false, bulletTimeHeld: false };
+      this.netRemoteNavigator = { ...this.netRemoteNavigator, shootPulse: false };
     }
 
     // Gear logic: holding brake from (near) standstill engages reverse.
@@ -2902,7 +2979,7 @@ export class Game {
     // Update audio
     const rpmNorm = rpmFraction(this.engineState, this.engineParams);
     if (this.audioUnlocked) {
-      this.engineAudio.update(rpmNorm, this.engineState.throttleInput);
+      this.engineAudio.update(rpmNorm, this.engineState.throttleInput, { timeScale: this.getBulletTimeScale() });
     }
 
     this.updateVisualDynamics(dtSeconds);
@@ -2937,7 +3014,7 @@ export class Game {
     const gravelLoud = clamp(particleSignal * (0.58 + 0.42 * looseDrive) + looseDrive * 0.12, 0, 1);
     const slideIntensity = Math.max(driftLoud, gravelLoud);
     if (this.audioUnlocked) {
-      this.slideAudio.update(slideIntensity, this.lastSurface);
+      this.slideAudio.update(slideIntensity, this.lastSurface, { timeScale: this.getBulletTimeScale() });
     }
     
     // Store continuous audio state for network sync
@@ -3032,7 +3109,12 @@ export class Game {
       if (this.wreckedTimeSeconds === null) this.wreckedTimeSeconds = this.state.timeSeconds;
       if (!this.backendWreckedSent) {
         this.backendWreckedSent = true;
-        void postGameStat("wrecked");
+        void postGameStat({
+          type: "wrecked",
+          seed: this.getTrackSeedString(),
+          mode: this.soloMode,
+          name: (localStorage.getItem("spaceRallyName") ?? "").trim().slice(0, 40) || "anonymous"
+        });
       }
       this.stopReplayRecording(true);
       this.damage01 = 1;
@@ -3067,10 +3149,10 @@ export class Game {
       this.gunFlash01 = Math.max(0, this.gunFlash01 - dt * 16);
     }
 
-    // Hide touch controls after finish (or when hard-locked) so the UI matches the lockout.
+    // Hide touch controls after finish/wrecked (or when hard-locked) so the UI matches the lockout.
     const driverGroup = document.getElementById("driver-group");
     const navGroup = document.getElementById("navigator-group");
-    if (this.raceFinished || this.controlsLocked || this.replayPlayback || this.replayInputPlayback) {
+    if (this.raceFinished || this.damage01 >= 1 || this.controlsLocked || this.replayPlayback || this.replayInputPlayback) {
       if (driverGroup) driverGroup.style.display = "none";
       if (navGroup) navGroup.style.display = "none";
     } else {
@@ -3079,9 +3161,9 @@ export class Game {
       if (navGroup) navGroup.style.display = "";
     }
 
-    // Wrecked reset button visibility (DOM overlay)
+    // Wrecked: no reset. Only allow trying a new track.
     const resetBtn = document.getElementById("btn-reset") as HTMLButtonElement | null;
-    if (resetBtn) resetBtn.style.display = this.damage01 >= 1 && this.netMode !== "client" && !this.replayPlayback ? "block" : "none";
+    if (resetBtn) resetBtn.style.display = "none";
 
     // Client smoothing/prediction (net mode)
     if (this.netMode === "client") {
@@ -3173,10 +3255,13 @@ export class Game {
 
     const isTouch = isTouchMode();
 
-    // Show NEW TRACK button when finished.
-    const showNewTrack = this.raceFinished && this.netMode !== "client" && !this.replayPlayback;
+    // Show NEW TRACK button when finished or wrecked.
+    const showNewTrack = (this.raceFinished || this.damage01 >= 1) && this.netMode !== "client" && !this.replayPlayback;
     const newTrackBtn = document.getElementById("btn-new-track") as HTMLButtonElement | null;
-    if (newTrackBtn) newTrackBtn.style.display = showNewTrack ? "block" : "none";
+    if (newTrackBtn) {
+      newTrackBtn.style.display = showNewTrack ? "block" : "none";
+      newTrackBtn.textContent = this.damage01 >= 1 ? "Go try another one" : "New Track";
+    }
 
     this.setFinishPanelVisible(this.raceFinished && this.finishPanelShown);
 
@@ -3189,11 +3274,12 @@ export class Game {
       carHeadingRad: this.state.car.headingRad
     });
 
-    const pixelsPerMeter = framing.pixelsPerMeter;
+    // P2 (client navigator) gets extra zoom-out for better situational awareness.
+    const pixelsPerMeter = framing.pixelsPerMeter * (this.netMode === "client" ? 0.78 : 1.0);
     const offsetX = framing.offsetXM;
-    const offsetY = framing.offsetYM;
+    const offsetY = this.netMode === "client" ? 0 : framing.offsetYM;
     const screenCenterXCssPx = framing.screenCenterXCssPx;
-    const screenCenterYCssPxOverride = framing.screenCenterYCssPx;
+    const screenCenterYCssPxOverride = this.netMode === "client" ? height * 0.5 : framing.screenCenterYCssPx;
 
     // Use zero camera shake for client (shake is local to host simulation)
     const shakeX = this.netMode === "client" ? 0 : this.cameraShakeX;
@@ -3367,10 +3453,12 @@ export class Game {
       activeZoneKinds = [...new Set(activeZones.map((z) => z.kind))];
       activeZoneIndicators = activeZones.map((z) => ({
         kind: z.kind,
-        intensity01: z.kind === "rain" ? z.intensity01 * zoneEdgeFade01(this.track.totalLengthM, proj.sM, z, 35) : z.intensity01
+        intensity01: (z.kind === "rain" || z.kind === "fog")
+          ? z.intensity01 * zoneEdgeFade01(this.track.totalLengthM, proj.sM, z, 35)
+          : z.intensity01
       }));
       rainIntensity = zoneIntensityAtSM(this.track.totalLengthM, proj.sM, this.currentStageZones, "rain", { rampM: 35 });
-      fogIntensity = activeZones.filter((z) => z.kind === "fog").reduce((m, z) => Math.max(m, z.intensity01), 0);
+      fogIntensity = zoneIntensityAtSM(this.track.totalLengthM, proj.sM, this.currentStageZones, "fog", { rampM: 35 });
       eclipseIntensity = activeZones.filter((z) => z.kind === "eclipse").reduce((m, z) => Math.max(m, z.intensity01), 0);
       sandIntensity = activeZones.filter((z) => z.kind === "sandstorm").reduce((m, z) => Math.max(m, z.intensity01), 0);
       electricalIntensity = activeZones.filter((z) => z.kind === "electrical").reduce((m, z) => Math.max(m, z.intensity01), 0);
@@ -3384,13 +3472,14 @@ export class Game {
     if (this.currentStageThemeKind === "desert") rainIntensity = 0;
 
     // Update rain audio (ambient pink-ish noise). Intentionally loud.
-    if (this.audioUnlocked) this.rainAudio.update(rainIntensity);
+    if (this.audioUnlocked) this.rainAudio.update(rainIntensity, { timeScale: this.getBulletTimeScale() });
 
-    if (fogIntensity > 0.05) {
-      // Slightly denser fog without extra perf cost: just adjust parameters.
-      const fogI = clamp(fogIntensity * 1.18, 0, 1);
-      const radius = clamp(92 - 65 * fogI, 24, 92);
+    if (fogIntensity > 0.02) {
+      // Fog should ramp in/out like rain, and be a bit more intense.
+      const fogI = clamp(fogIntensity * 1.65, 0, 1);
+      const radius = clamp(110 - 92 * fogI, 14, 110);
       this.renderer.drawFog(this.state.car.xM, this.state.car.yM, radius);
+      this.renderer.drawScreenOverlay(`rgba(160, 165, 175, ${clamp(0.02 + 0.06 * fogI, 0, 0.10)})`);
     }
     if (sandIntensity > 0.05) {
       const radius = 140 - 80 * sandIntensity;
@@ -3494,9 +3583,10 @@ export class Game {
       // Minimap warnings (driver hinting). Keep these simple; full zone intel is for the navigator.
       const warningTextLines: string[] = [];
       const calloutsEnabled = proj.sM >= this.checkpointSM[0];
-      const rainLookaheadM = 50;
-      const narrowLookaheadM = 50;
-      const debrisLookaheadM = 50;
+      const calloutLookaheadM = 150;
+      const rainLookaheadM = calloutLookaheadM;
+      const narrowLookaheadM = calloutLookaheadM;
+      const debrisLookaheadM = calloutLookaheadM;
       const hideImminentM = 10;
       const loops = this.track.points.length > 2
         ? Math.hypot(
@@ -3601,7 +3691,7 @@ export class Game {
         statusTextLines: (this.role === PlayerRole.NAVIGATOR && electricalIntensity > 0.05)
           ? ["ERROR", "ELECTRICAL STORM"]
           : undefined,
-        warningTextLines
+        warningTextLines: this.netMode === "client" ? [] : warningTextLines
       });
     }
 
@@ -3823,7 +3913,10 @@ export class Game {
     }
 
     if (this.damage01 >= 1) {
-      this.renderer.drawCenterText({ text: "WRECKED" });
+      this.renderer.drawCenterText({
+        text: "DELIVERY FAILED",
+        subtext: "You've also wrecked your car and almost died."
+      });
     }
 
     if (this.raceFinished) {
@@ -4080,6 +4173,8 @@ export class Game {
     if (!this.debris.length) return;
     // Only the navigator should get this cue.
     if (this.role !== PlayerRole.NAVIGATOR) return;
+    // P2 shouldn't get on-screen callouts.
+    if (this.netMode === "client") return;
     // No callouts until after leaving the start city.
     if (proj.sM < this.checkpointSM[0]) return;
 
@@ -4098,7 +4193,7 @@ export class Game {
     }
 
     // Only warn when it's close but not already visually imminent.
-    if (!best || bestDelta < 10 || bestDelta > 50) return;
+    if (!best || bestDelta < 10 || bestDelta > 150) return;
     if (this.lastDebrisWarnId === best.id && (this.state.timeSeconds - this.lastDebrisWarnAtSeconds) < 4.0) return;
 
     this.lastDebrisWarnId = best.id;
@@ -5035,17 +5130,18 @@ export class Game {
         const ny = dy / dist;
         const isTank = enemy.type === "tank";
         const isColossus = enemy.type === "colossus";
-        const push = isColossus ? 0.95 : 0.4;
+        const isZombie = enemy.type === "zombie";
+        const push = isColossus ? 0.95 : (isTank ? 0.35 : (isZombie ? 0.12 : 0.22));
         this.state.car.xM += nx * overlap * push;
         this.state.car.yM += ny * overlap * push;
 
         // Type-specific physics
         // Colossus should feel like a catastrophic collision.
         // Tanks should feel less like immovable walls
-        const speedReduction = isColossus ? 0.55 : (isTank ? 0.78 : 0.77);
-        const distortionMultiplier = isColossus ? 0.65 : (isTank ? 0.25 : 0.18);
+        const speedReduction = isColossus ? 0.55 : (isTank ? 0.78 : (isZombie ? 0.92 : 0.86));
+        const distortionMultiplier = isColossus ? 0.65 : (isTank ? 0.25 : (isZombie ? 0.06 : 0.12));
         // Damage from enemy impacts
-        const damageRate = isColossus ? 0.11 : (isTank ? 0.03 : 0.01);
+        const damageRate = isColossus ? 0.11 : (isTank ? 0.03 : (isZombie ? 0.0035 : 0.008));
         const baseDamage = isColossus ? 0.18 : 0;
 
         this.state.car.vxMS *= speedReduction;
@@ -5058,7 +5154,7 @@ export class Game {
         this.damage01 = clamp(this.damage01 + baseDamage + contactSeverity * damageRate, 0, 1);
 
         // Camera shake
-        const shakeIntensity = Math.min(contactSeverity * (isColossus ? 0.85 : (isTank ? 0.5 : 0.25)), 3.2);
+        const shakeIntensity = Math.min(contactSeverity * (isColossus ? 0.85 : (isTank ? 0.5 : (isZombie ? 0.12 : 0.22))), 3.2);
         if (isColossus) {
           // Deterministic shove-based shake for the boss.
           this.cameraShakeX = nx * shakeIntensity * 0.55;
@@ -5067,7 +5163,7 @@ export class Game {
           this.cameraShakeX = (Math.random() - 0.5) * shakeIntensity;
           this.cameraShakeY = (Math.random() - 0.5) * shakeIntensity;
         }
-        this.collisionFlashAlpha = Math.min(contactSeverity * (isColossus ? 0.22 : (isTank ? 0.15 : 0.08)), 0.65);
+        this.collisionFlashAlpha = Math.min(contactSeverity * (isColossus ? 0.22 : (isTank ? 0.15 : (isZombie ? 0.03 : 0.06))), 0.65);
 
         // Kill/Damage enemy on impact (usually kills zombies immediately).
         // The colossus should not be damaged by touching the car.
@@ -5083,7 +5179,7 @@ export class Game {
         }
 
         // Play impact sound
-        const base = isTank ? 0.85 : 0.75;
+        const base = isTank ? 0.85 : (enemy.type === "zombie" ? 0.48 : 0.72);
         const impactVolume = clamp(base + impact * 0.18, 0, 1);
         this.playNetEffect("impact", impactVolume);
       }

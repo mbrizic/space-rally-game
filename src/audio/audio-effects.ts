@@ -40,13 +40,13 @@ export class EffectsAudio {
                 this.playGunshot(ctx, channel, volume, pitchScale);
                 break;
             case "explosion":
-                this.playExplosion(ctx, channel, volume);
+                this.playExplosion(ctx, channel, volume, pitchScale);
                 break;
             case "impact":
-                this.playImpact(ctx, channel, volume);
+                this.playImpact(ctx, channel, volume, pitchScale);
                 break;
             case "checkpoint":
-                this.playCheckpoint(ctx, channel, volume);
+                this.playCheckpoint(ctx, channel, volume, pitchScale);
                 break;
         }
     }
@@ -142,7 +142,7 @@ export class EffectsAudio {
         boomSource.stop(now + duration);
     }
 
-    private playExplosion(ctx: AudioContext, channel: GainNode, volume: number): void {
+    private playExplosion(ctx: AudioContext, channel: GainNode, volume: number, pitchScale: number): void {
         // Synthesized explosion: rumbling noise with decay
         const now = ctx.currentTime;
 
@@ -157,11 +157,12 @@ export class EffectsAudio {
 
         const source = ctx.createBufferSource();
         source.buffer = buffer;
+        source.playbackRate.value = pitchScale;
 
         // Deep rumble
         const lowpass = ctx.createBiquadFilter();
         lowpass.type = "lowpass";
-        lowpass.frequency.value = 200;
+        lowpass.frequency.value = 200 * pitchScale;
         lowpass.Q.value = 3;
 
         const gain = ctx.createGain();
@@ -175,14 +176,14 @@ export class EffectsAudio {
         source.stop(now + 0.6);
     }
 
-    private playImpact(ctx: AudioContext, channel: GainNode, volume: number): void {
+    private playImpact(ctx: AudioContext, channel: GainNode, volume: number, pitchScale: number): void {
         // Short percussive impact
         const now = ctx.currentTime;
 
         const osc = ctx.createOscillator();
         osc.type = "sine";
-        osc.frequency.setValueAtTime(150, now);
-        osc.frequency.exponentialRampToValueAtTime(50, now + 0.05);
+        osc.frequency.setValueAtTime(150 * pitchScale, now);
+        osc.frequency.exponentialRampToValueAtTime(50 * pitchScale, now + 0.05);
 
         const gain = ctx.createGain();
         gain.gain.setValueAtTime(volume * 0.6, now);
@@ -195,18 +196,18 @@ export class EffectsAudio {
         osc.stop(now + 0.15);
     }
 
-    private playCheckpoint(ctx: AudioContext, channel: GainNode, volume: number): void {
+    private playCheckpoint(ctx: AudioContext, channel: GainNode, volume: number, pitchScale: number): void {
         // Pleasant success sound
         const now = ctx.currentTime;
 
         // Two-tone chime
         const osc1 = ctx.createOscillator();
         osc1.type = "sine";
-        osc1.frequency.value = 800;
+        osc1.frequency.value = 800 * pitchScale;
 
         const osc2 = ctx.createOscillator();
         osc2.type = "sine";
-        osc2.frequency.value = 1200;
+        osc2.frequency.value = 1200 * pitchScale;
 
         const gain = ctx.createGain();
         gain.gain.setValueAtTime(volume * 0.3, now);

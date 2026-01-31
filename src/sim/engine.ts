@@ -28,8 +28,8 @@ export type EngineState = {
 export function defaultEngineParams(): EngineParams {
     return {
         idleRpm: 900,
-        redlineRpm: 7200,
-        maxRpm: 7500,
+        redlineRpm: 6800,
+        maxRpm: 7000,
         // Realistic power curve: weak at idle, builds to peak around 5500, drops at redline
         powerCurve: [
             [900, 0.15],    // idle - very little power
@@ -38,9 +38,9 @@ export function defaultEngineParams(): EngineParams {
             [4500, 0.85],   // mid - strong
             [5500, 1.0],    // peak power
             [6500, 0.92],   // high - starting to drop
-            [7200, 0.78],   // redline - falling off
-            [7400, 0.25],   // rev limiter kicking in
-            [7500, 0.05],   // rev limiter - almost no power
+            [6800, 0.78],   // redline - falling off
+            [6950, 0.25],   // rev limiter kicking in
+            [7000, 0.05],   // rev limiter - almost no power
         ],
         gearRatios: [3.5, 2.3, 1.7, 1.3, 1.0, 0.85], // 6 gears
         finalDriveRatio: 3.8,

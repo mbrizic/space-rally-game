@@ -181,11 +181,11 @@ export function surfaceForTrackSM(
     case "tarmac":
       return { name: "tarmac", frictionMu: 1.16 + surfaceRand(seed + segmentIdx) * 0.04, rollingResistanceN: 210 + surfaceRand(seed * 1.5 + segmentIdx) * 20 };
     case "gravel":
-      return { name: "gravel", frictionMu: 0.88 + surfaceRand(seed + segmentIdx) * 0.06, rollingResistanceN: 420 + surfaceRand(seed * 1.7 + segmentIdx) * 40 };
+      return { name: "gravel", frictionMu: 0.91 + surfaceRand(seed + segmentIdx) * 0.06, rollingResistanceN: 420 + surfaceRand(seed * 1.7 + segmentIdx) * 40 };
     case "dirt":
       // Treat dirt as gravel (visual + feel). This keeps surface predictability while
       // avoiding a separate "dirt" identity.
-      return { name: "gravel", frictionMu: 0.88 + surfaceRand(seed + segmentIdx) * 0.06, rollingResistanceN: 420 + surfaceRand(seed * 1.7 + segmentIdx) * 40 };
+      return { name: "gravel", frictionMu: 0.91 + surfaceRand(seed + segmentIdx) * 0.06, rollingResistanceN: 420 + surfaceRand(seed * 1.7 + segmentIdx) * 40 };
     case "ice":
       // Ice: good acceleration to allow chaos, but stiffness/damping scaling makes it slidey.
       return { name: "ice", frictionMu: 0.55 + surfaceRand(seed + segmentIdx) * 0.10, rollingResistanceN: 80 + surfaceRand(seed * 2.1 + segmentIdx) * 20 };

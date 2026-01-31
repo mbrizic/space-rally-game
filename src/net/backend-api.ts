@@ -7,6 +7,8 @@ type HighScoreRow = {
   t: number;
 };
 
+export type BackendSoloMode = "timeTrial" | "practice";
+
 // Scores should always go to the production backend (never a local server).
 const PROD_BACKEND_HTTP_ORIGIN = "https://spacerally.supercollider.hr";
 
@@ -51,13 +53,30 @@ async function fetchJson(
   }
 }
 
-export async function postTrackVote(seed: string, type: VoteType): Promise<{ ok: boolean; upvotes?: number; downvotes?: number }> {
+function getOrCreateUserId(): string {
+  const key = "scrapsUserId";
+  try {
+    const existing = localStorage.getItem(key);
+    if (existing && existing.length >= 8) return existing;
+    const id = (globalThis.crypto as Crypto | undefined)?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    localStorage.setItem(key, id);
+    return id;
+  } catch {
+    return "";
+  }
+}
+
+export async function postTrackVote(
+  seed: string,
+  type: VoteType,
+  opts?: { mode?: BackendSoloMode }
+): Promise<{ ok: boolean; upvotes?: number; downvotes?: number }> {
   const base = resolveBackendHttpOrigin();
   const u = new URL("/api/vote", base);
   const { ok, json } = await fetchJson(u.toString(), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ seed, type }),
+    body: JSON.stringify({ seed, type, userId: getOrCreateUserId(), mode: opts?.mode }),
     timeoutMs: 2000
   });
 
@@ -82,13 +101,26 @@ export async function getTrackVotes(seed: string): Promise<{ ok: boolean; upvote
   };
 }
 
-export async function postHighScore(opts: { name: string; scoreMs: number; seed: string }): Promise<{ ok: boolean }> {
+export async function postHighScore(opts: {
+  name: string;
+  scoreMs: number;
+  seed: string;
+  mode?: BackendSoloMode;
+  avgSpeedKmH?: number;
+}): Promise<{ ok: boolean }> {
   const base = PROD_BACKEND_HTTP_ORIGIN;
   const u = new URL("/api/highscore", base);
   const { ok, json } = await fetchJson(u.toString(), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: opts.name, score: Math.floor(opts.scoreMs), seed: opts.seed }),
+    body: JSON.stringify({
+      name: opts.name,
+      score: Math.floor(opts.scoreMs),
+      seed: opts.seed,
+      userId: getOrCreateUserId(),
+      mode: opts.mode,
+      avgSpeedKmH: typeof opts.avgSpeedKmH === "number" ? opts.avgSpeedKmH : undefined
+    }),
     timeoutMs: 2500
   });
   if (!ok || !json || json.ok !== true) return { ok: false };
@@ -116,13 +148,28 @@ export async function getHighScores(opts?: { seed?: string; limit?: number }): P
   return { ok: true, scores };
 }
 
-export async function postGameStat(type: "played" | "finished" | "wrecked"): Promise<void> {
+export async function postGameStat(opts: {
+  type: "played" | "finished" | "wrecked";
+  seed?: string;
+  mode?: BackendSoloMode;
+  name?: string;
+  scoreMs?: number;
+  avgSpeedKmH?: number;
+}): Promise<void> {
   const base = resolveBackendHttpOrigin();
   const u = new URL("/api/stats", base);
   await fetchJson(u.toString(), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ type }),
+    body: JSON.stringify({
+      type: opts.type,
+      seed: opts.seed,
+      mode: opts.mode,
+      name: opts.name,
+      scoreMs: typeof opts.scoreMs === "number" ? Math.floor(opts.scoreMs) : undefined,
+      avgSpeedKmH: typeof opts.avgSpeedKmH === "number" ? opts.avgSpeedKmH : undefined,
+      userId: getOrCreateUserId()
+    }),
     timeoutMs: 1000
   });
 }

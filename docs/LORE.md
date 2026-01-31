@@ -24,7 +24,7 @@ Constraints:
 
 **SCRAPS** is the megacorp brand plastered on every depot, clipboard, and loading bay.
 
-They are not evil or sketchy — they legitimately do deliveries of everything from water filters to medical supplies. They’re just so bureaucratic that *their paperwork feels like a boss fight*.
+They are not evil or sketchy — they legitimately do deliveries of everything from water filters to medical supplies. They’re just so bureaucratic that *their paperwork feels like a boss fight*. Also today they're very dysfunctional and barely held together with duct tape and rubber bands
 
 Full name (official):
 - **SCRAPS** — *Salvage Contracts & Risk-Adjusted Procurement Service*

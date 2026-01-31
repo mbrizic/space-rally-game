@@ -28,10 +28,15 @@ Record contractor feedback on track seeds.
   ```json
   {
     "seed": "string",
-    "type": "up" | "down"
+    "type": "up" | "down",
+    "userId": "string (client-generated)",
+    "mode": "timeTrial" | "practice" 
   }
   ```
 - **Response**: `{"ok": true}`
+- **Notes**:
+  - Votes with `mode="practice"` are rejected.
+  - If `userId` is provided, the server will best-effort dedupe to one vote per `userId` per `seed`.
 
 ### Game Stats (`/api/stats`)
 Record mission performance metrics.
@@ -39,18 +44,37 @@ Record mission performance metrics.
 - **Payload**:
   ```json
   {
-    "type": "played" | "finished" | "wrecked"
+    "type": "played" | "finished" | "wrecked",
+    "seed": "string",
+    "userId": "string (client-generated)",
+    "mode": "timeTrial" | "practice",
+    "name": "string",
+    "scoreMs": 123456,
+    "avgSpeedKmH": 123.4
   }
   ```
 - **Response**: `{"ok": true}`
 
-### High Scores (`/api/high-scores`)
+### High Scores (`/api/highscores` / `/api/highscore`)
 - **Method**: `GET`
   - **Query Params**: `seed` (optional)
   - **Description**: Returns top 10 scores, optionally filtered by seed.
 - **Method**: `POST`
-  - **Payload**: `{"name": "string", "score": number, "seed": "string"}`
+  - **Payload**:
+    ```json
+    {
+      "name": "string",
+      "score": 123456,
+      "seed": "string",
+      "userId": "string (client-generated)",
+      "mode": "timeTrial" | "practice",
+      "avgSpeedKmH": 123.4
+    }
+    ```
   - **Description**: Submits a new lap time.
+- **Notes**:
+  - Scores with `mode="practice"` are rejected.
+  - The server enforces one score per `userId` per `seed` at the database level (only improvements replace previous times).
 
 ### Secure Backups (`/api/backup`)
 Hot backup of the SQLite database.

@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>Space Rally (Prototype)</title>
+  <title>Space Delivery — SCRAPS</title>
   <style>
     html,
     body {
@@ -56,7 +56,10 @@
       justify-content: center;
       padding: 24px;
       pointer-events: auto;
-      background: rgba(11, 13, 18, 0.78);
+      background:
+        radial-gradient(1200px 900px at 20% 15%, rgba(66, 110, 255, 0.12), rgba(0, 0, 0, 0) 55%),
+        radial-gradient(900px 800px at 85% 80%, rgba(34, 197, 94, 0.08), rgba(0, 0, 0, 0) 60%),
+        linear-gradient(180deg, rgba(11, 13, 18, 0.85), rgba(11, 13, 18, 0.72));
       backdrop-filter: blur(10px);
     }
 
@@ -72,20 +75,86 @@
       padding: 18px 16px;
       box-shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
       text-align: center;
+      position: relative;
+      overflow: hidden;
     }
 
-    #start-menu .title {
-      font-weight: 950;
-      letter-spacing: 0.02em;
-      font-size: 18px;
-      margin-bottom: 6px;
+    /* Subtle grime/scan overlay for the whole card */
+    #start-menu .card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        repeating-linear-gradient(
+          180deg,
+          rgba(255, 255, 255, 0.05) 0px,
+          rgba(255, 255, 255, 0.03) 1px,
+          rgba(0, 0, 0, 0) 3px,
+          rgba(0, 0, 0, 0) 7px
+        );
+      opacity: 0.08;
+      mix-blend-mode: overlay;
     }
+
+    #start-menu .card::after {
+      content: "";
+      position: absolute;
+      inset: -30px;
+      pointer-events: none;
+      background:
+        radial-gradient(120px 80px at 12% 28%, rgba(255, 255, 255, 0.12), rgba(0, 0, 0, 0) 70%),
+        radial-gradient(140px 90px at 80% 22%, rgba(255, 255, 255, 0.08), rgba(0, 0, 0, 0) 70%),
+        radial-gradient(180px 120px at 78% 82%, rgba(255, 255, 255, 0.08), rgba(0, 0, 0, 0) 70%);
+      opacity: 0.22;
+      filter: blur(1px);
+    }
+
+    #start-menu .logo-wrap {
+      display: grid;
+      place-items: center;
+      margin-bottom: 10px;
+      position: relative;
+      z-index: 1;
+    }
+
+    #start-menu svg.scraps-logo {
+      width: min(480px, calc(100vw - 70px));
+      height: auto;
+      display: block;
+      filter: drop-shadow(0 20px 44px rgba(0, 0, 0, 0.45));
+    }
+
+    #start-menu .corp-tag {
+      position: relative;
+      z-index: 1;
+      margin-top: 2px;
+      margin-bottom: 10px;
+      font-weight: 950;
+      letter-spacing: 0.28em;
+      font-size: 11px;
+      opacity: 0.9;
+      text-transform: uppercase;
+    }
+
+    #start-menu .corp-tag .tiny {
+      opacity: 0.7;
+      letter-spacing: 0.18em;
+      font-weight: 850;
+      display: block;
+      margin-top: 5px;
+      font-size: 10px;
+    }
+
+    /* #start-menu title is replaced by the SVG logo */
 
     #start-menu .sub {
       opacity: 0.85;
       font-size: 13px;
       line-height: 1.35;
       margin-bottom: 14px;
+      position: relative;
+      z-index: 1;
     }
 
     #start-menu .row {
@@ -93,6 +162,13 @@
       gap: 12px;
       justify-content: center;
       flex-wrap: wrap;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* Submenus: consistent vertical spacing between rows */
+    #menu-singleplayer .row + .row {
+      margin-top: 12px;
     }
 
     /* Root menu: the two big entry buttons are stacked (one per row). */
@@ -113,6 +189,18 @@
       padding: 14px 20px;
       line-height: 1.15;
       white-space: normal;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      #start-menu svg.scraps-logo {
+        animation: scraps-float 4.5s ease-in-out infinite;
+      }
+    }
+
+    @keyframes scraps-float {
+      0% { transform: translateY(0px) rotate(-0.15deg); }
+      50% { transform: translateY(-3px) rotate(0.12deg); }
+      100% { transform: translateY(0px) rotate(-0.15deg); }
     }
 
     #btn-start {
@@ -749,11 +837,184 @@
 
     <div id="start-menu">
       <div class="card">
-        <div class="title">SPACE RALLY</div>
-        <div id="start-menu-sub" class="sub">
-          <b>SOLO</b>: singleplayer stage.<br />
-          <b>MULTIPLAYER</b>: driver hosts and shows a 4‑digit code; gunner enters it.
+        <div class="logo-wrap" aria-label="SCRAPS">
+          <svg class="scraps-logo" viewBox="0 0 920 240" role="img" aria-label="SCRAPS" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="scrapsSteel" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#e9eef6" stop-opacity="0.92" />
+                <stop offset="0.45" stop-color="#9099a7" stop-opacity="0.9" />
+                <stop offset="1" stop-color="#cfd6e1" stop-opacity="0.92" />
+              </linearGradient>
+
+              <linearGradient id="scrapsSteelDark" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0" stop-color="#3b424f" stop-opacity="0.95" />
+                <stop offset="1" stop-color="#141922" stop-opacity="0.95" />
+              </linearGradient>
+
+              <linearGradient id="scrapsRust" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0" stop-color="#8b3f24" stop-opacity="0.9" />
+                <stop offset="0.45" stop-color="#c86c33" stop-opacity="0.88" />
+                <stop offset="1" stop-color="#532516" stop-opacity="0.9" />
+              </linearGradient>
+
+              <linearGradient id="scrapsTape" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0" stop-color="#d7dde6" stop-opacity="0.68" />
+                <stop offset="0.55" stop-color="#c4cad4" stop-opacity="0.62" />
+                <stop offset="1" stop-color="#e6ebf3" stop-opacity="0.66" />
+              </linearGradient>
+
+              <pattern id="hazard" width="18" height="18" patternUnits="userSpaceOnUse" patternTransform="rotate(-18)">
+                <rect width="18" height="18" fill="#0b0d12" opacity="0.7" />
+                <rect x="0" y="0" width="9" height="18" fill="#fbbf24" opacity="0.92" />
+              </pattern>
+
+              <filter id="scrapsRough" x="-10%" y="-14%" width="120%" height="128%">
+                <feTurbulence type="fractalNoise" baseFrequency="0.015" numOctaves="2" seed="9" result="noise" />
+                <feDisplacementMap in="SourceGraphic" in2="noise" scale="6" xChannelSelector="R" yChannelSelector="G" />
+              </filter>
+
+              <filter id="scrapsShadow" x="-20%" y="-40%" width="140%" height="180%">
+                <feDropShadow dx="0" dy="12" stdDeviation="10" flood-color="#000" flood-opacity="0.55" />
+              </filter>
+
+              <filter id="scrapsGrain" x="-12%" y="-18%" width="124%" height="136%">
+                <feTurbulence type="fractalNoise" baseFrequency="0.6" numOctaves="2" seed="3" result="g" />
+                <feColorMatrix in="g" type="matrix"
+                  values="0 0 0 0 0.6
+                          0 0 0 0 0.6
+                          0 0 0 0 0.6
+                          0 0 0 0.22 0" result="grain" />
+                <feBlend in="SourceGraphic" in2="grain" mode="overlay" />
+              </filter>
+
+              <g id="bolt">
+                <circle r="6" fill="#0b0d12" opacity="0.55" />
+                <circle r="3" fill="#e5e7eb" opacity="0.72" />
+              </g>
+            </defs>
+
+            <!-- backplate -->
+            <g filter="url(#scrapsShadow)" opacity="0.96">
+              <path d="M 44 22 L 878 22
+                       C 898 22 910 34 910 54
+                       L 910 194
+                       C 910 214 898 226 878 226
+                       L 66 226
+                       C 46 226 34 214 34 194
+                       L 34 72
+                       C 34 56 40 44 52 34
+                       C 60 26 68 22 84 22 Z"
+                    fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.14)" stroke-width="2" />
+            </g>
+
+            <!-- tiles: each letter is on its own bent plate (more readable) -->
+            <g filter="url(#scrapsGrain)" opacity="0.98">
+              <g transform="translate(90 54) rotate(-2 58 78)" filter="url(#scrapsRough)">
+                <rect x="0" y="0" width="116" height="156" rx="18" fill="url(#scrapsSteel)" stroke="rgba(0,0,0,0.55)" stroke-width="4" />
+                <path d="M 10 138 C 24 120, 48 118, 64 136 C 50 154, 28 156, 10 138 Z" fill="url(#scrapsRust)" opacity="0.55" />
+                <g transform="translate(16 18)"><use href="#bolt" /></g>
+                <g transform="translate(100 18)"><use href="#bolt" /></g>
+                <g transform="translate(16 140)"><use href="#bolt" /></g>
+                <g transform="translate(100 140)"><use href="#bolt" /></g>
+                <text x="58" y="84" text-anchor="middle" dominant-baseline="middle"
+                  font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial"
+                  font-weight="1000" font-size="74" letter-spacing="0.02em"
+                  fill="url(#scrapsSteelDark)" stroke="rgba(0,0,0,0.45)" stroke-width="3">S</text>
+              </g>
+
+              <g transform="translate(220 50) rotate(1.6 58 78)" filter="url(#scrapsRough)">
+                <rect x="0" y="0" width="116" height="156" rx="18" fill="url(#scrapsSteel)" stroke="rgba(0,0,0,0.55)" stroke-width="4" />
+                <path d="M 18 40 C 40 22, 70 26, 82 50 C 62 68, 36 62, 18 40 Z" fill="url(#scrapsRust)" opacity="0.5" />
+                <g transform="translate(16 18)"><use href="#bolt" /></g>
+                <g transform="translate(100 18)"><use href="#bolt" /></g>
+                <g transform="translate(16 140)"><use href="#bolt" /></g>
+                <g transform="translate(100 140)"><use href="#bolt" /></g>
+                <text x="58" y="84" text-anchor="middle" dominant-baseline="middle"
+                  font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial"
+                  font-weight="1000" font-size="74" letter-spacing="0.02em"
+                  fill="url(#scrapsSteelDark)" stroke="rgba(0,0,0,0.45)" stroke-width="3">C</text>
+              </g>
+
+              <g transform="translate(350 56) rotate(-1.1 58 78)" filter="url(#scrapsRough)">
+                <rect x="0" y="0" width="116" height="156" rx="18" fill="url(#scrapsSteel)" stroke="rgba(0,0,0,0.55)" stroke-width="4" />
+                <path d="M 66 140 C 78 124, 96 124, 106 140 C 92 156, 76 156, 66 140 Z" fill="url(#scrapsRust)" opacity="0.55" />
+                <g transform="translate(16 18)"><use href="#bolt" /></g>
+                <g transform="translate(100 18)"><use href="#bolt" /></g>
+                <g transform="translate(16 140)"><use href="#bolt" /></g>
+                <g transform="translate(100 140)"><use href="#bolt" /></g>
+                <text x="58" y="84" text-anchor="middle" dominant-baseline="middle"
+                  font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial"
+                  font-weight="1000" font-size="74" letter-spacing="0.02em"
+                  fill="url(#scrapsSteelDark)" stroke="rgba(0,0,0,0.45)" stroke-width="3">R</text>
+              </g>
+
+              <g transform="translate(480 50) rotate(2.2 58 78)" filter="url(#scrapsRough)">
+                <rect x="0" y="0" width="116" height="156" rx="18" fill="url(#scrapsSteel)" stroke="rgba(0,0,0,0.55)" stroke-width="4" />
+                <path d="M 16 130 C 30 112, 56 112, 72 130 C 56 148, 30 150, 16 130 Z" fill="url(#scrapsRust)" opacity="0.5" />
+                <g transform="translate(16 18)"><use href="#bolt" /></g>
+                <g transform="translate(100 18)"><use href="#bolt" /></g>
+                <g transform="translate(16 140)"><use href="#bolt" /></g>
+                <g transform="translate(100 140)"><use href="#bolt" /></g>
+                <text x="58" y="84" text-anchor="middle" dominant-baseline="middle"
+                  font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial"
+                  font-weight="1000" font-size="74" letter-spacing="0.02em"
+                  fill="url(#scrapsSteelDark)" stroke="rgba(0,0,0,0.45)" stroke-width="3">A</text>
+              </g>
+
+              <g transform="translate(610 56) rotate(-1.8 58 78)" filter="url(#scrapsRough)">
+                <rect x="0" y="0" width="116" height="156" rx="18" fill="url(#scrapsSteel)" stroke="rgba(0,0,0,0.55)" stroke-width="4" />
+                <path d="M 18 46 C 36 34, 60 36, 74 54 C 60 68, 34 64, 18 46 Z" fill="url(#scrapsRust)" opacity="0.52" />
+                <g transform="translate(16 18)"><use href="#bolt" /></g>
+                <g transform="translate(100 18)"><use href="#bolt" /></g>
+                <g transform="translate(16 140)"><use href="#bolt" /></g>
+                <g transform="translate(100 140)"><use href="#bolt" /></g>
+                <text x="58" y="84" text-anchor="middle" dominant-baseline="middle"
+                  font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial"
+                  font-weight="1000" font-size="74" letter-spacing="0.02em"
+                  fill="url(#scrapsSteelDark)" stroke="rgba(0,0,0,0.45)" stroke-width="3">P</text>
+              </g>
+
+              <g transform="translate(740 52) rotate(1.1 58 78)" filter="url(#scrapsRough)">
+                <rect x="0" y="0" width="116" height="156" rx="18" fill="url(#scrapsSteel)" stroke="rgba(0,0,0,0.55)" stroke-width="4" />
+                <path d="M 72 142 C 84 126, 104 126, 112 142 C 100 158, 84 158, 72 142 Z" fill="url(#scrapsRust)" opacity="0.55" />
+                <g transform="translate(16 18)"><use href="#bolt" /></g>
+                <g transform="translate(100 18)"><use href="#bolt" /></g>
+                <g transform="translate(16 140)"><use href="#bolt" /></g>
+                <g transform="translate(100 140)"><use href="#bolt" /></g>
+                <text x="58" y="84" text-anchor="middle" dominant-baseline="middle"
+                  font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial"
+                  font-weight="1000" font-size="74" letter-spacing="0.02em"
+                  fill="url(#scrapsSteelDark)" stroke="rgba(0,0,0,0.45)" stroke-width="3">S</text>
+              </g>
+            </g>
+
+            <!-- hazard patch (corporate attempt at professionalism) -->
+            <g opacity="0.92" transform="translate(0,0) rotate(-2 460 198)">
+              <rect x="310" y="184" width="300" height="30" rx="10" fill="url(#hazard)" stroke="rgba(0,0,0,0.55)" stroke-width="3" />
+              <text x="460" y="204" text-anchor="middle" dominant-baseline="middle"
+                font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial"
+                font-weight="950" font-size="13" letter-spacing="0.24em" fill="rgba(10,13,18,0.92)">
+                DELIVERY DIVISION
+              </text>
+            </g>
+
+            <!-- duct tape band holding it together -->
+            <g opacity="0.96" transform="rotate(6 460 120)" filter="url(#scrapsRough)">
+              <path d="M 120 122
+                       C 210 92, 360 96, 460 120
+                       C 560 144, 700 144, 800 112
+                       L 816 142
+                       C 712 176, 560 178, 452 150
+                       C 340 120, 210 120, 144 150 Z"
+                    fill="url(#scrapsTape)" stroke="rgba(0,0,0,0.5)" stroke-width="2" />
+              <path d="M 220 142 L 244 126" stroke="rgba(0,0,0,0.35)" stroke-width="2" />
+              <path d="M 520 156 L 546 136" stroke="rgba(0,0,0,0.35)" stroke-width="2" />
+              <path d="M 710 146 L 734 130" stroke="rgba(0,0,0,0.35)" stroke-width="2" />
+            </g>
+          </svg>
         </div>
+        <div class="corp-tag">SPACE DELIVERY <span class="tiny">SCRAPS — Salvage Contracts &amp; Risk-Adjusted Procurement Service</span></div>
+        <div id="start-menu-sub" class="sub"></div>
 
         <!-- Entry point: pick Singleplayer / Multiplayer -->
         <div id="menu-root">
