@@ -28,6 +28,10 @@ export class Renderer2D {
   private terrainTile: HTMLCanvasElement | null = null;
   private terrainTileKey: string | null = null;
 
+  // Cached eclipse overlay canvas to avoid per-frame allocations.
+  private eclipseCanvas: HTMLCanvasElement | null = null;
+  private eclipseCtx: CanvasRenderingContext2D | null = null;
+
   constructor(canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("2D context unavailable");
@@ -266,6 +270,186 @@ export class Renderer2D {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = color;
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.restore();
+  }
+
+  drawEclipseOverlay(opts: { intensity01: number; carX: number; carY: number; carHeadingRad: number }): void {
+    const intensity01 = clamp(opts.intensity01, 0, 1);
+    if (intensity01 <= 1e-3) return;
+
+    const ctx = this.ctx;
+    const canvasW = this.canvas.width;
+    const canvasH = this.canvas.height;
+    const widthCss = this.viewportWidthCssPx || this.canvas.clientWidth;
+    const heightCss = this.viewportHeightCssPx || this.canvas.clientHeight;
+
+    const screenCenterXCssPx = this.camera.screenCenterXCssPx ?? widthCss / 2;
+    const screenCenterYCssPx = this.camera.screenCenterYCssPx ?? heightCss / 2;
+    const rot = this.camera.rotationRad ?? 0;
+
+    const dx = opts.carX - this.camera.centerX;
+    const dy = opts.carY - this.camera.centerY;
+    const cosR = Math.cos(rot);
+    const sinR = Math.sin(rot);
+    const rx = dx * cosR - dy * sinR;
+    const ry = dx * sinR + dy * cosR;
+
+    const carX = (screenCenterXCssPx + rx * this.camera.pixelsPerMeter) * this.dpr;
+    const carY = (screenCenterYCssPx + ry * this.camera.pixelsPerMeter) * this.dpr;
+    const headingRad = opts.carHeadingRad + rot;
+
+    // Reuse cached offscreen canvas for the lighting mask (avoids per-frame allocation).
+    if (!this.eclipseCanvas || this.eclipseCanvas.width !== canvasW || this.eclipseCanvas.height !== canvasH) {
+      this.eclipseCanvas = document.createElement("canvas");
+      this.eclipseCanvas.width = canvasW;
+      this.eclipseCanvas.height = canvasH;
+      this.eclipseCtx = this.eclipseCanvas.getContext("2d");
+    }
+    const offCtx = this.eclipseCtx;
+    if (!offCtx) return;
+
+    // Reset composite operation before filling (important when reusing cached canvas).
+    offCtx.globalCompositeOperation = "source-over";
+
+    // Start with full black.
+    offCtx.fillStyle = "rgba(0, 0, 0, 1)";
+    offCtx.fillRect(0, 0, canvasW, canvasH);
+
+    // Cut out lit areas using destination-out on the offscreen canvas.
+    offCtx.globalCompositeOperation = "destination-out";
+
+    // Headlight geometry - two separate beams.
+    const beamLength = (280 + 100 * intensity01) * this.dpr;
+    const beamHalfAngle = 0.24 + 0.06 * intensity01; // ~14-17 degrees half-angle per beam (wider)
+    const beamSeparation = 0.12; // Angle between the two beams
+
+    // Halo geometry (circle of visibility around the car).
+    const haloRadius = (40 + 20 * intensity01) * this.dpr;
+
+    const cosH = Math.cos(headingRad);
+    const sinH = Math.sin(headingRad);
+
+    // Beam origins (slightly ahead and to the sides of car center).
+    const tipOffset = 16 * this.dpr;
+    const sideOffset = 6 * this.dpr;
+
+    // Halo (soft radial gradient).
+    {
+      const grad = offCtx.createRadialGradient(carX, carY, 0, carX, carY, haloRadius);
+      grad.addColorStop(0, "rgba(255,255,255,1.0)");
+      grad.addColorStop(0.5, "rgba(255,255,255,0.8)");
+      grad.addColorStop(0.8, "rgba(255,255,255,0.3)");
+      grad.addColorStop(1, "rgba(255,255,255,0.0)");
+      offCtx.fillStyle = grad;
+      offCtx.beginPath();
+      offCtx.arc(carX, carY, haloRadius, 0, Math.PI * 2);
+      offCtx.fill();
+    }
+
+    // Left headlight beam.
+    {
+      const angle = headingRad - beamSeparation;
+      const tipX = carX + cosH * tipOffset - sinH * sideOffset;
+      const tipY = carY + sinH * tipOffset + cosH * sideOffset;
+      const cosL = Math.cos(angle - beamHalfAngle);
+      const sinL = Math.sin(angle - beamHalfAngle);
+      const cosR = Math.cos(angle + beamHalfAngle);
+      const sinR = Math.sin(angle + beamHalfAngle);
+      const farL = { x: tipX + cosL * beamLength, y: tipY + sinL * beamLength };
+      const farR = { x: tipX + cosR * beamLength, y: tipY + sinR * beamLength };
+
+      const cosA = Math.cos(angle);
+      const sinA = Math.sin(angle);
+      const grad = offCtx.createLinearGradient(tipX, tipY, tipX + cosA * beamLength, tipY + sinA * beamLength);
+      grad.addColorStop(0, "rgba(255,255,255,1.0)");
+      grad.addColorStop(0.4, "rgba(255,255,255,0.7)");
+      grad.addColorStop(0.75, "rgba(255,255,255,0.2)");
+      grad.addColorStop(1, "rgba(255,255,255,0.0)");
+      offCtx.fillStyle = grad;
+      offCtx.beginPath();
+      offCtx.moveTo(tipX, tipY);
+      offCtx.lineTo(farR.x, farR.y);
+      offCtx.lineTo(farL.x, farL.y);
+      offCtx.closePath();
+      offCtx.fill();
+    }
+
+    // Right headlight beam.
+    {
+      const angle = headingRad + beamSeparation;
+      const tipX = carX + cosH * tipOffset + sinH * sideOffset;
+      const tipY = carY + sinH * tipOffset - cosH * sideOffset;
+      const cosL = Math.cos(angle - beamHalfAngle);
+      const sinL = Math.sin(angle - beamHalfAngle);
+      const cosR = Math.cos(angle + beamHalfAngle);
+      const sinR = Math.sin(angle + beamHalfAngle);
+      const farL = { x: tipX + cosL * beamLength, y: tipY + sinL * beamLength };
+      const farR = { x: tipX + cosR * beamLength, y: tipY + sinR * beamLength };
+
+      const cosA = Math.cos(angle);
+      const sinA = Math.sin(angle);
+      const grad = offCtx.createLinearGradient(tipX, tipY, tipX + cosA * beamLength, tipY + sinA * beamLength);
+      grad.addColorStop(0, "rgba(255,255,255,1.0)");
+      grad.addColorStop(0.4, "rgba(255,255,255,0.7)");
+      grad.addColorStop(0.75, "rgba(255,255,255,0.2)");
+      grad.addColorStop(1, "rgba(255,255,255,0.0)");
+      offCtx.fillStyle = grad;
+      offCtx.beginPath();
+      offCtx.moveTo(tipX, tipY);
+      offCtx.lineTo(farR.x, farR.y);
+      offCtx.lineTo(farL.x, farL.y);
+      offCtx.closePath();
+      offCtx.fill();
+    }
+
+    // Draw the mask onto the main canvas with adjusted opacity.
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const overlayAlpha = clamp(0.88 + 0.08 * intensity01, 0, 0.98);
+    ctx.globalAlpha = overlayAlpha;
+    ctx.drawImage(this.eclipseCanvas!, 0, 0);
+    ctx.globalAlpha = 1;
+
+    // Add warm yellowish tint over the lit areas.
+    // (We'll draw directly since we know where the beams are.)
+    const drawBeamTint = (angle: number, tipX: number, tipY: number): void => {
+      const cosL = Math.cos(angle - beamHalfAngle);
+      const sinL = Math.sin(angle - beamHalfAngle);
+      const cosR = Math.cos(angle + beamHalfAngle);
+      const sinR = Math.sin(angle + beamHalfAngle);
+      const farL = { x: tipX + cosL * beamLength, y: tipY + sinL * beamLength };
+      const farR = { x: tipX + cosR * beamLength, y: tipY + sinR * beamLength };
+
+      const cosA = Math.cos(angle);
+      const sinA = Math.sin(angle);
+      const grad = ctx.createLinearGradient(tipX, tipY, tipX + cosA * beamLength * 0.5, tipY + sinA * beamLength * 0.5);
+      grad.addColorStop(0, "rgba(255, 220, 140, 0.12)");
+      grad.addColorStop(0.6, "rgba(255, 210, 120, 0.05)");
+      grad.addColorStop(1, "rgba(255, 200, 100, 0.00)");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(tipX, tipY);
+      ctx.lineTo(farR.x, farR.y);
+      ctx.lineTo(farL.x, farL.y);
+      ctx.closePath();
+      ctx.fill();
+    };
+
+    // Left beam tint.
+    {
+      const angle = headingRad - beamSeparation;
+      const tipX = carX + cosH * tipOffset - sinH * sideOffset;
+      const tipY = carY + sinH * tipOffset + cosH * sideOffset;
+      drawBeamTint(angle, tipX, tipY);
+    }
+    // Right beam tint.
+    {
+      const angle = headingRad + beamSeparation;
+      const tipX = carX + cosH * tipOffset + sinH * sideOffset;
+      const tipY = carY + sinH * tipOffset - cosH * sideOffset;
+      drawBeamTint(angle, tipX, tipY);
+    }
+
     ctx.restore();
   }
 
@@ -616,7 +800,7 @@ export class Renderer2D {
     ctx.restore();
   }
 
-  drawCar(car: { x: number; y: number; headingRad: number; speed: number; rollOffsetM?: number; pitchOffsetM?: number }): void {
+  drawCar(car: { x: number; y: number; headingRad: number; speed: number; rollOffsetM?: number; pitchOffsetM?: number; braking?: boolean }): void {
     const ctx = this.ctx;
     ctx.save();
     ctx.translate(car.x, car.y);
@@ -624,6 +808,7 @@ export class Renderer2D {
 
     const length = 1.85;
     const width = 0.93;
+    const braking = car.braking ?? false;
 
     // Dynamics gain (Boosted for better feel)
     const roll = (car.rollOffsetM ?? 0) * 1.2;
@@ -667,6 +852,28 @@ export class Renderer2D {
     ctx.rect(-length * 0.22 + roofShiftX, -width * 0.275 + roofShiftY, length * 0.42, width * 0.55);
     ctx.fill();
     ctx.stroke();
+
+    // 5. TAIL LIGHTS - Red glow when braking
+    if (braking) {
+      const tailLightY = width * 0.35;
+      const tailLightX = -length * 0.48;
+      const tailLightW = 0.12;
+      const tailLightH = 0.22;
+
+      // Outer glow
+      ctx.fillStyle = "rgba(255, 40, 40, 0.35)";
+      ctx.beginPath();
+      ctx.ellipse(tailLightX + bodyShiftX, -tailLightY + bodyShiftY, tailLightW * 2.5, tailLightH * 2, 0, 0, Math.PI * 2);
+      ctx.ellipse(tailLightX + bodyShiftX, tailLightY + bodyShiftY, tailLightW * 2.5, tailLightH * 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Bright core
+      ctx.fillStyle = "rgba(255, 60, 60, 0.95)";
+      ctx.beginPath();
+      ctx.ellipse(tailLightX + bodyShiftX, -tailLightY + bodyShiftY, tailLightW, tailLightH, 0, 0, Math.PI * 2);
+      ctx.ellipse(tailLightX + bodyShiftX, tailLightY + bodyShiftY, tailLightW, tailLightH, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     ctx.restore();
   }

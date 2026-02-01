@@ -101,6 +101,12 @@ export class TouchInput implements GameInput {
 
     // Avoid long-press selection/callouts on mobile browsers.
     zone.addEventListener("contextmenu", (e) => e.preventDefault());
+    // Prevent 3D Touch / Force Touch haptic feedback on iOS
+    zone.addEventListener("touchforcechange", (e) => e.preventDefault());
+    // Prevent Android long-press haptic feedback
+    zone.addEventListener("touchstart", (e) => {
+      e.preventDefault();
+    }, { passive: false });
 
     const deadzone = 0.08;
     const expo = 1.25;
@@ -170,6 +176,12 @@ export class TouchInput implements GameInput {
       if (!el) return;
       // Avoid long-press selection/callouts on mobile browsers.
       el.addEventListener("contextmenu", (e) => e.preventDefault());
+      // Prevent 3D Touch / Force Touch haptic feedback on iOS
+      el.addEventListener("touchforcechange", (e) => e.preventDefault());
+      // Prevent Android long-press haptic feedback
+      el.addEventListener("touchstart", (e) => {
+        e.preventDefault();
+      }, { passive: false });
       el.addEventListener("pointerdown", (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -201,6 +213,12 @@ export class TouchInput implements GameInput {
     if (aimZone && this.opts.setAimClientPoint) {
       // Avoid long-press selection/callouts on mobile browsers.
       aimZone.addEventListener("contextmenu", (e) => e.preventDefault());
+      // Prevent 3D Touch / Force Touch haptic feedback on iOS
+      aimZone.addEventListener("touchforcechange", (e) => e.preventDefault());
+      // Prevent Android long-press haptic feedback
+      aimZone.addEventListener("touchstart", (e) => {
+        e.preventDefault();
+      }, { passive: false });
 
       const updateAim = (e: PointerEvent) => {
         this.opts.setAimClientPoint?.(e.clientX, e.clientY);

@@ -40,8 +40,8 @@ export function computeCameraFraming(opts: CameraFramingOptions): CameraFramingR
 
   // In runner mode, the camera rotates so "forward" is up on the screen (driver).
   // For navigator (rotated 90°), "forward" is toward the right edge of the screen.
-  // Keep the car a bit higher on touch to avoid being covered by controls.
-  const desiredCarYFrac = cameraMode === "runner" ? (isTouch ? 0.66 : 0.72) : 0.64;
+  // Keep the car lower on screen so driver sees more ahead.
+  const desiredCarYFrac = cameraMode === "runner" ? (isTouch ? 0.72 : 0.78) : 0.64;
   const screenCenterYCssPxForZoom = clamp(height * desiredCarYFrac, minCarYPx, maxCarYPx);
 
   const marginXPx = isTouch ? 12 : 0;

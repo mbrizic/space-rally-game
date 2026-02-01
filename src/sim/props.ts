@@ -1,5 +1,5 @@
 import { mulberry32 } from "./rng";
-import { isQuietAtSM, quietZoneContainsSM } from "./stage";
+import { isQuietAtTrackDistance, quietZoneContainsTrackDistance } from "./stage";
 import type { QuietZone, StageThemeKind } from "./stage";
 import type { Track, Vec2 } from "./track";
 
@@ -188,8 +188,8 @@ export function generateWaterBodies(track: Track, opts?: { seed?: number; quietZ
   
   for (let s = nextWaterAt; s < track.totalLengthM - 100; s = nextWaterAt) {
     // Quiet stretches: avoid water hazards.
-    if (quietZones.length > 0 && isQuietAtSM(track.totalLengthM, s, quietZones)) {
-      const z = quietZones.find((q) => quietZoneContainsSM(track.totalLengthM, s, q));
+    if (quietZones.length > 0 && isQuietAtTrackDistance(track.totalLengthM, s, quietZones)) {
+      const z = quietZones.find((q) => quietZoneContainsTrackDistance(track.totalLengthM, s, q));
       if (z) {
         nextWaterAt = Math.max(s + minSpacing, z.end01 * track.totalLengthM + minSpacing);
         continue;
@@ -280,8 +280,8 @@ export function generateDebris(track: Track, opts?: { seed?: number; themeKind?:
 
   for (let s = nextAt; s < track.totalLengthM - 140; s = nextAt) {
     // Quiet stretches: avoid debris hazards.
-    if (quietZones.length > 0 && isQuietAtSM(track.totalLengthM, s, quietZones)) {
-      const z = quietZones.find((q) => quietZoneContainsSM(track.totalLengthM, s, q));
+    if (quietZones.length > 0 && isQuietAtTrackDistance(track.totalLengthM, s, quietZones)) {
+      const z = quietZones.find((q) => quietZoneContainsTrackDistance(track.totalLengthM, s, q));
       if (z) {
         nextAt = Math.max(s + minSpacing, z.end01 * track.totalLengthM + minSpacing);
         continue;

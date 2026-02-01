@@ -14,7 +14,7 @@ import {
   type TrackProjection
 } from "../sim/track";
 import { surfaceForTrackSM, type Surface } from "../sim/surface";
-import { quietZonesFromSeed, resolveStageTheme, stageMetaFromSeed, zoneEdgeFade01, zoneIntensityAtSM, zonesAtSM, type QuietZone, type StageThemeKind, type TrackZone, type TrackZoneKind } from "../sim/stage";
+import { quietZonesFromSeed, resolveStageTheme, stageMetaFromSeed, zoneEdgeFade, zoneIntensityAtTrackDistance, zonesAtTrackDistance, type QuietZone, type StageThemeKind, type TrackZone, type TrackZoneKind } from "../sim/stage";
 import { generateDebris, generateTrees, generateWaterBodies, pointToSegmentDistance, type CircleObstacle, type DebrisObstacle, type WaterBody } from "../sim/props";
 import { DriftDetector, DriftState, type DriftInfo } from "../sim/drift";
 import { createEngineState, defaultEngineParams, stepEngine, rpmFraction, shiftUp, shiftDown, type EngineState } from "../sim/engine";
@@ -81,6 +81,8 @@ export class Game {
   private netStatusLines: string[] = [];
   // Damage events from client navigator to host (client-authoritative shooting)
   private netClientDamageEvents: { enemyId: number; damage: number; killed: boolean; x: number; y: number; isTank: boolean; enemyType?: "zombie" | "tank" | "colossus"; radiusM?: number }[] = [];
+  // Muzzle flash events from client navigator to host (so host sees shooting effects)
+  private netClientMuzzleFlashEvents: { x: number; y: number; angleRad: number; weaponType: WeaponType }[] = [];
   private netDebrisDestroyedIds: number[] = [];
   private netParticleEvents: (
     | { type: "emit"; opts: { x: number; y: number; vx: number; vy: number; lifetime: number; sizeM: number; color: string; count?: number } }
@@ -1457,6 +1459,10 @@ export class Game {
     return this.netClientDamageEvents.splice(0, this.netClientDamageEvents.length);
   }
 
+  public getAndClearClientMuzzleFlashEvents(): { x: number; y: number; angleRad: number; weaponType: WeaponType }[] {
+    return this.netClientMuzzleFlashEvents.splice(0, this.netClientMuzzleFlashEvents.length);
+  }
+
   public getClientProjectiles(): { x: number; y: number; vx: number; vy: number; color?: string; size?: number }[] {
     return this.projectilePool.getActive().map(p => ({
       x: p.x, y: p.y, vx: p.vx, vy: p.vy, color: p.color, size: p.size
@@ -1484,6 +1490,20 @@ export class Game {
         // Just damage
         this.enemyPool.damage(ev.enemyId, ev.damage);
       }
+    }
+  }
+
+  public applyRemoteMuzzleFlashEvents(events: { x: number; y: number; angleRad: number; weaponType: WeaponType }[]): void {
+    for (const ev of events) {
+      // Trigger muzzle flash particles on host
+      this.emitMuzzleFlash({ x: ev.x, y: ev.y, angleRad: ev.angleRad, weaponType: ev.weaponType });
+      // Play gunshot sound
+      let vol = 1.0;
+      let pitch = 1.0;
+      if (ev.weaponType === WeaponType.RIFLE) { vol = 1.25; pitch = 0.65; }
+      else if (ev.weaponType === WeaponType.AK47) { vol = 0.7; pitch = 1.2; }
+      else if (ev.weaponType === WeaponType.SHOTGUN) { vol = 1.1; pitch = 0.6; }
+      this.playNetEffect("gunshot", vol, pitch);
     }
   }
 
@@ -1716,6 +1736,12 @@ export class Game {
 
     this.role = role;
     this.showNotification(`ROLE: ${role.toUpperCase()}`);
+
+    // Snap camera rotation to match new role immediately (no smooth transition)
+    if (this.cameraMode === "runner") {
+      const roleOffset = role === PlayerRole.NAVIGATOR ? 0 : Math.PI / 2;
+      this.cameraRotationRad = -this.state.car.headingRad - roleOffset;
+    }
 
     // Update UI
     const driverGroup = document.getElementById("driver-group");
@@ -2472,6 +2498,8 @@ export class Game {
     const baseAngle = Math.atan2(dy, dx);
 
     this.emitMuzzleFlash({ x: carX, y: carY, angleRad: baseAngle, weaponType: stats.type });
+    // Queue muzzle flash event for network sync (so host sees the flash too)
+    this.netClientMuzzleFlashEvents.push({ x: carX, y: carY, angleRad: baseAngle, weaponType: stats.type });
     
     for (let i = 0; i < stats.projectileCount; i++) {
       const spread = (Math.random() - 0.5) * stats.spread;
@@ -2896,10 +2924,10 @@ export class Game {
     const offTrack = projectionBefore.distanceToCenterlineM > roadHalfWidthM;
     const trackSeed = this.trackDef.meta?.seed ?? 1;
     const activeZones = this.currentStageZones.length
-      ? zonesAtSM(this.track.totalLengthM, projectionBefore.sM, this.currentStageZones)
+      ? zonesAtTrackDistance(this.track.totalLengthM, projectionBefore.sM, this.currentStageZones)
       : [];
 
-    const rainIntensity = zoneIntensityAtSM(this.track.totalLengthM, projectionBefore.sM, this.currentStageZones, "rain", { rampM: 35 });
+    const rainIntensity = zoneIntensityAtTrackDistance(this.track.totalLengthM, projectionBefore.sM, this.currentStageZones, "rain", { rampM: 35 });
     const sandIntensity = activeZones
       .filter((z) => z.kind === "sandstorm")
       .reduce((m, z) => Math.max(m, z.intensity01), 0);
@@ -3384,7 +3412,8 @@ export class Game {
       headingRad: this.state.car.headingRad,
       speed: this.speedMS(),
       rollOffsetM: this.visualRollOffsetM,
-      pitchOffsetM: this.visualPitchOffsetM
+      pitchOffsetM: this.visualPitchOffsetM,
+      braking: this.lastInputState.brake > 0.1
     });
 
     // Draw enemy fireballs (circular, distinct from bullet tracers)
@@ -3449,17 +3478,17 @@ export class Game {
     let activeZoneKinds: string[] = [];
     let activeZoneIndicators: { kind: TrackZoneKind; intensity01: number }[] = [];
     if (this.currentStageZones.length > 0) {
-      const activeZones = zonesAtSM(this.track.totalLengthM, proj.sM, this.currentStageZones);
+      const activeZones = zonesAtTrackDistance(this.track.totalLengthM, proj.sM, this.currentStageZones);
       activeZoneKinds = [...new Set(activeZones.map((z) => z.kind))];
       activeZoneIndicators = activeZones.map((z) => ({
         kind: z.kind,
-        intensity01: (z.kind === "rain" || z.kind === "fog")
-          ? z.intensity01 * zoneEdgeFade01(this.track.totalLengthM, proj.sM, z, 35)
+        intensity01: (z.kind === "rain" || z.kind === "fog" || z.kind === "eclipse")
+          ? z.intensity01 * zoneEdgeFade(this.track.totalLengthM, proj.sM, z, z.kind === "eclipse" ? 150 : 35)
           : z.intensity01
       }));
-      rainIntensity = zoneIntensityAtSM(this.track.totalLengthM, proj.sM, this.currentStageZones, "rain", { rampM: 35 });
-      fogIntensity = zoneIntensityAtSM(this.track.totalLengthM, proj.sM, this.currentStageZones, "fog", { rampM: 35 });
-      eclipseIntensity = activeZones.filter((z) => z.kind === "eclipse").reduce((m, z) => Math.max(m, z.intensity01), 0);
+      rainIntensity = zoneIntensityAtTrackDistance(this.track.totalLengthM, proj.sM, this.currentStageZones, "rain", { rampM: 35 });
+      fogIntensity = zoneIntensityAtTrackDistance(this.track.totalLengthM, proj.sM, this.currentStageZones, "fog", { rampM: 35 });
+      eclipseIntensity = zoneIntensityAtTrackDistance(this.track.totalLengthM, proj.sM, this.currentStageZones, "eclipse", { rampM: 150 });
       sandIntensity = activeZones.filter((z) => z.kind === "sandstorm").reduce((m, z) => Math.max(m, z.intensity01), 0);
       electricalIntensity = activeZones.filter((z) => z.kind === "electrical").reduce((m, z) => Math.max(m, z.intensity01), 0);
     }
@@ -3486,10 +3515,13 @@ export class Game {
       this.renderer.drawFog(this.state.car.xM, this.state.car.yM, radius);
       this.renderer.drawScreenOverlay(`rgba(170, 120, 55, ${clamp(0.04 + 0.10 * sandIntensity, 0, 0.18)})`);
     }
-    if (eclipseIntensity > 0.05) {
-      const radius = 95 - 60 * eclipseIntensity;
-      this.renderer.drawFog(this.state.car.xM, this.state.car.yM, radius);
-      this.renderer.drawScreenOverlay(`rgba(0, 0, 0, ${clamp(0.06 + 0.16 * eclipseIntensity, 0, 0.28)})`);
+    if (eclipseIntensity > 0.02) {
+      this.renderer.drawEclipseOverlay({
+        intensity01: eclipseIntensity,
+        carX: this.state.car.xM,
+        carY: this.state.car.yM,
+        carHeadingRad: this.state.car.headingRad
+      });
     }
 
     // Draw crosshair at mouse position (screen space) - Suppressed on Touch
@@ -3617,6 +3649,21 @@ export class Game {
           }
         }
 
+        // Upcoming eclipse (solar eclipse / darkness zone)
+        const eclipseActive = activeZoneKinds.includes("eclipse");
+        if (!eclipseActive && this.currentStageZones.length > 0) {
+          let best = Infinity;
+          for (const z of this.currentStageZones) {
+            if (z.kind !== "eclipse") continue;
+            const target = z.start01 * this.track.totalLengthM;
+            const d = forwardDistM(target);
+            if (d >= 0 && d <= calloutLookaheadM) best = Math.min(best, d);
+          }
+          if (Number.isFinite(best) && best <= calloutLookaheadM && best > hideImminentM) {
+            warningTextLines.push(`ECLIPSE IN ${Math.round(best)}m`);
+          }
+        }
+
         // Upcoming narrow road segments (based on per-segment width profile)
         if (this.track.segmentWidthsM && this.track.segmentWidthsM.length > 0) {
           const base = this.track.widthM;
@@ -3706,7 +3753,7 @@ export class Game {
       const offTrack = proj.distanceToCenterlineM > roadHalfWidthM;
       const trackSeed = this.trackDef.meta?.seed ?? 1;
       const activeZones = this.currentStageZones.length
-        ? zonesAtSM(this.track.totalLengthM, proj.sM, this.currentStageZones)
+        ? zonesAtTrackDistance(this.track.totalLengthM, proj.sM, this.currentStageZones)
         : [];
 
       const rainI = activeZones.filter((z) => z.kind === "rain").reduce((m, z) => Math.max(m, z.intensity01), 0);
@@ -4107,6 +4154,7 @@ export class Game {
     this.netRemoteProjectiles = null;
     this.netRemoteEnemyProjectiles = null;
     this.netClientDamageEvents = [];
+    this.netClientMuzzleFlashEvents = [];
     this.netParticleEvents = [];
     this.netAudioEvents = [];
     this.netDebrisDestroyedIds = [];
@@ -4810,6 +4858,11 @@ export class Game {
    */
   private stepClientProjectiles(dtSeconds: number): void {
     if (this.role !== PlayerRole.NAVIGATOR) return;
+    
+    // Handle hold-to-shoot for client (P2)
+    if (this.shootHeld || this.lastInputState.shoot) {
+      this.clientShoot();
+    }
     
     // Update projectile positions
     this.projectilePool.update(dtSeconds);

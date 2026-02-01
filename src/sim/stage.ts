@@ -124,6 +124,7 @@ function allowedZoneKinds(theme: StageTheme): TrackZoneKind[] {
   const out: TrackZoneKind[] = [];
   if (theme.allowsRain) out.push("rain");
   if (theme.allowsFog) out.push("fog");
+  if (theme.allowsDarkness) out.push("eclipse");
   if (theme.allowsElectrical) out.push("electrical");
   return out.length > 0 ? out : ["electrical"];
 }
@@ -148,6 +149,9 @@ export function stageMetaFromSeed(seed: number): { theme: StageThemeRef; zones: 
   // Fog: arctic is intentionally common; bump slightly for more frequent arctic fog.
   const fogChance = themeRef.kind === "arctic" ? 0.92 : themeRef.kind === "temperate" ? 0.35 : 0.04;
   const hasFog = theme.allowsFog && rand() < fogChance;
+  // Eclipse: rarer than rain, more common than electrical.
+  const eclipseChance = 0.22;
+  const hasEclipse = theme.allowsDarkness && rand() < eclipseChance;
   const hasElectrical = theme.allowsElectrical && rand() < 0.06; // 6% chance electrical
 
   // Add rain zone if applicable
@@ -184,6 +188,21 @@ export function stageMetaFromSeed(seed: number): { theme: StageThemeRef; zones: 
       const end01 = clamp01(start01 + len01);
       const intensity01 = clamp01(0.7 + rand() * 0.3);
       const candidate: TrackZone = { kind: "electrical", start01, end01, intensity01 };
+      if (!zones.some((z) => overlaps(z, candidate))) {
+        zones.push(candidate);
+        break;
+      }
+    }
+  }
+
+  // Add eclipse zone if applicable (non-overlapping)
+  if (hasEclipse) {
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const start01 = clamp01(rand() * 0.75);
+      const len01 = 0.18 + rand() * 0.12;
+      const end01 = clamp01(start01 + len01);
+      const intensity01 = clamp01(0.85 + rand() * 0.15);
+      const candidate: TrackZone = { kind: "eclipse", start01, end01, intensity01 };
       if (!zones.some((z) => overlaps(z, candidate))) {
         zones.push(candidate);
         break;
@@ -256,15 +275,15 @@ export function quietZonesFromSeed(seed: number): QuietZone[] {
   return zones;
 }
 
-export function zoneContainsSM(totalLengthM: number, sM: number, zone: TrackZone): boolean {
+export function zoneContainsTrackDistance(totalLengthM: number, trackDistanceM: number, zone: TrackZone): boolean {
   const total = Math.max(1e-6, totalLengthM);
-  const t01 = ((sM % total) + total) % total;
+  const t01 = ((trackDistanceM % total) + total) % total;
   const u = t01 / total;
   return u >= zone.start01 && u <= zone.end01;
 }
 
-export function zonesAtSM(totalLengthM: number, sM: number, zones: TrackZone[]): TrackZone[] {
-  return zones.filter((z) => zoneContainsSM(totalLengthM, sM, z));
+export function zonesAtTrackDistance(totalLengthM: number, trackDistanceM: number, zones: TrackZone[]): TrackZone[] {
+  return zones.filter((z) => zoneContainsTrackDistance(totalLengthM, trackDistanceM, z));
 }
 
 function smoothstep01(t: number): number {
@@ -276,9 +295,9 @@ function smoothstep01(t: number): number {
  * Edge fade factor for a zone at a given track position.
  * Returns 0 at zone edges, ~1 in the middle (when zone is long enough).
  */
-export function zoneEdgeFade01(totalLengthM: number, sM: number, zone: TrackZone, rampM = 35): number {
+export function zoneEdgeFade(totalLengthM: number, trackDistanceM: number, zone: TrackZone, rampM = 35): number {
   const total = Math.max(1e-6, totalLengthM);
-  const t = ((sM % total) + total) % total;
+  const t = ((trackDistanceM % total) + total) % total;
   const startM = clamp01(zone.start01) * total;
   const endM = clamp01(zone.end01) * total;
   if (endM <= startM) return 0;
@@ -297,9 +316,9 @@ export function zoneEdgeFade01(totalLengthM: number, sM: number, zone: TrackZone
 /**
  * Effective intensity for a zone kind at a position, with optional ramp-in/out.
  */
-export function zoneIntensityAtSM(
+export function zoneIntensityAtTrackDistance(
   totalLengthM: number,
-  sM: number,
+  trackDistanceM: number,
   zones: TrackZone[],
   kind: TrackZoneKind,
   opts?: { rampM?: number }
@@ -308,20 +327,20 @@ export function zoneIntensityAtSM(
   let best = 0;
   for (const z of zones) {
     if (z.kind !== kind) continue;
-    if (!zoneContainsSM(totalLengthM, sM, z)) continue;
-    const f = zoneEdgeFade01(totalLengthM, sM, z, rampM);
+    if (!zoneContainsTrackDistance(totalLengthM, trackDistanceM, z)) continue;
+    const f = zoneEdgeFade(totalLengthM, trackDistanceM, z, rampM);
     best = Math.max(best, clamp01(z.intensity01) * f);
   }
   return best;
 }
 
-export function quietZoneContainsSM(totalLengthM: number, sM: number, zone: QuietZone): boolean {
+export function quietZoneContainsTrackDistance(totalLengthM: number, trackDistanceM: number, zone: QuietZone): boolean {
   const total = Math.max(1e-6, totalLengthM);
-  const t = ((sM % total) + total) % total;
+  const t = ((trackDistanceM % total) + total) % total;
   const u = t / total;
   return u >= zone.start01 && u <= zone.end01;
 }
 
-export function isQuietAtSM(totalLengthM: number, sM: number, zones: QuietZone[]): boolean {
-  return zones.some((z) => quietZoneContainsSM(totalLengthM, sM, z));
+export function isQuietAtTrackDistance(totalLengthM: number, trackDistanceM: number, zones: QuietZone[]): boolean {
+  return zones.some((z) => quietZoneContainsTrackDistance(totalLengthM, trackDistanceM, z));
 }

@@ -384,6 +384,7 @@ export function initNetSession(
           if (game.getRoleExternal() === PlayerRole.NAVIGATOR) {
             const aim = game.getAimWorld();
             const damageEvents = game.getAndClearClientDamageEvents();
+            const muzzleFlashEvents = game.getAndClearClientMuzzleFlashEvents();
             const projectiles = game.getClientProjectiles();
             const payload = {
               type: "nav",
@@ -394,6 +395,8 @@ export function initNetSession(
               bulletTimeHeld: (game as any).getBulletTimeHeld?.() ?? false,
               // Client-authoritative damage events (hits from client's projectiles)
               damageEvents: damageEvents.length > 0 ? damageEvents : undefined,
+              // Muzzle flash events so host sees shooting effects
+              muzzleFlashEvents: muzzleFlashEvents.length > 0 ? muzzleFlashEvents : undefined,
               // Send projectile positions for rendering on host
               projectiles: projectiles.length > 0 ? projectiles : undefined
             };
@@ -482,6 +485,11 @@ export function initNetSession(
         const damageEvents = (msg as any).damageEvents;
         if (Array.isArray(damageEvents) && damageEvents.length > 0) {
           game.applyRemoteDamageEvents(damageEvents);
+        }
+        // Process muzzle flash events from client (so host sees shooting effects)
+        const muzzleFlashEvents = (msg as any).muzzleFlashEvents;
+        if (Array.isArray(muzzleFlashEvents) && muzzleFlashEvents.length > 0) {
+          game.applyRemoteMuzzleFlashEvents(muzzleFlashEvents);
         }
         // Apply projectile positions from client for rendering on host
         const projectiles = (msg as any).projectiles;

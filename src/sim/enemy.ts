@@ -1,6 +1,6 @@
 import { mulberry32 } from "./rng";
 import type { QuietZone } from "./stage";
-import { isQuietAtSM, quietZoneContainsSM } from "./stage";
+import { isQuietAtTrackDistance, quietZoneContainsTrackDistance } from "./stage";
 import type { Track } from "./track";
 import { pointOnTrack } from "./track";
 
@@ -256,8 +256,8 @@ export function generateEnemies(track: Track, opts?: { seed?: number; count?: nu
 
   for (let i = 0; i < desiredCount && nextEnemyAt < track.totalLengthM - 100; i++) {
     // Quiet stretches: avoid enemies so the player can focus on driving.
-    if (quietZones.length > 0 && isQuietAtSM(track.totalLengthM, nextEnemyAt, quietZones)) {
-      const z = quietZones.find((q) => quietZoneContainsSM(track.totalLengthM, nextEnemyAt, q));
+    if (quietZones.length > 0 && isQuietAtTrackDistance(track.totalLengthM, nextEnemyAt, quietZones)) {
+      const z = quietZones.find((q) => quietZoneContainsTrackDistance(track.totalLengthM, nextEnemyAt, q));
       if (z) {
         nextEnemyAt = Math.max(nextEnemyAt + minSpacing, z.end01 * track.totalLengthM + minSpacing);
         continue;

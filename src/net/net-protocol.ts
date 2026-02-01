@@ -44,6 +44,7 @@ export type DcNavMsg = {
   weaponIndex: number;
   bulletTimeHeld?: boolean;
   damageEvents?: unknown;
+  muzzleFlashEvents?: unknown;
   projectiles?: unknown;
 };
 
