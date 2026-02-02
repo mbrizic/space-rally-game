@@ -145,6 +145,12 @@ function normalizeMode(s: unknown): "timeTrial" | "practice" | null {
   return null;
 }
 
+function normalizeNetMode(s: unknown): "solo" | "host" | "client" | null {
+  const v = (s ?? "").toString().trim();
+  if (v === "solo" || v === "host" || v === "client") return v;
+  return null;
+}
+
 function sendJson(ws: ServerWebSocket<WsData>, msg: unknown): void {
   try {
     ws.send(JSON.stringify(msg));
@@ -322,21 +328,19 @@ const server = Bun.serve<WsData>({
     if (path === "/api/highscore") {
       if (req.method === "POST") {
         try {
-          const body = (await req.json()) as { name?: string; score?: number; seed?: string; userId?: string; mode?: string; avgSpeedKmH?: number };
+          const body = (await req.json()) as { name?: string; score?: number; seed?: string; userId?: string; mode?: string; avgSpeedKmH?: number; netMode?: string };
           const name = normalizeName(body?.name);
           const seed = normalizeSeed(body?.seed);
           const userId = normalizeUserId(body?.userId);
           const mode = normalizeMode(body?.mode);
+          const netMode = normalizeNetMode(body?.netMode);
           const score = Math.max(0, Math.floor(Number(body?.score ?? 0)));
           const avgSpeedKmH = Number(body?.avgSpeedKmH);
           if (!Number.isFinite(score) || score <= 0) {
             return new Response(JSON.stringify({ error: "invalid score" }), { status: 400, headers: jsonHeaders });
           }
 
-          // Never record highscores from practice runs.
-          if (mode === "practice") {
-            return new Response(JSON.stringify({ ok: false, error: "practice_disabled" }), { status: 403, headers: jsonHeaders });
-          }
+          // Note: previously we blocked practice + solo submissions. Temporarily allow for testing.
 
           if (!userId) {
             return new Response(JSON.stringify({ error: "missing userId" }), { status: 400, headers: jsonHeaders });
@@ -395,6 +399,54 @@ const server = Bun.serve<WsData>({
         }),
         { headers: jsonHeaders }
       );
+    }
+
+    if (path === "/api/highscore-champions" && req.method === "GET") {
+      const limitRaw = Number(url.searchParams.get("limit") ?? "10");
+      const limit = Math.max(1, Math.min(50, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : 10));
+
+      const totalTracksRow = db.query("SELECT COUNT(DISTINCT seed) AS n FROM high_scores").get() as any;
+      const totalTracks = typeof totalTracksRow?.n === "number" ? totalTracksRow.n : 0;
+
+      // Count how many seeds each user holds the #1 time for (ties count as #1 too).
+      const leaderRows = db.query(
+        "WITH best AS (" +
+          " SELECT seed, MIN(score) AS best_score" +
+          " FROM high_scores" +
+          " GROUP BY seed" +
+        "), winners AS (" +
+          " SELECT hs.seed AS seed, hs.user_id AS user_id, hs.score AS score" +
+          " FROM high_scores hs" +
+          " JOIN best b ON b.seed = hs.seed AND b.best_score = hs.score" +
+        "), win_counts AS (" +
+          " SELECT seed, COUNT(*) AS winners" +
+          " FROM winners" +
+          " GROUP BY seed" +
+        ")" +
+        " SELECT w.user_id AS user_id," +
+          " COUNT(*) AS first_place_tracks," +
+          " SUM(CASE WHEN wc.winners = 1 THEN 1 ELSE 0 END) AS solo_first_place_tracks" +
+        " FROM winners w" +
+        " JOIN win_counts wc ON wc.seed = w.seed" +
+        " GROUP BY w.user_id" +
+        " ORDER BY first_place_tracks DESC, solo_first_place_tracks DESC" +
+        " LIMIT ?"
+      ).all(limit) as any[];
+
+      const leaders = leaderRows.map((r) => {
+        const userId = typeof r?.user_id === "string" ? r.user_id : "";
+        const nameRow = userId
+          ? (db.query("SELECT name FROM high_scores WHERE user_id = ? ORDER BY t DESC LIMIT 1").get(userId) as any)
+          : null;
+        const name = typeof nameRow?.name === "string" ? nameRow.name : "anonymous";
+        return {
+          name,
+          firstPlaceTracks: typeof r?.first_place_tracks === "number" ? r.first_place_tracks : 0,
+          soloFirstPlaceTracks: typeof r?.solo_first_place_tracks === "number" ? r.solo_first_place_tracks : 0
+        };
+      });
+
+      return new Response(JSON.stringify({ ok: true, totalTracks, leaders }), { headers: jsonHeaders });
     }
 
     if (path === "/api/stats") {
@@ -514,7 +566,6 @@ const server = Bun.serve<WsData>({
     }
 
     if ((path === "/stats" || path === "/api/stats") && req.method === "GET") {
-      const topScores = db.query("SELECT name, score, seed FROM high_scores ORDER BY score ASC LIMIT 10").all() as any[];
       const topLiked = db.query("SELECT seed, upvotes FROM track_votes ORDER BY upvotes DESC LIMIT 5").all() as any[];
       const topDisliked = db.query("SELECT seed, downvotes FROM track_votes ORDER BY downvotes DESC LIMIT 5").all() as any[];
 
@@ -603,16 +654,6 @@ const server = Bun.serve<WsData>({
     </div>
 
     <div class="grid">
-        <div class="card" style="grid-column: span 2;">
-            <h2>Top 10 Fast Laps</h2>
-            <table>
-                <thead><tr><th>Rank</th><th>Name</th><th>Time (s)</th><th>Track Seed</th></tr></thead>
-                <tbody>
-                    ${topScores.map((s, i) => `<tr><td>${i + 1}</td><td>${s.name}</td><td>${(s.score / 1000).toFixed(3)}</td><td class="seed">${s.seed}</td></tr>`).join('')}
-                </tbody>
-            </table>
-        </div>
-        
         <div class="card">
             <h2>Hottest Tracks</h2>
             <table>

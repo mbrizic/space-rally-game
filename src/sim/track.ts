@@ -33,7 +33,7 @@ export type TrackDefinition = {
   meta?: {
     name?: string;
     seed?: number;
-    source?: "default" | "procedural" | "editor" | "point-to-point";
+    source?: "procedural" | "editor" | "point-to-point";
     theme?: StageThemeRef;
     zones?: TrackZone[];
   };
@@ -128,7 +128,7 @@ export function parseTrackDefinition(json: string): TrackDefinition | null {
           name: typeof meta?.name === "string" ? meta.name : undefined,
           seed: typeof meta?.seed === "number" ? meta.seed : undefined,
           source:
-            meta?.source === "default" || meta?.source === "procedural" || meta?.source === "editor" || meta?.source === "point-to-point"
+            meta?.source === "procedural" || meta?.source === "editor" || meta?.source === "point-to-point"
               ? meta.source
               : undefined,
           theme: safeTheme,
@@ -145,68 +145,6 @@ export function parseTrackDefinition(json: string): TrackDefinition | null {
   } catch {
     return null;
   }
-}
-
-export function createDefaultTrackDefinition(): TrackDefinition {
-  // Closed-loop rally-ish stage, specified as sparse control points in meters.
-  const controlPoints: Vec2[] = [
-    { x: 0, y: 0 },
-    { x: 42, y: 0 },
-    { x: 65, y: 12 },
-    // Add chicane swerve
-    { x: 72, y: 22 },
-    { x: 78, y: 34 },
-    { x: 70, y: 58 },
-    { x: 48, y: 72 },
-    { x: 22, y: 66 },
-    // Tighter swerve section
-    { x: 12, y: 54 },
-    { x: 8, y: 46 },
-    { x: -6, y: 30 },
-    { x: -28, y: 22 },
-    { x: -48, y: 30 },
-    // Chicane
-    { x: -58, y: 42 },
-    { x: -62, y: 52 },
-    { x: -50, y: 78 },
-    { x: -20, y: 88 },
-    { x: 10, y: 82 },
-    { x: 34, y: 64 },
-    { x: 44, y: 40 },
-    // Final chicane before start
-    { x: 38, y: 28 },
-    { x: 30, y: 18 }
-  ];
-  const baseWidthM = 7.0;
-
-  // Denser sampling makes the track smoother while keeping projection/collision simple.
-  const points = sampleClosedCatmullRom(controlPoints, 10);
-
-  // Create width variance: narrow chicanes at specific sections, wider straights.
-  const segmentWidthsM: number[] = [];
-  for (let i = 0; i < points.length; i++) {
-    const s = i / points.length; // normalized position [0..1]
-
-    let widthMultiplier = 1.0;
-    if ((s > 0.20 && s < 0.25) || (s > 0.45 && s < 0.50) || (s > 0.70 && s < 0.75)) {
-      widthMultiplier = 0.62;
-    } else if ((s > 0.10 && s < 0.15) || (s > 0.35 && s < 0.40) || (s > 0.85 && s < 0.90)) {
-      widthMultiplier = 1.25;
-    }
-
-    segmentWidthsM.push(baseWidthM * widthMultiplier);
-  }
-
-  return {
-    points,
-    baseWidthM,
-    segmentWidthsM,
-    meta: { name: "Default", source: "default", theme: { kind: "temperate" }, zones: [] }
-  };
-}
-
-export function createDefaultTrack(): Track {
-  return createTrackFromDefinition(createDefaultTrackDefinition());
 }
 
 export type ProceduralTrackOptions = {
@@ -411,13 +349,31 @@ export function createPointToPointTrackDefinition(seed: number): TrackDefinition
     const hasStraights = hasLongStraightSection(result.points, 100);
     
     if (!hasIntersection && !hasStraights) {
-      return result; // Success! Good track
+      // Success! Keep the retry seed internal; present the base seed to UI/serialization.
+      const meta = result.meta ?? {};
+      return {
+        ...result,
+        meta: {
+          ...meta,
+          seed,
+          name: `Route ${seed}`
+        }
+      };
     }
   }
   
   // If all attempts failed, return the best one we can find
   console.warn(`Track generation: All ${maxAttempts} attempts failed quality checks for seed ${seed}`);
-  return tryCreatePointToPointTrackDefinition(seed + (maxAttempts - 1) * 1000);
+  const result = tryCreatePointToPointTrackDefinition(seed + (maxAttempts - 1) * 1000);
+  const meta = result.meta ?? {};
+  return {
+    ...result,
+    meta: {
+      ...meta,
+      seed,
+      name: `Route ${seed}`
+    }
+  };
 }
 
 function tryCreatePointToPointTrackDefinition(seed: number): TrackDefinition {

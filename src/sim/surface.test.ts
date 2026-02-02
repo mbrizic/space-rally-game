@@ -21,7 +21,7 @@ describe("surface types", () => {
       expect(surface.rollingResistanceN).toBeLessThan(2000);
       
       // Surface name should be one of the valid types
-      expect(["tarmac", "gravel", "dirt", "ice", "offtrack"]).toContain(surface.name);
+      expect(["tarmac", "gravel", "sand", "ice", "offtrack"]).toContain(surface.name);
     }
     
     // Check that we have some variety (at least 2 different surfaces)

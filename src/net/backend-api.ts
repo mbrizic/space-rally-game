@@ -8,6 +8,7 @@ type HighScoreRow = {
 };
 
 export type BackendSoloMode = "timeTrial" | "practice";
+export type BackendNetMode = "solo" | "host" | "client";
 
 // Scores should always go to the production backend (never a local server).
 const PROD_BACKEND_HTTP_ORIGIN = "https://spacerally.supercollider.hr";
@@ -107,6 +108,7 @@ export async function postHighScore(opts: {
   seed: string;
   mode?: BackendSoloMode;
   avgSpeedKmH?: number;
+  netMode?: BackendNetMode;
 }): Promise<{ ok: boolean }> {
   const base = PROD_BACKEND_HTTP_ORIGIN;
   const u = new URL("/api/highscore", base);
@@ -119,12 +121,43 @@ export async function postHighScore(opts: {
       seed: opts.seed,
       userId: getOrCreateUserId(),
       mode: opts.mode,
-      avgSpeedKmH: typeof opts.avgSpeedKmH === "number" ? opts.avgSpeedKmH : undefined
+      avgSpeedKmH: typeof opts.avgSpeedKmH === "number" ? opts.avgSpeedKmH : undefined,
+      netMode: opts.netMode
     }),
     timeoutMs: 2500
   });
   if (!ok || !json || json.ok !== true) return { ok: false };
   return { ok: true };
+}
+
+export type HighScoreChampionRow = {
+  name: string;
+  firstPlaceTracks: number;
+  soloFirstPlaceTracks: number;
+};
+
+export async function getHighScoreChampions(opts?: { limit?: number }): Promise<{ ok: boolean; totalTracks: number; leaders: HighScoreChampionRow[] }> {
+  const base = PROD_BACKEND_HTTP_ORIGIN;
+  const u = new URL("/api/highscore-champions", base);
+  if (typeof opts?.limit === "number") u.searchParams.set("limit", String(Math.floor(opts.limit)));
+
+  const { ok, json } = await fetchJson(u.toString(), { method: "GET", timeoutMs: 2000 });
+  if (!ok || !json || json.ok !== true || !Array.isArray(json.leaders)) return { ok: false, totalTracks: 0, leaders: [] };
+
+  const leaders: HighScoreChampionRow[] = [];
+  for (const r of json.leaders as any[]) {
+    leaders.push({
+      name: typeof r?.name === "string" ? r.name : "anonymous",
+      firstPlaceTracks: typeof r?.firstPlaceTracks === "number" ? r.firstPlaceTracks : 0,
+      soloFirstPlaceTracks: typeof r?.soloFirstPlaceTracks === "number" ? r.soloFirstPlaceTracks : 0
+    });
+  }
+
+  return {
+    ok: true,
+    totalTracks: typeof json.totalTracks === "number" ? json.totalTracks : 0,
+    leaders
+  };
 }
 
 export async function getHighScores(opts?: { seed?: string; limit?: number }): Promise<{ ok: boolean; scores: HighScoreRow[] }> {

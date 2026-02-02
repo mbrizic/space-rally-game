@@ -5,6 +5,7 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 ## Co-op Mode
 
 - [ ] Prevent/mitigate cheating vectors (e.g. resize / zoom / debug toggles) (details: `COOP_MODE.md`)
+- post replays to backend automatically for verification
 
 ## Track / Stage Generation
 
@@ -21,39 +22,46 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 ## Backend
 - HTML pages are under /api/, this should be cleaned up
 - audit backend for safety, injections, etc.
+- joke message when you're first one so you're automatically the fastest
+- change all high score inputs to say "team name"
 
 ## Cleanups
+- Tune surfaces + audio feel (gravel slide vs drift intensity, ice feel)
 - audit code for abbreviations and make them cleaner (like quietZoneContainsSM)
 - remove unused functions and classes
 - try some code analyzer that can find bugs
 
 - move P2 gun switcher to the left of the screen, right next to the bullet time slot
-- P2 still can't hold to shoot?
 - reconnect doesnt' work reliably?
+- add rivers that cross the track
+- for practice runs, don't even show the submit/upvote menu
+- overlapping track zones?
+- night tracks?
+- Expand the lore document with some funny bits how driver has a really poor eyesight and co-drivers brings a lot more gunpower than needed
+- gates that you need to hack or break through (minigame with symbols they need to input)
+- minefield
+- shake the phone to reload
+- forks in the road
+- driver shouldn't see enemy health
+- flying monsters that sweep from left to right
+- headlights button that you need to turn on yourself, but they gather flies
+- engine breaks with a partially visible code, P2 check manual (answer depends on track type)
+    - press brake and gas at the same time, gas and handbrake
+    - press one of the buttons: lights, coolant; but press only when something is on screen; press gas and one of the buttons, press in sequence
+    - some buttons on/off toggles, some you need to hold
+    - press speedometer
 
-
-## Feel / UX / Polish
-
-- [ ] Tune surfaces + audio feel (gravel slide vs drift intensity, ice feel)
-- [ ] Add better tactile feedback (haptics/vibration tied to grip/impacts)
-- [ ] Manual gearbox UX on mobile
 
 ## Bigger Ideas (P3/P4, Weather, etc.)
-- [ ] Add "darkness" and car headlights
 - [ ] Something is after you: a sandstorm, dark clouds, something, and you need to run from it
 - [ ] Player 3 (Engineer): power distribution (shield/engine/weapons) + damage control
 - [ ] Player 4 (Intel/Hacker): forward-scout drone + tagging/hacking gates
-- [ ] Bullet time: cooperative slowdown mechanics
-- [ ] Extra co-driver cues: visual pings, callout macros, “danger” meter
-- [ ] Optional idea: navigator ping/marker system (map click → driver-world marker) (details: `COOP_MODE.md`)
 - [ ] Boss fights - ultra big enemy on the stage that shoots at players - they leave the car and then the game becomes a top-down shooter until they get rid of him (will need to implement completely different, Crimsonland-like gameplay)
-- [ ] On-foot mode: exit vehicle → twin-stick shooter gameplay (Crimsonland-style), re-enter car to continue
+- [ ] Manual gearbox UX on mobile
 
 ## Infrastructure (P3/P4)
 
 - [ ] Mesh networking for 3-4 players: WebRTC mesh topology (see notes below)
-- [ ] VR mode (WebXR): tabletop-style VR, controller aiming
-- [ ] Input abstraction layer: unified API for keyboard/touch/gamepad/wheel/VR
 
 ### Mesh Networking Notes
 

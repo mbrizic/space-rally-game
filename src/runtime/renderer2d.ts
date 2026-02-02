@@ -273,9 +273,11 @@ export class Renderer2D {
     ctx.restore();
   }
 
-  drawEclipseOverlay(opts: { intensity01: number; carX: number; carY: number; carHeadingRad: number }): void {
+  drawEclipseOverlay(opts: { intensity01: number; flash01?: number; carX: number; carY: number; carHeadingRad: number }): void {
     const intensity01 = clamp(opts.intensity01, 0, 1);
     if (intensity01 <= 1e-3) return;
+
+    const flash01 = clamp(opts.flash01 ?? 0, 0, 1);
 
     const ctx = this.ctx;
     const canvasW = this.canvas.width;
@@ -319,12 +321,15 @@ export class Renderer2D {
     offCtx.globalCompositeOperation = "destination-out";
 
     // Headlight geometry - two separate beams.
-    const beamLength = (280 + 100 * intensity01) * this.dpr;
-    const beamHalfAngle = 0.24 + 0.06 * intensity01; // ~14-17 degrees half-angle per beam (wider)
+    // Gun flash should act as a small helper light: briefly widen/brighten the mask cutout.
+    const flashBoost = Math.pow(flash01, 0.7);
+    // Flash should briefly feel like "almost normal" visibility.
+    const beamLength = (280 + 100 * intensity01 + 340 * flashBoost) * this.dpr;
+    const beamHalfAngle = 0.24 + 0.06 * intensity01 + 0.12 * flashBoost; // much wider on shot
     const beamSeparation = 0.12; // Angle between the two beams
 
     // Halo geometry (circle of visibility around the car).
-    const haloRadius = (40 + 20 * intensity01) * this.dpr;
+    const haloRadius = (40 + 20 * intensity01 + 140 * flashBoost) * this.dpr;
 
     const cosH = Math.cos(headingRad);
     const sinH = Math.sin(headingRad);
@@ -343,6 +348,20 @@ export class Renderer2D {
       offCtx.fillStyle = grad;
       offCtx.beginPath();
       offCtx.arc(carX, carY, haloRadius, 0, Math.PI * 2);
+      offCtx.fill();
+    }
+
+    // Gunshots: brief helper light burst (expands visibility more than headlights for a moment).
+    if (flashBoost > 1e-3) {
+      const burstR = (120 + 520 * flashBoost) * this.dpr;
+      const grad = offCtx.createRadialGradient(carX, carY, 0, carX, carY, burstR);
+      grad.addColorStop(0, "rgba(255,255,255,1.0)");
+      grad.addColorStop(0.35, "rgba(255,255,255,0.85)");
+      grad.addColorStop(0.75, "rgba(255,255,255,0.18)");
+      grad.addColorStop(1, "rgba(255,255,255,0.0)");
+      offCtx.fillStyle = grad;
+      offCtx.beginPath();
+      offCtx.arc(carX, carY, burstR, 0, Math.PI * 2);
       offCtx.fill();
     }
 
@@ -405,7 +424,9 @@ export class Renderer2D {
     // Draw the mask onto the main canvas with adjusted opacity.
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    const overlayAlpha = clamp(0.88 + 0.08 * intensity01, 0, 0.98);
+    // Darkness opacity. During gun flash, temporarily lift the darkness hard so it feels like
+    // it "punches through" and you can see almost normally for a split-second.
+    const overlayAlpha = clamp(0.88 + 0.08 * intensity01 - 0.92 * flashBoost, 0.05, 0.98);
     ctx.globalAlpha = overlayAlpha;
     ctx.drawImage(this.eclipseCanvas!, 0, 0);
     ctx.globalAlpha = 1;
@@ -512,7 +533,7 @@ export class Renderer2D {
     segmentWidthsM?: number[];
     segmentFillStyles?: string[];
     segmentShoulderStyles?: string[];
-    segmentSurfaceNames?: ("tarmac" | "gravel" | "dirt" | "ice" | "offtrack")[];
+    segmentSurfaceNames?: ("tarmac" | "gravel" | "sand" | "ice" | "offtrack")[];
   }): void {
     const ctx = this.ctx;
     if (track.points.length < 2) return;
@@ -878,7 +899,7 @@ export class Renderer2D {
     ctx.restore();
   }
 
-  drawTrees(trees: { x: number; y: number; r: number }[]): void {
+  drawTrees(trees: { id?: number; x: number; y: number; r: number; kind?: "tree" | "rock"; rotationRad?: number; poly?: { x: number; y: number }[] }[]): void {
     const ctx = this.ctx;
     ctx.save();
 
@@ -891,6 +912,125 @@ export class Renderer2D {
       const dxC = t.x - cx;
       const dyC = t.y - cy;
       if (dxC * dxC + dyC * dyC > rSq) continue;
+
+      if (t.kind === "rock") {
+        const rot = t.rotationRad ?? 0;
+        const base = t.r;
+
+        if (t.poly && t.poly.length >= 3) {
+          // Use precomputed poly (from generation) so visuals match collision.
+          const seed = (t.id ?? ((Math.floor(t.x * 97) ^ Math.floor(t.y * 131)) >>> 0)) >>> 0;
+          let s = seed ^ 0x9e3779b9;
+          const rand01 = (): number => {
+            s ^= s << 13;
+            s ^= s >>> 17;
+            s ^= s << 5;
+            return ((s >>> 0) % 10_000) / 10_000;
+          };
+
+          const c = 95 + Math.floor(rand01() * 55);
+          const c2 = c + 8 + Math.floor(rand01() * 28);
+
+          ctx.save();
+          ctx.translate(t.x, t.y);
+          ctx.rotate(rot);
+
+          const pts = t.poly;
+
+          ctx.fillStyle = "rgba(15, 20, 28, 0.25)";
+          ctx.beginPath();
+          ctx.moveTo(pts[0].x + 0.08, pts[0].y + 0.10);
+          for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x + 0.08, pts[i].y + 0.10);
+          ctx.closePath();
+          ctx.fill();
+
+          ctx.fillStyle = `rgba(${c}, ${c}, ${c2}, 0.95)`;
+          ctx.strokeStyle = "rgba(35, 40, 50, 0.90)";
+          ctx.lineWidth = 0.08;
+          ctx.beginPath();
+          ctx.moveTo(pts[0].x, pts[0].y);
+          for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+
+          const i0 = Math.floor(rand01() * pts.length);
+          const i1 = (i0 + 1) % pts.length;
+          ctx.strokeStyle = "rgba(235, 240, 250, 0.30)";
+          ctx.lineWidth = 0.05;
+          ctx.beginPath();
+          ctx.moveTo(pts[i0].x * 0.25, pts[i0].y * 0.25);
+          ctx.lineTo(pts[i1].x * 0.85, pts[i1].y * 0.85);
+          ctx.stroke();
+
+          ctx.restore();
+          continue;
+        }
+
+        // Deterministic pseudo-rng from id (fallback to position if missing).
+        const seed = (t.id ?? ((Math.floor(t.x * 97) ^ Math.floor(t.y * 131)) >>> 0)) >>> 0;
+        let s = seed ^ 0x9e3779b9;
+        const rand01 = (): number => {
+          // xorshift32
+          s ^= s << 13;
+          s ^= s >>> 17;
+          s ^= s << 5;
+          return ((s >>> 0) % 10_000) / 10_000;
+        };
+
+        const sides = 4 + Math.floor(rand01() * 5); // 4..8
+        const r0 = base * (1.05 + rand01() * 0.55);
+        const irregular = 0.22 + rand01() * 0.28;
+
+        // Slight color variation so big clumps don't look copy-pasted.
+        const c = 95 + Math.floor(rand01() * 55);
+        const c2 = c + 8 + Math.floor(rand01() * 28);
+
+        ctx.save();
+        ctx.translate(t.x, t.y);
+        ctx.rotate(rot);
+
+        // Build polygon points (irregular radii + slight angle jitter).
+        const pts: { x: number; y: number }[] = [];
+        const baseAng = -Math.PI / 2 + (rand01() - 0.5) * 0.25;
+        for (let i = 0; i < sides; i++) {
+          const a = baseAng + (i / sides) * Math.PI * 2 + (rand01() - 0.5) * 0.18;
+          const rr = r0 * (1 - irregular + rand01() * (irregular * 2));
+          pts.push({ x: Math.cos(a) * rr, y: Math.sin(a) * rr });
+        }
+
+        // Shadow
+        ctx.fillStyle = "rgba(15, 20, 28, 0.25)";
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x + 0.08, pts[0].y + 0.10);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x + 0.08, pts[i].y + 0.10);
+        ctx.closePath();
+        ctx.fill();
+
+        // Main rock
+        ctx.fillStyle = `rgba(${c}, ${c}, ${c2}, 0.95)`;
+        ctx.strokeStyle = "rgba(35, 40, 50, 0.90)";
+        ctx.lineWidth = 0.08;
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // Highlight ridge / facet line
+        const i0 = Math.floor(rand01() * pts.length);
+        const i1 = (i0 + 1) % pts.length;
+        ctx.strokeStyle = "rgba(235, 240, 250, 0.30)";
+        ctx.lineWidth = 0.05;
+        ctx.beginPath();
+        ctx.moveTo(pts[i0].x * 0.25, pts[i0].y * 0.25);
+        ctx.lineTo(pts[i1].x * 0.85, pts[i1].y * 0.85);
+        ctx.stroke();
+
+        ctx.restore();
+        continue;
+      }
 
       // Brown tree trunk (narrower)
       ctx.fillStyle = "rgba(90, 60, 40, 1.0)";
@@ -1384,15 +1524,31 @@ export class Renderer2D {
     const mainSize = Math.max(44, Math.min(84, Math.floor(Math.min(w, h) * 0.13)));
     const subSize = Math.max(16, Math.min(22, Math.floor(mainSize * 0.28)));
 
-    ctx.fillStyle = "rgba(0,0,0,0.40)";
-    ctx.fillRect(cx - 170, cy - 78, 340, 156);
+    // Dynamic backdrop sized to content (helps long strings like DELIVERY FAILED).
+    const fontMain = `${mainSize}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
+    const fontSub = `${subSize}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
+    ctx.font = fontMain;
+    const mainW = ctx.measureText(opts.text).width;
+    let subW = 0;
+    if (opts.subtext) {
+      ctx.font = fontSub;
+      subW = ctx.measureText(opts.subtext).width;
+    }
+    const maxTextW = Math.max(mainW, subW);
+    const padX = Math.max(24, Math.floor(mainSize * 0.7));
+    const padY = Math.max(18, Math.floor(mainSize * 0.45));
+    const panelW = Math.min(w - 24, Math.ceil(maxTextW + padX * 2));
+    const panelH = Math.ceil(mainSize + (opts.subtext ? subSize * 1.2 : 0) + padY * 2);
 
-    ctx.font = `${mainSize}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
+    ctx.fillStyle = "rgba(0,0,0,0.40)";
+    ctx.fillRect(cx - panelW / 2, cy - panelH / 2, panelW, panelH);
+
+    ctx.font = fontMain;
     ctx.fillStyle = "rgba(232,236,241,0.98)";
     ctx.fillText(opts.text, cx, cy - (opts.subtext ? 10 : 0));
 
     if (opts.subtext) {
-      ctx.font = `${subSize}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
+      ctx.font = fontSub;
       ctx.fillStyle = "rgba(170, 210, 255, 0.95)";
       ctx.fillText(opts.subtext, cx, cy + mainSize * 0.42);
     }
@@ -1917,7 +2073,7 @@ export class Renderer2D {
     waterBodies?: { x: number; y: number; radiusX: number; radiusY: number; rotation: number }[];
     enemies?: { x: number; y: number; type?: string }[];
     debris?: { x: number; y: number; lengthM: number; rotationRad: number; integrity01?: number }[];
-    segmentSurfaceNames?: ("tarmac" | "gravel" | "dirt" | "ice" | "offtrack")[];
+    segmentSurfaceNames?: ("tarmac" | "gravel" | "sand" | "ice" | "offtrack")[];
     start?: { x: number; y: number };
     finish?: { x: number; y: number };
     offsetX?: number;
@@ -1994,14 +2150,14 @@ export class Renderer2D {
     // 3. Move world so car is at (0,0) (which is visually center)
     ctx.translate(-opts.carX, -opts.carY);
 
-    const minimapRoadColorForSurface = (name: "tarmac" | "gravel" | "dirt" | "ice" | "offtrack"): string => {
+    const minimapRoadColorForSurface = (name: "tarmac" | "gravel" | "sand" | "ice" | "offtrack"): string => {
       switch (name) {
         case "tarmac":
           return "rgba(160, 180, 200, 0.85)";
         case "gravel":
           return "rgba(175, 180, 190, 0.85)"; // gray-ish gravel
-        case "dirt":
-          return "rgba(175, 130, 95, 0.85)";
+        case "sand":
+          return "rgba(220, 205, 150, 0.88)";
         case "ice":
           return "rgba(150, 220, 255, 0.9)";
         case "offtrack":
@@ -2053,7 +2209,7 @@ export class Renderer2D {
       ctx.lineWidth = lw;
       const names = opts.segmentSurfaceNames;
       for (let i = 0; i < pts.length - 1; i++) {
-        const surfaceName = (names?.[i] ?? "tarmac") as "tarmac" | "gravel" | "dirt" | "ice" | "offtrack";
+        const surfaceName = (names?.[i] ?? "tarmac") as "tarmac" | "gravel" | "sand" | "ice" | "offtrack";
         ctx.strokeStyle = minimapRoadColorForSurface(surfaceName);
         ctx.beginPath();
         ctx.moveTo(pts[i].x, pts[i].y);
@@ -2062,7 +2218,7 @@ export class Renderer2D {
       }
       if (shouldLoop) {
         const i = pts.length - 1;
-        const surfaceName = (names?.[i] ?? names?.[0] ?? "tarmac") as "tarmac" | "gravel" | "dirt" | "ice" | "offtrack";
+        const surfaceName = (names?.[i] ?? names?.[0] ?? "tarmac") as "tarmac" | "gravel" | "sand" | "ice" | "offtrack";
         ctx.strokeStyle = minimapRoadColorForSurface(surfaceName);
         ctx.beginPath();
         ctx.moveTo(pts[i].x, pts[i].y);

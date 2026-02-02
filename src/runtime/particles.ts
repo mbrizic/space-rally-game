@@ -117,12 +117,12 @@ export function getParticleConfig(surface: Surface): {
                 lifetime: 1.5, // Linger longer
                 spawnRate: 120 // MASSIVE dust clouds
             };
-        case "dirt":
+        case "sand":
             return {
-                color: "rgba(185, 145, 110, 0.80)", // BRIGHT brown dust
-                sizeM: 0.38, // BIGGER
-                lifetime: 1.3, // Linger longer
-                spawnRate: 100 // Big dust plumes
+                color: "rgba(240, 220, 150, 0.88)", // pale sandy dust
+                sizeM: 0.46,
+                lifetime: 1.6,
+                spawnRate: 135
             };
         case "ice":
             return {
@@ -136,7 +136,7 @@ export function getParticleConfig(surface: Surface): {
                 color: "rgba(150, 130, 100, 0.70)", // Brown/tan dust (not green)
                 sizeM: 0.32, // BIGGER
                 lifetime: 1.0, // Linger longer
-                spawnRate: 60 // Decent grass/dirt kick-up
+                spawnRate: 60 // Decent offtrack kick-up
             };
     }
 }

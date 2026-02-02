@@ -122,6 +122,48 @@
       z-index: 1;
     }
 
+    #start-menu .game-name {
+      position: relative;
+      z-index: 1;
+      margin: 0 0 10px;
+      font-weight: 1000;
+      text-transform: uppercase;
+      letter-spacing: 0.22em;
+      font-size: clamp(15px, 2.8vmin, 22px);
+      line-height: 1.15;
+      color: rgba(245, 248, 255, 0.98);
+      text-shadow:
+        0 2px 0 rgba(0, 0, 0, 0.55),
+        0 0 26px rgba(120, 200, 255, 0.18),
+        0 14px 38px rgba(0, 0, 0, 0.35);
+    }
+
+    #start-menu .game-name .sub {
+      display: inline-block;
+      margin-left: 8px;
+      letter-spacing: 0.14em;
+      font-size: 0.92em;
+      background: linear-gradient(90deg, rgba(255, 255, 255, 0.96), rgba(255, 220, 140, 0.95), rgba(255, 255, 255, 0.96));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      -webkit-text-fill-color: transparent;
+      text-shadow: none;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      #start-menu .game-name .sub {
+        background-size: 220% 100%;
+        animation: title-sheen 5.5s ease-in-out infinite;
+      }
+    }
+
+    @keyframes title-sheen {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+
     #start-menu svg.scraps-logo {
       width: min(480px, calc(100vw - 70px));
       height: auto;
@@ -290,17 +332,19 @@
       }
 
       #finish-panel .title {
-        font-size: 18px;
-        font-weight: 800;
-        letter-spacing: 0.08em;
-        color: rgba(255, 255, 255, 0.92);
+        font-size: 30px;
+        font-weight: 950;
+        letter-spacing: 0.10em;
+        text-align: center;
+        color: rgba(255, 255, 255, 0.96);
       }
 
       #finish-panel .sub {
         margin-top: 6px;
         color: rgba(255, 255, 255, 0.70);
-        font-size: 13px;
+        font-size: 14px;
         line-height: 1.25;
+        text-align: center;
       }
 
       #finish-panel .row {
@@ -829,17 +873,21 @@
           <div class="title">CONTRACT COMPLETE</div>
           <div class="sub" id="finish-sub">Time: -- | Track: --</div>
 
-          <div class="row">
+          <div class="row" id="finish-row-submit">
             <input id="finish-name" class="name-input" type="text" placeholder="Name" maxlength="40" />
             <button id="finish-submit" class="finish-btn" type="button">SUBMIT SCORE</button>
           </div>
 
-          <div class="row">
+          <div class="row" id="finish-row-vote">
             <button id="finish-vote-up" class="finish-btn up" type="button">👍 UPVOTE TRACK</button>
             <button id="finish-vote-down" class="finish-btn down" type="button">👎 DOWNVOTE TRACK</button>
-            <button id="finish-close" class="finish-btn secondary" type="button">CLOSE</button>
           </div>
 
+          <div class="row" id="finish-row-nav">
+            <button id="finish-new-track" class="finish-btn secondary" type="button">NEW TRACK</button>
+          </div>
+
+          <div id="finish-record" class="hint"></div>
           <div id="finish-msg" class="hint"></div>
           <div id="finish-board" class="board"></div>
         </div>
@@ -847,6 +895,7 @@
 
     <div id="start-menu">
       <div class="card">
+        <div class="game-name" aria-label="Space Delivery — SCRAPS">SPACE DELIVERY <span class="sub">— SCRAPS</span></div>
         <div class="logo-wrap" aria-label="SCRAPS">
           <svg class="scraps-logo" viewBox="0 0 920 240" role="img" aria-label="SCRAPS" xmlns="http://www.w3.org/2000/svg">
             <defs>

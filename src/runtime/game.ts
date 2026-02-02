@@ -15,7 +15,7 @@ import {
 } from "../sim/track";
 import { surfaceForTrackSM, type Surface } from "../sim/surface";
 import { quietZonesFromSeed, resolveStageTheme, stageMetaFromSeed, zoneEdgeFade, zoneIntensityAtTrackDistance, zonesAtTrackDistance, type QuietZone, type StageThemeKind, type TrackZone, type TrackZoneKind } from "../sim/stage";
-import { generateDebris, generateTrees, generateWaterBodies, pointToSegmentDistance, type CircleObstacle, type DebrisObstacle, type WaterBody } from "../sim/props";
+import { generateDebris, generateEdgeRocks, generateTrees, generateWaterBodies, pointToSegmentDistance, type CircleObstacle, type DebrisObstacle, type WaterBody } from "../sim/props";
 import { DriftDetector, DriftState, type DriftInfo } from "../sim/drift";
 import { createEngineState, defaultEngineParams, stepEngine, rpmFraction, shiftUp, shiftDown, type EngineState } from "../sim/engine";
 import { ParticlePool, getParticleConfig } from "./particles";
@@ -28,7 +28,7 @@ import type { TuningPanel } from "./tuning";
 import { ProjectilePool } from "../sim/projectile";
 import { EnemyPool, EnemyType, generateEnemies } from "../sim/enemy";
 import { createWeaponState, WeaponState, WeaponType } from "../sim/weapons";
-import { getHighScores, getTrackVotes, postGameStat, postHighScore, postTrackVote } from "../net/backend-api";
+import { getHighScoreChampions, getHighScores, getTrackVotes, postGameStat, postHighScore, postTrackVote } from "../net/backend-api";
 import { importReplayFromJsonText as importReplayFromJsonTextPure, parseReplayBundle, type ReplayBundleV2 } from "./replay";
 import { computeCameraFraming } from "./camera-framing";
 import {
@@ -113,15 +113,20 @@ export class Game {
   private finishPanel = {
     root: null as HTMLDivElement | null,
     sub: null as HTMLDivElement | null,
+    rowSubmit: null as HTMLDivElement | null,
+    rowVote: null as HTMLDivElement | null,
+    rowNav: null as HTMLDivElement | null,
     name: null as HTMLInputElement | null,
     submit: null as HTMLButtonElement | null,
     voteUp: null as HTMLButtonElement | null,
     voteDown: null as HTMLButtonElement | null,
+    retry: null as HTMLButtonElement | null,
+    newTrack: null as HTMLButtonElement | null,
     replayState: null as HTMLButtonElement | null,
     replayInput: null as HTMLButtonElement | null,
     replayDownload: null as HTMLButtonElement | null,
     replayAutoDownload: null as HTMLInputElement | null,
-    close: null as HTMLButtonElement | null,
+    record: null as HTMLDivElement | null,
     msg: null as HTMLDivElement | null,
     board: null as HTMLDivElement | null
   };
@@ -172,7 +177,7 @@ export class Game {
   private track!: ReturnType<typeof createTrackFromDefinition>; // Will be set in constructor
   private trackSegmentFillStyles: string[] = [];
   private trackSegmentShoulderStyles: string[] = [];
-  private trackSegmentSurfaceNames: ("tarmac" | "gravel" | "dirt" | "ice" | "offtrack")[] = [];
+  private trackSegmentSurfaceNames: ("tarmac" | "gravel" | "sand" | "ice" | "offtrack")[] = [];
   private trees: CircleObstacle[] = [];
   private waterBodies: WaterBody[] = [];
   private debris: DebrisObstacle[] = [];
@@ -593,6 +598,7 @@ export class Game {
     this.backendFinishedSent = false;
     this.backendWreckedSent = false;
 
+    if (this.finishPanel.record) this.finishPanel.record.textContent = "";
     if (this.finishPanel.msg) this.finishPanel.msg.textContent = "";
     if (this.finishPanel.board) this.finishPanel.board.textContent = "";
     this.setFinishPanelVisible(false);
@@ -607,15 +613,19 @@ export class Game {
   private initFinishPanel(): void {
     this.finishPanel.root = document.getElementById("finish-panel") as HTMLDivElement | null;
     this.finishPanel.sub = document.getElementById("finish-sub") as HTMLDivElement | null;
+    this.finishPanel.rowSubmit = document.getElementById("finish-row-submit") as HTMLDivElement | null;
+    this.finishPanel.rowVote = document.getElementById("finish-row-vote") as HTMLDivElement | null;
+    this.finishPanel.rowNav = document.getElementById("finish-row-nav") as HTMLDivElement | null;
     this.finishPanel.name = document.getElementById("finish-name") as HTMLInputElement | null;
     this.finishPanel.submit = document.getElementById("finish-submit") as HTMLButtonElement | null;
     this.finishPanel.voteUp = document.getElementById("finish-vote-up") as HTMLButtonElement | null;
     this.finishPanel.voteDown = document.getElementById("finish-vote-down") as HTMLButtonElement | null;
+    this.finishPanel.newTrack = document.getElementById("finish-new-track") as HTMLButtonElement | null;
     this.finishPanel.replayState = document.getElementById("finish-replay-state") as HTMLButtonElement | null;
     this.finishPanel.replayInput = document.getElementById("finish-replay-input") as HTMLButtonElement | null;
     this.finishPanel.replayDownload = document.getElementById("finish-replay-download") as HTMLButtonElement | null;
     this.finishPanel.replayAutoDownload = document.getElementById("finish-replay-auto-download") as HTMLInputElement | null;
-    this.finishPanel.close = document.getElementById("finish-close") as HTMLButtonElement | null;
+    this.finishPanel.record = document.getElementById("finish-record") as HTMLDivElement | null;
     this.finishPanel.msg = document.getElementById("finish-msg") as HTMLDivElement | null;
     this.finishPanel.board = document.getElementById("finish-board") as HTMLDivElement | null;
 
@@ -632,13 +642,6 @@ export class Game {
       });
     }
 
-    this.finishPanel.close?.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      this.finishPanelShown = false;
-      this.setFinishPanelVisible(false);
-    });
-
     this.finishPanel.submit?.addEventListener("click", async (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -653,11 +656,6 @@ export class Game {
         return;
       }
 
-      if (this.netMode === "solo" && this.soloMode === "practice") {
-        if (this.finishPanel.msg) this.finishPanel.msg.textContent = "Practice runs can't submit scores.";
-        return;
-      }
-
       if (this.finishPanel.submit) this.finishPanel.submit.disabled = true;
       if (this.finishPanel.msg) this.finishPanel.msg.textContent = "Submitting score...";
 
@@ -668,11 +666,31 @@ export class Game {
       }
 
       const avgSpeedKmH = this.finishTimeSeconds !== null ? (this.track.totalLengthM / this.finishTimeSeconds) * 3.6 : undefined;
-      const res = await postHighScore({ name, scoreMs, seed, mode: this.soloMode, avgSpeedKmH });
+      const res = await postHighScore({ name, scoreMs, seed, mode: this.soloMode, avgSpeedKmH, netMode: this.netMode });
       if (this.finishPanel.msg) this.finishPanel.msg.textContent = res.ok ? "Score submitted." : "Score submit failed (offline?).";
       if (this.finishPanel.submit) this.finishPanel.submit.disabled = false;
 
       void this.refreshFinishPanelData();
+    });
+
+    this.finishPanel.newTrack?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (this.netMode === "client") {
+        // Allow net clients to escape the finish screen on mobile (no keyboard Escape).
+        const url = new URL(window.location.href);
+        url.searchParams.delete("room");
+        url.searchParams.delete("host");
+        url.searchParams.delete("role");
+        window.location.href = url.toString();
+        return;
+      }
+
+      this.finishPanelShown = false;
+      this.setFinishPanelVisible(false);
+      // Move on.
+      this.randomizeTrack();
+      if (!this.audioUnlocked) this.tryUnlockAudio();
     });
 
     const vote = async (type: "up" | "down"): Promise<void> => {
@@ -984,7 +1002,8 @@ export class Game {
     }
 
     const timeS = this.finishTimeSeconds !== null ? this.finishTimeSeconds.toFixed(2) : "--";
-    if (this.finishPanel.sub) this.finishPanel.sub.textContent = `Time: ${timeS}s | Track: ${this.finishPanelSeed}`;
+    if (this.finishPanel.sub) this.finishPanel.sub.textContent = `Time: ${timeS}s`;
+    if (this.finishPanel.record) this.finishPanel.record.textContent = "";
     if (this.finishPanel.msg) this.finishPanel.msg.textContent = "";
 
     void this.refreshFinishPanelData();
@@ -1000,13 +1019,75 @@ export class Game {
       return v === "up" || v === "down" ? v : null;
     })();
 
-    if (this.finishPanel.voteUp) this.finishPanel.voteUp.disabled = this.netMode === "client" || !!voted;
-    if (this.finishPanel.voteDown) this.finishPanel.voteDown.disabled = this.netMode === "client" || !!voted;
+    const canVote = this.netMode !== "client" && this.soloMode !== "practice";
+    if (this.finishPanel.voteUp) this.finishPanel.voteUp.disabled = !canVote || !!voted;
+    if (this.finishPanel.voteDown) this.finishPanel.voteDown.disabled = !canVote || !!voted;
 
-    const [votes, scores] = await Promise.all([
+    // For testing: allow score submissions from solo + practice too (still disallow net clients).
+    const canSubmit = this.netMode !== "client";
+    if (this.finishPanel.rowSubmit) this.finishPanel.rowSubmit.style.display = canSubmit ? "flex" : "none";
+    if (this.finishPanel.submit) this.finishPanel.submit.disabled = !canSubmit;
+
+    if (this.finishPanel.rowVote) this.finishPanel.rowVote.style.display = canVote ? "flex" : "none";
+    if (this.finishPanel.rowNav) this.finishPanel.rowNav.style.display = "flex";
+
+    // Keep finish navigation usable in every mode.
+    if (this.finishPanel.newTrack) {
+      if (this.netMode === "client") {
+        this.finishPanel.newTrack.textContent = "LEAVE ROOM";
+        this.finishPanel.newTrack.disabled = false;
+      } else {
+        this.finishPanel.newTrack.textContent = "NEW TRACK";
+        this.finishPanel.newTrack.disabled = false;
+      }
+    }
+
+    const [votes, scores, champions] = await Promise.all([
       getTrackVotes(seed),
-      getHighScores({ seed, limit: 6 })
+      // Fetch more than we display so we can show counts + ties.
+      getHighScores({ seed, limit: 100 }),
+      getHighScoreChampions({ limit: 5 })
     ]);
+
+    // Record/congrats messaging (separate from transient submit/vote status).
+    if (this.finishPanel.record) {
+      const playerScoreMs = this.finishPanelScoreMs;
+      const playerName = (this.finishPanel.name?.value ?? "").trim().slice(0, 40)
+        || (localStorage.getItem("spaceRallyName") ?? "").trim().slice(0, 40)
+        || "anonymous";
+
+      if (!scores.ok || playerScoreMs === null) {
+        this.finishPanel.record.textContent = "";
+      } else {
+        const rows = scores.scores;
+        const hasAny = rows.length > 0;
+        const bestMs = hasAny ? rows[0]!.score : null;
+        const wouldBeBest = bestMs === null || playerScoreMs <= bestMs;
+        const isTie = bestMs !== null && playerScoreMs === bestMs;
+        const bestTieCount = bestMs !== null ? rows.filter((r) => r.score === bestMs).length : 0;
+
+        // Heuristic: detect whether *this exact run* is already on the board.
+        const probablyAlreadyRecorded = rows.some((r) => r.score === playerScoreMs && r.name === playerName);
+        const otherFinishers = Math.max(0, rows.length - (probablyAlreadyRecorded ? 1 : 0));
+        const otherFinishersLabel = otherFinishers === 1 ? "other person" : "other people";
+
+        if (!wouldBeBest) {
+          this.finishPanel.record.textContent = "";
+        } else if (!hasAny) {
+          this.finishPanel.record.textContent = "Congrats — you're the first recorded finisher on this seed (0 others so far). Submit to claim #1.";
+        } else if (isTie) {
+          if (bestTieCount >= 2) {
+            const others = Math.max(0, bestTieCount - 1);
+            this.finishPanel.record.textContent = `Congrats — you're tied for #1. (${others} ${others === 1 ? "other" : "others"} share the best time.)`;
+          } else {
+            this.finishPanel.record.textContent = "Congrats — you're currently #1 on this seed.";
+          }
+        } else {
+          const prevBestS = bestMs !== null ? (bestMs / 1000).toFixed(3) : "--";
+          this.finishPanel.record.textContent = `Congrats — you're currently #1 on this seed (previous best: ${prevBestS}s). ${otherFinishers} ${otherFinishersLabel} have recorded a finish.`;
+        }
+      }
+    }
 
     const lines: string[] = [];
     if (votes.ok) {
@@ -1019,13 +1100,31 @@ export class Game {
     lines.push("TOP TIMES (THIS TRACK)");
 
     if (scores.ok && scores.scores.length > 0) {
-      for (let i = 0; i < Math.min(6, scores.scores.length); i++) {
+      const showN = Math.min(6, scores.scores.length);
+      if (scores.scores.length > showN) {
+        lines.push(`(showing ${showN} of ${scores.scores.length})`);
+        lines.push("");
+      }
+      for (let i = 0; i < showN; i++) {
         const s = scores.scores[i];
         const sec = (s.score / 1000).toFixed(3);
         lines.push(`${i + 1}. ${sec}s  ${s.name}`);
       }
     } else {
       lines.push("(none yet)");
+    }
+
+    lines.push("");
+    lines.push("TOP #1 HOLDERS");
+    if (champions.ok && champions.leaders.length > 0) {
+      for (let i = 0; i < champions.leaders.length; i++) {
+        const c = champions.leaders[i];
+        const total = Math.max(0, champions.totalTracks);
+        const share = total > 0 ? Math.round((c.firstPlaceTracks / total) * 100) : 0;
+        lines.push(`${i + 1}. ${c.firstPlaceTracks} #1s (${c.soloFirstPlaceTracks} solo)  ${c.name}  ${total > 0 ? `(${share}%)` : ""}`.trim());
+      }
+    } else {
+      lines.push("(unavailable)");
     }
 
     if (voted) {
@@ -2646,7 +2745,7 @@ export class Game {
     const theme = resolveStageTheme(themeRef);
 
     // Build an initial track so we can sample sM for deterministic surface/width generation.
-    // Then compute per-segment widths that vary more (especially for gravel/dirt).
+    // Then compute per-segment widths that vary more (especially for gravel/sand).
     // Keep the result stable across peers via (seed + segment index) hashing.
     const initialTrack = createTrackFromDefinition(def);
 
@@ -2675,7 +2774,7 @@ export class Game {
       if (surface.name === "tarmac") {
         minMult = 0.75;
         maxMult = 1.08;
-      } else if (surface.name === "gravel" || surface.name === "dirt") {
+      } else if (surface.name === "gravel" || surface.name === "sand") {
         // Gravel/sand routes: can be very tight squeezes or moderately wide sections.
         minMult = 0.30;
         maxMult = 1.40;
@@ -2729,6 +2828,7 @@ export class Game {
 
     const treeSeed = Math.floor(def.meta?.seed ?? 20260123);
     this.trees = generateTrees(this.track, { seed: treeSeed, themeKind: themeRef.kind });
+    this.trees.push(...generateEdgeRocks(this.track, { seed: treeSeed + 4242, themeKind: themeRef.kind, trackSeed }));
     this.waterBodies = generateWaterBodies(this.track, { seed: treeSeed + 777, quietZones: this.currentQuietZones });
     const spawnEnemies = !(this.netMode === "solo" && this.soloMode === "practice");
     if (spawnEnemies) {
@@ -2932,11 +3032,11 @@ export class Game {
       .filter((z) => z.kind === "sandstorm")
       .reduce((m, z) => Math.max(m, z.intensity01), 0);
 
-    // Rain should be very slippy - forces you to slow down or lose control.
+    // Rain should be slippy, but not overly punishing.
     // Lower frictionMu = less max tire force = less grip = more sliding.
-    const rainGripMult = 1 - 0.62 * rainIntensity;
+    const rainGripMult = 1 - 0.45 * rainIntensity;
     const sandGripMult = 1 - 0.18 * sandIntensity;
-    const zoneGripMult = clamp(rainGripMult * sandGripMult, 0.55, 1.0);
+    const zoneGripMult = clamp(rainGripMult * sandGripMult, 0.62, 1.0);
     const zoneRRMult = clamp(1 + 0.22 * sandIntensity, 1.0, 1.35);
 
     const baseSurface = surfaceForTrackSM(
@@ -3019,12 +3119,12 @@ export class Game {
 
     // Scale wheelspin by surface - much less on tarmac, more on low-grip surfaces
     const surfaceFriction = this.lastSurface.frictionMu;
-    const wheelspinSurfaceScale = Math.max(0.1, 1.5 - surfaceFriction); // 0.5 on tarmac, 1.0+ on gravel/dirt
+    const wheelspinSurfaceScale = Math.max(0.1, 1.5 - surfaceFriction); // 0.5 on tarmac, 1.0+ on gravel/sand
     const wheelspinIntensity = rawWheelspinIntensity * wheelspinSurfaceScale;
 
     // Hard braking can kick up gravel/sand even without a big yaw slip.
     const surfaceName = this.lastSurface.name;
-    const surfaceIsLoose = surfaceName === "gravel" || surfaceName === "dirt" || surfaceName === "offtrack";
+    const surfaceIsLoose = surfaceName === "gravel" || surfaceName === "sand" || surfaceName === "offtrack";
     const brakeSurfaceScale = surfaceIsLoose ? 1.0 : 0.35;
     const brakeIntensity = clamp(brake * clamp(speedMS / 18, 0, 1) * brakeSurfaceScale * clamp(1.35 - surfaceFriction, 0, 1), 0, 1);
 
@@ -3032,7 +3132,7 @@ export class Game {
     const totalIntensity = Math.max(driftIntensity, wheelspinIntensity * (1 - Math.min(speedMS / 30, 1)), brakeIntensity);
 
     // Slide/gravel sound: tie it to the same signal that drives particles.
-    // More audible on gravel/dirt/offtrack, and stronger while actually sliding.
+    // More audible on gravel/sand/offtrack, and stronger while actually sliding.
     // Prefer regular gravel/loose spray a bit more, and keep drift from dominating the mix.
     const driftLoud = clamp(this.driftInfo.intensity * 0.95, 0, 1);
     const particleSignal = clamp((totalIntensity - 0.06) / 0.68, 0, 1);
@@ -3174,7 +3274,7 @@ export class Game {
       if (this.gunFlashLastUpdateMs === 0) this.gunFlashLastUpdateMs = nowMs;
       const dt = clamp((nowMs - this.gunFlashLastUpdateMs) / 1000, 0, 0.05);
       this.gunFlashLastUpdateMs = nowMs;
-      this.gunFlash01 = Math.max(0, this.gunFlash01 - dt * 16);
+      this.gunFlash01 = Math.max(0, this.gunFlash01 - dt * 4);
     }
 
     // Hide touch controls after finish/wrecked (or when hard-locked) so the UI matches the lockout.
@@ -3291,7 +3391,8 @@ export class Game {
       newTrackBtn.textContent = this.damage01 >= 1 ? "Go try another one" : "New Track";
     }
 
-    this.setFinishPanelVisible(this.raceFinished && this.finishPanelShown);
+    const showFinishPanel = this.raceFinished && this.finishPanelShown && !this.replayPlayback && !this.replayInputPlayback;
+    this.setFinishPanelVisible(showFinishPanel);
 
     const framing = computeCameraFraming({
       widthCssPx: width,
@@ -3518,6 +3619,7 @@ export class Game {
     if (eclipseIntensity > 0.02) {
       this.renderer.drawEclipseOverlay({
         intensity01: eclipseIntensity,
+        flash01: this.gunFlash01,
         carX: this.state.car.xM,
         carY: this.state.car.yM,
         carHeadingRad: this.state.car.headingRad
@@ -3582,7 +3684,7 @@ export class Game {
     const rightStackX = width - hudPadding;
 
     // 2a. Rally Info Panel (Top Right)
-    if (!this.editorMode) {
+    if (!this.editorMode && !showFinishPanel) {
       // Calculate split time color
       const nowTimeSeconds = this.wreckedTimeSeconds ?? this.state.timeSeconds;
       const raceTime = this.raceActive && !this.raceFinished
@@ -3911,7 +4013,7 @@ export class Game {
     this.perfTimingsMs.rain = 0;
     if (rainIntensity > 0.05) {
       const rainStartMs = performance.now();
-      this.renderer.drawScreenOverlay(`rgba(60, 120, 210, ${clamp(0.02 + 0.08 * rainIntensity, 0, 0.12)})`);
+      this.renderer.drawScreenOverlay(`rgba(28, 95, 220, ${clamp(0.04 + 0.14 * rainIntensity, 0, 0.22)})`);
       this.renderer.drawRain({ intensity01: rainIntensity, timeSeconds: this.state.timeSeconds });
       this.perfTimingsMs.rain = performance.now() - rainStartMs;
     }
@@ -3962,11 +4064,11 @@ export class Game {
     if (this.damage01 >= 1) {
       this.renderer.drawCenterText({
         text: "DELIVERY FAILED",
-        subtext: "You've also wrecked your car and almost died."
+        subtext: "Also, you've wrecked your car and almost died."
       });
     }
 
-    if (this.raceFinished) {
+    if (this.raceFinished && !this.finishPanelShown) {
       const totalTime = this.finishTimeSeconds ?? 1;
       const avgSpeedKmH = (this.track.totalLengthM / totalTime) * 3.6;
       this.renderer.drawFinishScreen({
@@ -4684,10 +4786,85 @@ export class Game {
 
     const carRadius = 0.85; // Slightly tighter for narrow trunks
     for (const tree of this.trees) {
+      if (tree.kind === "rock" && tree.poly && tree.poly.length >= 3) {
+        const rockExtentR = tree.collR ?? tree.r;
+        const dxC = this.state.car.xM - tree.x;
+        const dyC = this.state.car.yM - tree.y;
+        const broadR = carRadius + rockExtentR + 0.25;
+        if (dxC * dxC + dyC * dyC > broadR * broadR) continue;
+
+        const rot = tree.rotationRad ?? 0;
+        const worldPoly = transformPoly(tree.poly, tree.x, tree.y, rot);
+        const inside = pointInConvexPolygon(this.state.car.xM, this.state.car.yM, worldPoly);
+        const cp = closestPointOnPolygon(this.state.car.xM, this.state.car.yM, worldPoly);
+        const vx = this.state.car.xM - cp.x;
+        const vy = this.state.car.yM - cp.y;
+        const dist = Math.hypot(vx, vy);
+
+        if (!inside && dist >= carRadius) continue;
+
+        let nx: number;
+        let ny: number;
+        if (dist > 1e-6) {
+          // Normal pointing from obstacle to car (outside). If inside, flip for pushout.
+          const nToCarX = vx / dist;
+          const nToCarY = vy / dist;
+          nx = inside ? -nToCarX : nToCarX;
+          ny = inside ? -nToCarY : nToCarY;
+        } else {
+          const dxc = this.state.car.xM - tree.x;
+          const dyc = this.state.car.yM - tree.y;
+          const d = Math.hypot(dxc, dyc);
+          nx = d > 1e-6 ? dxc / d : 1;
+          ny = d > 1e-6 ? dyc / d : 0;
+        }
+
+        const penetration = inside ? (carRadius + dist) : (carRadius - dist);
+        if (penetration > 0) {
+          this.state.car.xM += nx * penetration;
+          this.state.car.yM += ny * penetration;
+        }
+
+        const cosH = Math.cos(this.state.car.headingRad);
+        const sinH = Math.sin(this.state.car.headingRad);
+        const vxW = this.state.car.vxMS * cosH - this.state.car.vyMS * sinH;
+        const vyW = this.state.car.vxMS * sinH + this.state.car.vyMS * cosH;
+
+        const vN = vxW * nx + vyW * ny;
+        const tx = -ny;
+        const ty = nx;
+        const vT = vxW * tx + vyW * ty;
+
+        const restitution = 0.10;
+        const tangentialDamping = 0.42;
+
+        const newVN = vN < 0 ? -vN * restitution : vN;
+        const newVT = vT * tangentialDamping;
+
+        const newVxW = newVN * nx + newVT * tx;
+        const newVyW = newVN * ny + newVT * ty;
+
+        this.state.car.vxMS = newVxW * cosH + newVyW * sinH;
+        this.state.car.vyMS = -newVxW * sinH + newVyW * cosH;
+        this.state.car.yawRateRadS *= 0.4;
+
+        const impact = vN < 0 ? Math.abs(vN) : 0;
+        if (impact > 1) {
+          const dmg = 0.032;
+          this.damage01 = clamp(this.damage01 + impact * dmg, 0, 1);
+          const shakeIntensity = Math.min(impact * 0.26, 2.6);
+          this.cameraShakeX = (Math.random() - 0.5) * shakeIntensity;
+          this.cameraShakeY = (Math.random() - 0.5) * shakeIntensity;
+          this.collisionFlashAlpha = Math.min(impact * 0.10, 0.35);
+        }
+        continue;
+      }
+
       const dx = this.state.car.xM - tree.x;
       const dy = this.state.car.yM - tree.y;
       const dist = Math.hypot(dx, dy);
-      const minDist = carRadius + tree.r * 0.4; // Matches visual trunk scale
+      const obstacleR = tree.collR ?? (tree.kind === "rock" ? tree.r * 0.46 : tree.r * 0.4);
+      const minDist = carRadius + obstacleR;
       if (dist >= minDist || dist < 1e-6) continue;
 
       const nx = dx / dist;
@@ -4709,8 +4886,8 @@ export class Game {
       const ty = nx;
       const vT = vxW * tx + vyW * ty;
 
-      const restitution = 0.25; // More bouncy rebound
-      const tangentialDamping = 0.5;
+      const restitution = tree.kind === "rock" ? 0.10 : 0.25;
+      const tangentialDamping = tree.kind === "rock" ? 0.42 : 0.5;
 
       // Rebound if moving towards tree (vN < 0)
       const newVN = vN < 0 ? -vN * restitution : vN;
@@ -4725,13 +4902,12 @@ export class Game {
 
       const impact = vN < 0 ? Math.abs(vN) : 0;
       if (impact > 1) {
-        // More collision HP: reduce damage per impact
-        this.damage01 = clamp(this.damage01 + impact * 0.05, 0, 1);
-        // Camera shake for tree collisions
-        const shakeIntensity = Math.min(impact * 0.25, 2.5);
+        const dmg = tree.kind === "rock" ? 0.032 : 0.05;
+        this.damage01 = clamp(this.damage01 + impact * dmg, 0, 1);
+        const shakeIntensity = Math.min(impact * (tree.kind === "rock" ? 0.26 : 0.25), 2.6);
         this.cameraShakeX = (Math.random() - 0.5) * shakeIntensity;
         this.cameraShakeY = (Math.random() - 0.5) * shakeIntensity;
-        this.collisionFlashAlpha = Math.min(impact * 0.12, 0.4);
+        this.collisionFlashAlpha = Math.min(impact * (tree.kind === "rock" ? 0.10 : 0.12), 0.35);
       }
     }
   }
@@ -4876,15 +5052,33 @@ export class Game {
     for (const proj of projectiles) {
       let hit = false;
       
-      // Check collision with trees
+      // Check collision with trees/rocks
       for (const tree of this.trees) {
-        const dx = proj.x - tree.x;
-        const dy = proj.y - tree.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist < tree.r * 0.4) {
-          projectilesToRemove.push(proj.id);
-          hit = true;
-          break;
+        if (tree.kind === "rock" && tree.poly && tree.poly.length >= 3) {
+          const rot = tree.rotationRad ?? 0;
+          const worldPoly = transformPoly(tree.poly, tree.x, tree.y, rot);
+          if (pointInConvexPolygon(proj.x, proj.y, worldPoly)) {
+            projectilesToRemove.push(proj.id);
+            hit = true;
+            break;
+          }
+          const cp = closestPointOnPolygon(proj.x, proj.y, worldPoly);
+          const d = Math.hypot(proj.x - cp.x, proj.y - cp.y);
+          if (d < 0.03) {
+            projectilesToRemove.push(proj.id);
+            hit = true;
+            break;
+          }
+        } else {
+          const dx = proj.x - tree.x;
+          const dy = proj.y - tree.y;
+          const dist = Math.hypot(dx, dy);
+          const hitR = tree.collR ?? (tree.kind === "rock" ? tree.r * 0.46 : tree.r * 0.4);
+          if (dist < hitR) {
+            projectilesToRemove.push(proj.id);
+            hit = true;
+            break;
+          }
         }
       }
       
@@ -4984,17 +5178,34 @@ export class Game {
     for (const proj of projectiles) {
       let hit = false;
 
-      // Check collision with trees
+      // Check collision with trees/rocks
       for (const tree of this.trees) {
-        const dx = proj.x - tree.x;
-        const dy = proj.y - tree.y;
-        const dist = Math.hypot(dx, dy);
+        if (tree.kind === "rock" && tree.poly && tree.poly.length >= 3) {
+          const rot = tree.rotationRad ?? 0;
+          const worldPoly = transformPoly(tree.poly, tree.x, tree.y, rot);
+          if (pointInConvexPolygon(proj.x, proj.y, worldPoly)) {
+            projectilesToRemove.push(proj.id);
+            hit = true;
+            break;
+          }
+          const cp = closestPointOnPolygon(proj.x, proj.y, worldPoly);
+          const d = Math.hypot(proj.x - cp.x, proj.y - cp.y);
+          if (d < 0.03) {
+            projectilesToRemove.push(proj.id);
+            hit = true;
+            break;
+          }
+        } else {
+          const dx = proj.x - tree.x;
+          const dy = proj.y - tree.y;
+          const dist = Math.hypot(dx, dy);
 
-        // Projectile hits if within tree trunk radius
-        if (dist < tree.r * 0.4) { // Matches visual trunk scale
-          projectilesToRemove.push(proj.id);
-          hit = true;
-          break;
+          const hitR = tree.collR ?? (tree.kind === "rock" ? tree.r * 0.46 : tree.r * 0.4);
+          if (dist < hitR) {
+            projectilesToRemove.push(proj.id);
+            hit = true;
+            break;
+          }
         }
       }
 
@@ -5240,14 +5451,74 @@ export class Game {
   }
 }
 
+function transformPoly(poly: { x: number; y: number }[], tx: number, ty: number, rotRad: number): { x: number; y: number }[] {
+  const c = Math.cos(rotRad);
+  const s = Math.sin(rotRad);
+  const out: { x: number; y: number }[] = new Array(poly.length);
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i];
+    const x = p.x * c - p.y * s;
+    const y = p.x * s + p.y * c;
+    out[i] = { x: x + tx, y: y + ty };
+  }
+  return out;
+}
+
+function pointInConvexPolygon(px: number, py: number, poly: { x: number; y: number }[]): boolean {
+  // Assumes vertices are in CW or CCW order.
+  let sign = 0;
+  const n = poly.length;
+  for (let i = 0; i < n; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % n];
+    const cross = (b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x);
+    if (Math.abs(cross) < 1e-9) continue;
+    const s = cross > 0 ? 1 : -1;
+    if (sign === 0) sign = s;
+    else if (sign !== s) return false;
+  }
+  return true;
+}
+
+function closestPointOnSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): { x: number; y: number } {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const apx = px - ax;
+  const apy = py - ay;
+  const abLen2 = abx * abx + aby * aby;
+  const t = abLen2 > 1e-9 ? Math.max(0, Math.min(1, (apx * abx + apy * aby) / abLen2)) : 0;
+  return { x: ax + abx * t, y: ay + aby * t };
+}
+
+function closestPointOnPolygon(px: number, py: number, poly: { x: number; y: number }[]): { x: number; y: number } {
+  let bestX = poly[0].x;
+  let bestY = poly[0].y;
+  let bestD2 = Number.POSITIVE_INFINITY;
+  const n = poly.length;
+  for (let i = 0; i < n; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % n];
+    const cp = closestPointOnSegment(px, py, a.x, a.y, b.x, b.y);
+    const dx = px - cp.x;
+    const dy = py - cp.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestD2) {
+      bestD2 = d2;
+      bestX = cp.x;
+      bestY = cp.y;
+    }
+  }
+  return { x: bestX, y: bestY };
+}
+
 function surfaceFillStyle(surface: Surface): string {
   switch (surface.name) {
     case "tarmac":
       return "rgba(70, 75, 85, 1.0)"; // Darker gray - asphalt (opaque for predictability)
     case "gravel":
       return "rgba(140, 145, 150, 1.0)"; // Gray-ish gravel (opaque)
-    case "dirt":
-      return "rgba(140, 100, 70, 1.0)"; // Brown - dirt (opaque)
+    case "sand":
+      return "rgba(200, 180, 120, 1.0)"; // Pale tan - sand (opaque)
     case "ice":
       return "rgba(180, 220, 245, 1.0)"; // Light blue - ice (opaque)
     case "offtrack":

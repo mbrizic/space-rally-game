@@ -90,7 +90,7 @@ export function resolveStageTheme(ref: StageThemeRef): StageTheme {
       return {
         kind: "temperate",
         name: "Temperate Stage",
-        // Less rainforest-y: more dirt/rock tones with a hint of vegetation.
+        // Less rainforest-y: more earthy/rock tones with a hint of vegetation.
         terrainColor: "rgba(105, 95, 80, 1)",
         bgColor: "rgba(82, 76, 64, 1)",
         minimapBgColor: "rgba(105, 95, 80, 0.22)",

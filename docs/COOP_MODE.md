@@ -23,7 +23,6 @@ See `MULTIPLAYER.md` for:
 ### Phase B: Navigator info tools
 
 Candidate features:
-- Optional idea: **Ping/marker system** (navigator taps minimap to place a marker in the driver’s view).
 - Optional: “danger zones” and timed callouts.
 
 ### Phase C: Mobile-first layouts
@@ -34,5 +33,4 @@ Candidate features:
 ## Constraints
 
 - Keep host authoritative.
-- Minimize bandwidth (markers should be low-frequency events).
 - UX should work on mobile + desktop.

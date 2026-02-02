@@ -33,10 +33,10 @@ export function defaultSlideAudioParams(): SlideAudioParams {
                 gain: 0.72,
                 noiseType: "white",
             },
-            dirt: {
-                filterFreq: 500, // lower, muffled
-                filterQ: 1.2,
-                gain: 0.48,
+            sand: {
+                filterFreq: 950, // finer hiss than gravel
+                filterQ: 1.3,
+                gain: 0.78,
                 noiseType: "pink",
             },
             offtrack: {

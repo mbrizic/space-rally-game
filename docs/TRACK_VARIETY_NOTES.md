@@ -8,14 +8,14 @@ Rally games need:
 - **Exciting tracks**: Hairpins, tight corners, technical sections
 - **No self-intersections**: Track should never loop over itself
 - **No long straights**: Boring sections kill the rally feel
-- **Varied surfaces**: Random surface order (tarmac, gravel, dirt, ice)
+- **Varied surfaces**: Random surface order (tarmac, gravel/sand, ice)
 
 These requirements are in tension - hairpins naturally want to loop back!
 
 ## Visual Design Rules (Important)
 
 ### Road color must be predictable
-- Road segment colors are derived only from the surface type (tarmac/gravel/dirt/ice).
+- Road segment colors are derived only from the surface type (tarmac/gravel/sand/ice).
 - Track theme/type must never recolor the road, because players learn surface→handling by color.
 
 ### Theme lives under/around the road

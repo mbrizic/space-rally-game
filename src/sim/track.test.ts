@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  createDefaultTrackDefinition,
   createProceduralTrackDefinition,
   createPointToPointTrackDefinition,
   createTrackFromDefinition,
@@ -9,12 +8,12 @@ import {
 } from "./track";
 
 describe("track generation", () => {
-  it("creates default track with valid properties", () => {
-    const def = createDefaultTrackDefinition();
+  it("creates point-to-point track with valid properties", () => {
+    const def = createPointToPointTrackDefinition(123);
 
     expect(def.points.length).toBeGreaterThan(10);
     expect(def.baseWidthM).toBeGreaterThan(0);
-    expect(def.meta?.name).toBe("Default");
+    expect(def.meta?.seed).toBe(123);
   });
 
   it("creates procedural track with valid properties", () => {
@@ -44,7 +43,7 @@ describe("track generation", () => {
   });
 
   it("track from definition has valid cumulative lengths", () => {
-    const def = createDefaultTrackDefinition();
+    const def = createProceduralTrackDefinition(42);
     const track = createTrackFromDefinition(def);
 
     expect(track.cumulativeLengthsM.length).toBe(track.points.length);
@@ -63,7 +62,7 @@ describe("track generation", () => {
   });
 
   it("projects point onto track correctly", () => {
-    const def = createDefaultTrackDefinition();
+    const def = createProceduralTrackDefinition(42);
     const track = createTrackFromDefinition(def);
 
     // Project a point that's on the track
@@ -75,7 +74,7 @@ describe("track generation", () => {
   });
 
   it("calculates distance to centerline correctly", () => {
-    const def = createDefaultTrackDefinition();
+    const def = createProceduralTrackDefinition(42);
     const track = createTrackFromDefinition(def);
 
     // Get a point on the track
@@ -134,7 +133,7 @@ describe("track generation", () => {
   });
 
   it("projection never produces NaN", () => {
-    const def = createDefaultTrackDefinition();
+    const def = createProceduralTrackDefinition(42);
     const track = createTrackFromDefinition(def);
 
     // Test with various points

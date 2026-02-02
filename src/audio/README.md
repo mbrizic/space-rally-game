@@ -66,7 +66,7 @@ The audio system uses a multi-channel mixing approach to ensure all sounds can b
 
 ### Tire/Slide Audio
 - Uses filtered white/pink noise
-- Filter characteristics vary by surface (tarmac, gravel, dirt)
+- Filter characteristics vary by surface (tarmac, gravel, sand, ice)
 - Volume controlled by slip intensity (drift detection)
 - Seamlessly switches noise type when surface changes
 
