@@ -20,6 +20,22 @@ Env vars:
 - `HOST` (default `127.0.0.1`)
 - `PORT` (default `8787`)
 - `ROOM_TTL_MS` (default `900000` = 15 min)
+- `DB_PATH` (default `scores.sqlite`)
+
+## Run (Docker Compose with coturn)
+
+This repo’s `turn/docker-compose.yml` runs **both** the signaling server and coturn.
+
+```bash
+cd turn
+# optional: copy and edit
+cp .env.example .env
+docker compose up -d --build
+```
+
+Notes:
+- Signaling binds `${SIGNALING_PORT:-8787}` on the host.
+- Scores persist in a Docker named volume (`signaling-data`) via `DB_PATH=/data/scores.sqlite`.
 
 ## API
 
@@ -86,4 +102,3 @@ location /api/ws {
   proxy_set_header Host $host;
 }
 ```
-

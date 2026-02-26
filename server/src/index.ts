@@ -27,7 +27,8 @@ type TurnConfig = {
 import { Database } from "bun:sqlite";
 import { postHighScore } from "./twitter";
 
-const db = new Database("scores.sqlite", { create: true });
+const DB_PATH = process.env.DB_PATH ?? "scores.sqlite";
+const db = new Database(DB_PATH, { create: true });
 db.run(
   "CREATE TABLE IF NOT EXISTS high_scores (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, score INTEGER, seed TEXT, user_id TEXT, mode TEXT, avg_speed_kmh REAL, t INTEGER)"
 );

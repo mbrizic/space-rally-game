@@ -40,7 +40,6 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 - Expand the lore document with some funny bits how driver has a really poor eyesight and co-drivers brings a lot more gunpower than needed
 - gates that you need to hack or break through (minigame with symbols they need to input)
 - minefield
-- shake the phone to reload
 - forks in the road
 - driver shouldn't see enemy health
 - flying monsters that sweep from left to right
@@ -58,6 +57,9 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 - [ ] Player 4 (Intel/Hacker): forward-scout drone + tagging/hacking gates
 - [ ] Boss fights - ultra big enemy on the stage that shoots at players - they leave the car and then the game becomes a top-down shooter until they get rid of him (will need to implement completely different, Crimsonland-like gameplay)
 - [ ] Manual gearbox UX on mobile
+
+## Discarded ideas
+- shake the phone to reload gun
 
 ## Infrastructure (P3/P4)
 

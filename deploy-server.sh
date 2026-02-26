@@ -1,33 +1,29 @@
 #!/bin/bash
 set -e
 
-# Default to test if no arg provided
-ENV="${1:-test}"
+SCRIPT_VERSION="docker-only-2026-02-26"
 
-if [ "$ENV" == "prod" ]; then
-  DEST_DIR=${DEPLOY_PROD_SERVER_DIR:-"/home/mbrizic/hosting/spacerally-server"}
-  PORT=8787
-else
-  DEST_DIR=${DEPLOY_TEST_SERVER_DIR:-"/home/mbrizic/hosting/spacerally-server/test"}
-  PORT=8788
+# PROD-only deployment
+ENV="prod"
+if [ $# -gt 0 ] && [ "${1:-}" != "prod" ]; then
+  echo "This deploy script is PROD-only. Remove the arg or pass: prod" >&2
+  exit 2
 fi
+
+DEST_DIR=${DEPLOY_PROD_SERVER_DIR:-"/home/mbrizic/hosting/spacerally-server"}
+PORT=8787
 
 HOST=${DEPLOY_HOST:-"mbrizic.com"}
 
-# Optional TURN (coturn) deployment + env wiring.
+# Docker Compose deployment (signaling + coturn).
 #
-# Usage (locally when running this script):
+# Optional overrides (otherwise rely on server env vars in ~/.profile / ~/.bashrc):
 #   export DEPLOY_TURN_URLS='turn:YOUR_DOMAIN:3478?transport=udp,turn:YOUR_DOMAIN:3478?transport=tcp'
 #   export DEPLOY_TURN_SHARED_SECRET='some-long-random-string'
-#   export DEPLOY_ENABLE_TURN=1
 #
-# If DEPLOY_ENABLE_TURN=1, we will upload ./turn/* to "$DEST_DIR/turn" and try to run:
-#   docker compose up -d
-# Note: TURN requires firewall ports open on the server:
-#   - 3478/udp and 3478/tcp
-#   - relay UDP range (ufw syntax uses ':' for ranges, e.g. 49160:49260/udp)
-
-DEPLOY_ENABLE_TURN=${DEPLOY_ENABLE_TURN:-0}
+# TURN requires firewall ports open on the server:
+# - 3478/udp and 3478/tcp (TURN)
+# - relay UDP range (ufw syntax uses ':' for ranges, e.g. 49160:49260/udp)
 DEPLOY_TURN_URLS=${DEPLOY_TURN_URLS:-""}
 DEPLOY_TURN_SHARED_SECRET=${DEPLOY_TURN_SHARED_SECRET:-""}
 
@@ -36,126 +32,116 @@ DEPLOY_TURN_SHARED_SECRET=${DEPLOY_TURN_SHARED_SECRET:-""}
 # also source ~/.profile (recommended place for exports needed by automation).
 REMOTE_ENV="source ~/.profile >/dev/null 2>&1 || true; source ~/.bashrc >/dev/null 2>&1 || true"
 
+shell_quote() {
+  local s="${1:-}"
+  s=${s//\'/\'\"\'\"\'}
+  printf "'%s'" "$s"
+}
+
 echo "🚀 Deploying SERVER to $ENV ($HOST:$DEST_DIR)..."
+echo "ℹ️  deploy-server.sh version: $SCRIPT_VERSION"
 
-# Ensure we are rebuilding with fresh deps
+# Ensure we are rebuilding with fresh deploy bundle
 rm -rf server/dist
-mkdir -p server/dist
+mkdir -p server/dist/server
 
-# Copy source files and dependencies lock
-cp server/package.json server/dist/
-if [ -f server/bun.lock ]; then
-  cp server/bun.lock server/dist/
+# Copy only what the backend needs (and keep it under ./server for docker builds)
+cp server/package.json server/Dockerfile server/.dockerignore server/dist/server/
+if [ -f server/bun.lockb ]; then
+  cp server/bun.lockb server/dist/server/
+elif [ -f server/bun.lock ]; then
+  cp server/bun.lock server/dist/server/
 fi
-cp -r server/src server/dist/
+cp -r server/src server/dist/server/
 
-# Create tarball
+# Create tarball (preserves the ./server folder)
 echo "📦 Packaging..."
-tar -czf server-deploy.tar.gz -C server/dist .
+# Avoid macOS xattr/resource-fork metadata in the tarball (prevents noisy warnings on Linux extraction).
+COPYFILE_DISABLE=1 tar -czf server-deploy.tar.gz -C server/dist server
 
-# Optional: package TURN config
-if [ "$DEPLOY_ENABLE_TURN" == "1" ]; then
-  if [ ! -f turn/docker-compose.yml ] || [ ! -f turn/turnserver.conf ]; then
-    echo "❌ TURN enabled but turn/docker-compose.yml or turn/turnserver.conf missing"
-    exit 1
-  fi
-  echo "📦 Packaging TURN config..."
-  tar -czf turn-deploy.tar.gz -C turn .
+# Package TURN config (includes docker-compose.yml + turnserver.conf)
+if [ ! -f turn/docker-compose.yml ] || [ ! -f turn/turnserver.conf ]; then
+  echo "❌ Missing turn/docker-compose.yml or turn/turnserver.conf"
+  exit 1
 fi
+echo "📦 Packaging TURN config..."
+# Avoid macOS xattr/resource-fork metadata in the tarball (prevents noisy warnings on Linux extraction).
+COPYFILE_DISABLE=1 tar -czf turn-deploy.tar.gz -C turn .
 
 # Upload
 echo "⬆️ Uploading..."
 ssh $HOST "mkdir -p $DEST_DIR"
 scp server-deploy.tar.gz $HOST:$DEST_DIR/
 
-if [ "$DEPLOY_ENABLE_TURN" == "1" ]; then
-  ssh $HOST "mkdir -p $DEST_DIR/turn"
-  scp turn-deploy.tar.gz $HOST:$DEST_DIR/turn/
-fi
+ssh $HOST "mkdir -p $DEST_DIR/turn"
+scp turn-deploy.tar.gz $HOST:$DEST_DIR/turn/
 
 # Extract and Install - use full path to bun
 echo "🔧 Installing..."
-ssh $HOST "cd $DEST_DIR && tar -xzf server-deploy.tar.gz && rm server-deploy.tar.gz && ~/.bun/bin/bun install --production" || {
-  echo "❌ Installation failed on remote server"
+ssh $HOST "cd $DEST_DIR && tar -xzf server-deploy.tar.gz && rm server-deploy.tar.gz" || {
+  echo "❌ Install failed on remote server"
   exit 1
 }
 
-if [ "$DEPLOY_ENABLE_TURN" == "1" ]; then
-  echo "🔧 Installing TURN config..."
-  ssh $HOST "cd $DEST_DIR/turn && tar -xzf turn-deploy.tar.gz && rm turn-deploy.tar.gz" || {
-    echo "❌ TURN config install failed on remote server"
-    exit 1
-  }
+echo "🔧 Installing TURN config..."
+ssh $HOST "cd $DEST_DIR/turn && tar -xzf turn-deploy.tar.gz && rm turn-deploy.tar.gz" || {
+  echo "❌ TURN config install failed on remote server"
+  exit 1
+}
 
-  # Prefer remote env vars (TURN_SHARED_SECRET/TURN_URLS) from ~/.bashrc.
-  # Local DEPLOY_TURN_* vars remain supported but are optional.
-  if [ -z "$DEPLOY_TURN_SHARED_SECRET" ] || [ -z "$DEPLOY_TURN_URLS" ]; then
-    echo "🔎 Checking remote TURN_* env (from ~/.profile and ~/.bashrc)..."
-    ssh $HOST "bash -lc '$REMOTE_ENV; test -n \"\$TURN_SHARED_SECRET\" && test -n \"\$TURN_URLS\"'" || {
-      echo "❌ TURN enabled but TURN_SHARED_SECRET/TURN_URLS are not set on the server (in ~/.profile or ~/.bashrc)."
-      echo "   Fix on server (as the same user running pm2/docker):"
-      echo "     echo \"export TURN_SHARED_SECRET='...long random...'\" >> ~/.profile"
-      echo "     echo \"export TURN_URLS='turn:spacerally.supercollider.hr:3478?transport=udp,turn:spacerally.supercollider.hr:3478?transport=tcp'\" >> ~/.profile"
-      echo "   Then: source ~/.profile"
-      exit 1
-    }
-  fi
-fi
+echo "🐳 Restarting signaling + TURN via Docker Compose..."
 
-# Restart Service (Assuming PM2 or similar)
-echo "🔄 Restarting..."
-# Using PM2 for process management - adjust name based on env
-APP_NAME="spacerally-signal-$ENV"
+COMPOSE_PROJECT="spacerally-server"
+APP_NAME="spacerally-signal-prod"
 
-# Build a stable environment for the pm2 process (TURN vars optional).
-PM2_ENV_PREFIX="PORT=$PORT"
-
-# If local TURN vars are provided, use them; otherwise rely on remote TURN_* env.
-if [ -n "$DEPLOY_TURN_URLS" ]; then
-  PM2_ENV_PREFIX="$PM2_ENV_PREFIX TURN_URLS='$DEPLOY_TURN_URLS'"
-fi
+# Always pass SIGNALING_PORT so prod binds the intended port.
+# Allow local DEPLOY_TURN_* overrides; otherwise rely on server configuration.
+REMOTE_EXPORTS="export SIGNALING_PORT=$PORT;"
 if [ -n "$DEPLOY_TURN_SHARED_SECRET" ]; then
-  PM2_ENV_PREFIX="$PM2_ENV_PREFIX TURN_SHARED_SECRET='$DEPLOY_TURN_SHARED_SECRET'"
+  REMOTE_EXPORTS="$REMOTE_EXPORTS export TURN_SHARED_SECRET=$(shell_quote "$DEPLOY_TURN_SHARED_SECRET");"
+fi
+if [ -n "$DEPLOY_TURN_URLS" ]; then
+  REMOTE_EXPORTS="$REMOTE_EXPORTS export TURN_URLS=$(shell_quote "$DEPLOY_TURN_URLS");"
 fi
 
-ssh $HOST "bash -lc '$REMOTE_ENV; cd $DEST_DIR && env $PM2_ENV_PREFIX /home/mbrizic/.nvm/versions/node/v22.7.0/bin/pm2 start src/index.ts --name $APP_NAME --interpreter ~/.bun/bin/bun --update-env || env $PM2_ENV_PREFIX /home/mbrizic/.nvm/versions/node/v22.7.0/bin/pm2 restart $APP_NAME --update-env'" || {
-  echo "❌ Service restart failed"
+echo "🔄 Restarting Docker Compose stack..."
+
+# 1) Ensure compose v2 exists (fail fast with a clear message)
+ssh $HOST "bash -lc '$REMOTE_ENV; docker compose version'" || {
+  echo "❌ Docker Compose v2 is required on the server (docker compose ...)."
   exit 1
 }
 
-if [ "$DEPLOY_ENABLE_TURN" == "1" ]; then
-  echo "🔄 Restarting TURN (coturn)..."
-  # Prefer running docker as the deploy user (requires docker group membership).
-  # Fall back to non-interactive sudo so deploy doesn't hang waiting for a password.
-  DOCKER_UP_CMD="(docker compose up -d || docker-compose up -d || sudo -n docker compose up -d || sudo -n docker-compose up -d)"
-  # Prefer remote TURN_SHARED_SECRET from ~/.bashrc; fall back to local DEPLOY_TURN_SHARED_SECRET.
-  if [ -n "$DEPLOY_TURN_SHARED_SECRET" ]; then
-    ssh $HOST "bash -lc '$REMOTE_ENV; cd $DEST_DIR/turn && TURN_SHARED_SECRET='$DEPLOY_TURN_SHARED_SECRET' $DOCKER_UP_CMD'" || {
-      echo "❌ TURN restart failed. Likely Docker permissions (or docker isn't installed)."
-      echo "   If you just ran: sudo usermod -aG docker <user>"
-      echo "   you must logout/login (or reconnect SSH) for group membership to apply."
-      echo "   Quick check: id -nG | grep docker"
-      echo "   Alternative: allow passwordless sudo for docker/docker-compose."
-      exit 1
-    }
-  else
-    ssh $HOST "bash -lc '$REMOTE_ENV; cd $DEST_DIR/turn && $DOCKER_UP_CMD'" || {
-      echo "❌ TURN restart failed. Likely Docker permissions (or docker isn't installed)."
-      echo "   If you just ran: sudo usermod -aG docker <user>"
-      echo "   you must logout/login (or reconnect SSH) for group membership to apply."
-      echo "   Quick check: id -nG | grep docker"
-      echo "   Alternative: allow passwordless sudo for docker/docker-compose."
-      exit 1
-    }
-  fi
-fi
+# 2) Best-effort cleanup of legacy non-docker signaling that may still be holding the port.
+ssh $HOST "bash -lc '$REMOTE_ENV; command -v pm2 >/dev/null 2>&1 && pm2 delete $APP_NAME >/dev/null 2>&1 || true'" || true
+
+# 3) Bring down any previous run of this compose project to free the port.
+ssh $HOST "bash -lc '$REMOTE_ENV; cd $DEST_DIR/turn && $REMOTE_EXPORTS docker compose -p $COMPOSE_PROJECT -f docker-compose.yml down --remove-orphans'" || true
+
+# 4) Preflight: fail fast if the port is still in use.
+ssh $HOST "bash -lc '$REMOTE_ENV; if command -v ss >/dev/null 2>&1 && ss -ltn sport = :$PORT | tail -n +2 | grep -q .; then echo \"❌ Port $PORT is already in use on the server.\"; ss -ltn sport = :$PORT || true; exit 1; fi'" || {
+  echo "❌ Port $PORT is already allocated on the server. Stop whatever is using it and re-run deploy."
+  exit 1
+}
+
+# 5) Start/update stack
+ssh $HOST "bash -lc '$REMOTE_ENV; cd $DEST_DIR/turn && $REMOTE_EXPORTS docker compose -p $COMPOSE_PROJECT -f docker-compose.yml up -d --build --remove-orphans'" || {
+  echo "❌ docker compose up failed"
+  exit 1
+}
+
+# 6) Verify (keep output quiet; fail if signaling isn't running)
+ssh $HOST "bash -lc '$REMOTE_ENV; cd $DEST_DIR/turn && $REMOTE_EXPORTS \
+  RUNNING_SERVICES=\$(docker compose -p $COMPOSE_PROJECT -f docker-compose.yml ps --services --status running 2>/dev/null || true); \
+  echo \"\$RUNNING_SERVICES\" | grep -qx \"signaling\"'" || {
+  echo "❌ signaling is not running. On the server, run:"
+  echo "   cd $DEST_DIR/turn && docker compose -p $COMPOSE_PROJECT ps && docker compose -p $COMPOSE_PROJECT logs --tail 200"
+  exit 1
+}
 
 # Clean up local artifact
 rm server-deploy.tar.gz
 rm -rf server/dist
-
-if [ "$DEPLOY_ENABLE_TURN" == "1" ]; then
-  rm turn-deploy.tar.gz
-fi
+rm turn-deploy.tar.gz
 
 echo "✅ Server deployment complete!"

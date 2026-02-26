@@ -1,20 +1,43 @@
 services:
+  signaling:
+    build:
+      context: ../server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: ${SIGNALING_PORT:-8787}
+      ROOM_TTL_MS: ${ROOM_TTL_MS:-900000}
+      DB_PATH: /data/scores.sqlite
+      TURN_URLS: ${TURN_URLS:-}
+      TURN_SHARED_SECRET: ${TURN_SHARED_SECRET:-}
+      TWITTER_API_KEY: ${TWITTER_API_KEY:-}
+      TWITTER_API_SECRET: ${TWITTER_API_SECRET:-}
+      TWITTER_ACCESS_TOKEN: ${TWITTER_ACCESS_TOKEN:-}
+      TWITTER_ACCESS_SECRET: ${TWITTER_ACCESS_SECRET:-}
+    ports:
+      - "${SIGNALING_PORT:-8787}:${SIGNALING_PORT:-8787}"
+    volumes:
+      - signaling-data:/data
+
   coturn:
     image: coturn/coturn:4.6.2
-    container_name: spacerally-coturn
     restart: unless-stopped
     network_mode: host
     environment:
       # Set this in your shell or in an .env file on the server.
       # Must match the signaling server's TURN_SHARED_SECRET.
-      TURN_SHARED_SECRET: ${TURN_SHARED_SECRET}
+      TURN_SHARED_SECRET: ${TURN_SHARED_SECRET:-}
     command:
       - -c
       - /etc/coturn/turnserver.conf
-      - --static-auth-secret=${TURN_SHARED_SECRET}
+      - --static-auth-secret=${TURN_SHARED_SECRET:-}
     volumes:
       - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
     # With network_mode: host, ports are bound directly on the host.
     # Make sure your firewall allows:
     # - 3478/udp and 3478/tcp (TURN)
     # - relay port range (see turnserver.conf)
+
+volumes:
+  signaling-data:
