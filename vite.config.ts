@@ -6,7 +6,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "https://spacerally.supercollider.hr",
+        target: "https://spacerally.hexagonflux.hr",
         changeOrigin: true,
         ws: true,
         secure: false

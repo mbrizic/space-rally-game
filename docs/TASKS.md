@@ -61,6 +61,10 @@ This file is the **master list of all things we might want** (tasks + ideas). Ke
 ## Discarded ideas
 - shake the phone to reload gun
 
+## Deployment
+
+- [ ] Redeploy the backend play link and migrate live TURN_URLS to spacerally.hexagonflux.hr (details: [DEPLOY.md](DEPLOY.md)).
+
 ## Infrastructure (P3/P4)
 
 - [ ] Mesh networking for 3-4 players: WebRTC mesh topology (see notes below)

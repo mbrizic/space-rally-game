@@ -11,7 +11,7 @@ export type BackendSoloMode = "timeTrial" | "practice";
 export type BackendNetMode = "solo" | "host" | "client";
 
 // Scores should always go to the production backend (never a local server).
-const PROD_BACKEND_HTTP_ORIGIN = "https://spacerally.supercollider.hr";
+const PROD_BACKEND_HTTP_ORIGIN = "https://spacerally.hexagonflux.hr";
 
 function resolveBackendHttpOrigin(): string {
   const url = new URL(window.location.href);

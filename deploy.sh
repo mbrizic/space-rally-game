@@ -41,7 +41,7 @@ rm deploy.tar.gz
 
 echo "✅ Deployment complete!"
 if [ "$DEPLOY_ENV" = "prod" ]; then
-  echo "🌐 Your game should now be live at: https://$DEPLOY_HOST/spacerally"
+  echo "🌐 Your game should now be live at: https://spacerally.hexagonflux.hr/"
 else
   echo "🌐 Test deploy complete (verify your server maps /test to $DEPLOY_DIR)"
 fi

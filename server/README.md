@@ -79,7 +79,7 @@ This server can mint **ephemeral TURN credentials** (TURN REST API pattern) for 
 
 Env vars:
 - `TURN_URLS` (comma-separated), e.g.
-  - `turn:spacerally.supercollider.hr:3478?transport=udp,turn:spacerally.supercollider.hr:3478?transport=tcp`
+  - `turn:spacerally.hexagonflux.hr:3478?transport=udp,turn:spacerally.hexagonflux.hr:3478?transport=tcp`
 - `TURN_SHARED_SECRET` (must match coturn’s `static-auth-secret`)
 
 ## Nginx (/api proxy)

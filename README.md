@@ -4,7 +4,7 @@
 
 > Addendum: this is working so well that a) we already have guns, and b) it's escalating to become a two-player co-op mobile multiplayer game.
 
-**Play it here:** https://spacerally.supercollider.hr/
+**Play it here:** https://spacerally.hexagonflux.hr/
 
 ## Features
 
@@ -62,6 +62,8 @@ See [docs/MULTIPLAYER.md](docs/MULTIPLAYER.md) for the full architecture + deplo
 
 ## Development
 
+Coding-agent conventions and documentation links are in [AGENTS.md](AGENTS.md).
+
 ```bash
 npm install
 npm run dev
@@ -103,3 +105,10 @@ Note: the production build is configured to work from subfolders (e.g. `/test/`)
 ---
 
 Built with AI assistance and vibe.
+
+## Project Log
+
+- 2026-10-11: Added [AGENTS.md](AGENTS.md) and corrected [deployment docs](docs/DEPLOY.md). Frontend deployed to test and server file hashes verified; typecheck, build, and 99 tests passed. Public access remains blocked by hostname DNS/test routing; production backend and TURN were not redeployed.
+- 2026-10-11: Frontend also [deployed to production](docs/DEPLOY.md); build/typecheck passed and server file hashes match the local build. Domain change and public access verification remain pending; backend and TURN unchanged.
+- 2026-10-11: Confirmed the game at https://spacerally.hexagonflux.hr/; production, test, and backend health return HTTP 200. Updated code/docs to the new domain; typecheck and 99 tests passed. Redeployment and live TURN hostname migration remain pending; see [deployment notes](docs/DEPLOY.md).
+- 2026-10-11: Diagnosed singleplayer's unresponsive menu as a stalled CDN-cached JavaScript download; redeployed the frontend to production/test with a fresh asset fingerprint. Live browser checks passed for both solo modes, test startup, and mobile-landscape rendering/animation with no JavaScript errors. See [CDN troubleshooting](docs/DEPLOY.md#troubleshooting); backend/TURN migration remains pending.

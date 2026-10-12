@@ -98,7 +98,7 @@ On the signaling server process:
 
 - `TURN_URLS` (comma-separated)
   - Example:
-    - `turn:spacerally.supercollider.hr:3478?transport=udp,turn:spacerally.supercollider.hr:3478?transport=tcp`
+    - `turn:spacerally.hexagonflux.hr:3478?transport=udp,turn:spacerally.hexagonflux.hr:3478?transport=tcp`
 - `TURN_SHARED_SECRET` (must match coturn `static-auth-secret`)
 
 Recommended place to define these on the server for non-interactive deploys:
@@ -120,13 +120,13 @@ Also ensure your **cloud/provider firewall** allows the same ports (UFW alone ma
 ### Confirm signaling is alive
 
 ```bash
-curl -sS https://spacerally.supercollider.hr/api/health
+curl -sS https://spacerally.hexagonflux.hr/api/health
 ```
 
 ### Confirm TURN credentials endpoint
 
 ```bash
-curl -sS 'https://spacerally.supercollider.hr/api/turn?peer=debug' | cat
+curl -sS 'https://spacerally.hexagonflux.hr/api/turn?peer=debug' | cat
 ```
 
 Expected: `{ ok: true, iceServers: [...] }`.

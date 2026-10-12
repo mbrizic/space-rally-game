@@ -71,10 +71,17 @@ server {
 
 ## Access
 
-After prod deployment, the game should be available at:
-- https://mbrizic.com/spacerally
+The public production game is https://spacerally.hexagonflux.hr/.
+The SSH deployment host (`mbrizic.com`) is not necessarily the public web hostname.
 
-For test deployments, map `/spacerally/test` (or your preferred URL) to `DEPLOY_TEST_DIR`.
+For test deployments, map `/test/` (or your preferred URL) to `DEPLOY_TEST_DIR`
+and verify that route after uploading. With that mapping, the test URL is
+https://spacerally.hexagonflux.hr/test/.
+
+Domain changes also require updating the frontend score origin, Vite dev proxy,
+backend play link, and the signaling server's `TURN_URLS`. Updating Nginx alone
+does not migrate those references. Redeploy the changed frontend/backend code
+and recreate signaling with the new TURN URLs; keep the existing shared secret.
 
 ## Manual Deployment
 
@@ -91,32 +98,40 @@ scp -r dist/* mbrizic.com:/home/mbrizic/hosting/spacerally/test/
 ## Troubleshooting
 
 - **404 errors**: Check your web server configuration and ensure it's serving the correct directory
+- **Hostname does not resolve**: SSH upload success does not verify public access. Confirm the public hostname's DNS and its `/test/` web-server mapping before declaring the deployment playable.
+- **Start menu buttons do nothing**: Verify that the JavaScript bundle finishes downloading, not just that it returns HTTP 200. If cached CDN responses stall but cache-busted/direct-origin requests complete, purge the affected asset from the CDN cache or publish a new fingerprinted build. Verify repeat cache-hit downloads and both singleplayer modes afterward.
 
 ## Server (Backend) Deployment
 
-Authentication / Signaling server is a Bun app.
+The backend is a Bun/SQLite app. The deployment script runs it together with
+coturn using Docker Compose. Unlike the frontend script, it is **production-only**.
 
 ### Deployment Script
 
 ```bash
-# Deploy to test (port 8788)
-./deploy-server.sh test
-
-# Deploy to prod (port 8787)
+# Only when a production backend deployment is explicitly requested (port 8787)
 ./deploy-server.sh prod
 ```
 
-See `MULTIPLAYER.md` for the full multiplayer + TURN setup.
+`./deploy-server.sh test` is rejected. `npm run deploy-server` also targets
+production. The script uploads the backend and TURN configuration, removes the
+legacy PM2 process if present, and restarts both services with Docker Compose.
+It does not deploy the frontend. The frontend's test deployment does not provide
+an isolated test backend.
+
+See [backend setup](../server/README.md) and [multiplayer architecture](MULTIPLAYER.md).
 
 ### Prerequisites on Server
 
-1. **Bun** installed (`curl -fsSL https://bun.sh/install | bash`)
-2. **PM2** installed (`npm install -g pm2`) for process management
-3. **Nginx** reverse proxy setup (optional but recommended for SSL)
+1. **Docker Engine and Compose v2**, usable by the deployment SSH user.
+2. **Nginx** reverse proxy for HTTPS and WebSocket traffic to port 8787.
+3. Persistent scores use the Compose `signaling-data` volume; see
+    [backup instructions](../server/API.md) before backend maintenance.
 
 ### TURN (coturn) Relay (Optional, Recommended)
 
-TURN is only used when peers cannot establish a direct P2P connection.
+TURN is only used when peers cannot establish a direct P2P connection. The
+backend deployment starts the coturn container alongside signaling.
 
 #### What you need
 
@@ -125,22 +140,25 @@ TURN is only used when peers cannot establish a direct P2P connection.
     - `TURN_SHARED_SECRET` (must match coturn’s `static-auth-secret`)
 - Coturn running on the server (Docker) using the config in `turn/`.
 
-Recommended: put TURN exports in `~/.profile` (same user that runs pm2/docker) so non-interactive deploys can read them.
+Recommended: configure TURN exports in the remote `~/.profile` (same user that
+runs Docker) so non-interactive deploys can read them. Keep real secrets out of
+commits, terminal output, and chat.
 
-Example:
+Local overrides are `DEPLOY_TURN_URLS` and `DEPLOY_TURN_SHARED_SECRET`; otherwise
+the script uses the remote environment. `DEPLOY_ENABLE_TURN` is not used by the
+current script.
 
-```bash
-echo "export TURN_SHARED_SECRET='...long random...'" >> ~/.profile
-echo "export TURN_URLS='turn:spacerally.supercollider.hr:3478?transport=udp,turn:spacerally.supercollider.hr:3478?transport=tcp'" >> ~/.profile
-source ~/.profile
-```
+For the current domain, set remote `TURN_URLS` to
+`turn:spacerally.hexagonflux.hr:3478?transport=udp,turn:spacerally.hexagonflux.hr:3478?transport=tcp`.
+Changing a profile export alone does not update an already-running container.
 
 #### Deploy with TURN enabled
 
 From your local machine:
 
 ```bash
-DEPLOY_ENABLE_TURN=1 ./deploy-server.sh prod
+# After TURN credentials are configured on the server; production only
+./deploy-server.sh prod
 ```
 
 If Docker permissions are a problem, ensure the deploy user is in the `docker` group (then re-login):
@@ -166,7 +184,7 @@ sudo ufw allow 49160:49260/udp
 
 ```nginx
 location /api/ws {
-    proxy_pass http://127.0.0.1:8787;
+    proxy_pass http://127.0.0.1:8787/ws;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "Upgrade";
