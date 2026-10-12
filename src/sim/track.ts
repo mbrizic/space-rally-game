@@ -221,30 +221,66 @@ export function createProceduralTrack(seed: number, opts?: ProceduralTrackOption
   return createTrackFromDefinition(createProceduralTrackDefinition(seed, opts));
 }
 
-// Corner type definitions - predefined turning patterns
-type CornerType = "gentle" | "medium" | "sharp" | "hairpin" | "chicane";
-
-interface Corner {
-  type: CornerType;
-  angleChange: number; // Total angle change for this corner
-  controlPointsNeeded: number; // How many control points to spread this across
-  direction: 1 | -1; // Left or right turn
-}
-
-function createCorner(type: CornerType, direction: 1 | -1): Corner {
-  switch (type) {
-    case "hairpin":
-      return { type, angleChange: Math.PI * 0.99 * direction, controlPointsNeeded: 6, direction }; // ~178 degrees - TIGHT HAIRPIN!
-    case "sharp":
-      return { type, angleChange: Math.PI * 0.5 * direction, controlPointsNeeded: 3, direction }; // ~90 degrees
-    case "medium":
-      return { type, angleChange: Math.PI * 0.35 * direction, controlPointsNeeded: 2, direction }; // ~63 degrees
-    case "gentle":
-      return { type, angleChange: Math.PI * 0.2 * direction, controlPointsNeeded: 2, direction }; // ~36 degrees
-    case "chicane":
-      // Chicane is a quick left-right or right-left
-      return { type, angleChange: 0, controlPointsNeeded: 4, direction }; // Returns to original angle
+function createSeparatedRoute(rand: () => number, distanceM: number, rotation: number): Vec2[] {
+  const cornerCount = 5 + Math.floor(rand() * 3);
+  const entryHeading = 0.10;
+  const hairpinChance = rand() < 0.25 ? 0.12 : 0.45;
+  const corners = Array.from({ length: cornerCount }, () => {
+    const roll = rand();
+    const angle = roll < hairpinChance ? Math.PI - entryHeading * 2 : roll < 0.65 ? 1.65 + rand() * 0.40 : 2.25 + rand() * 0.50;
+    const radiusM = roll < 0.65 ? 20 + rand() * 12 : 80 + rand() * 18;
+    return { angle, radiusM, lengthM: radiusM * angle };
+  });
+  if (corners.every(corner => corner.radiusM > 32)) {
+    const corner = corners[Math.floor(rand() * cornerCount)];
+    corner.radiusM = 24;
+    corner.lengthM = corner.radiusM * corner.angle;
   }
+  const cornerLengthM = corners.reduce((sum, corner) => sum + corner.lengthM, 0);
+  const scale = Math.min(1, distanceM * 0.72 / cornerLengthM);
+  const connectingLengthM = (distanceM - cornerLengthM * scale) / (cornerCount + 1);
+  const route: Vec2[] = [{ x: 0, y: 0 }];
+  let position = { x: 0, y: 0 };
+  let heading = entryHeading;
+
+  const appendArc = (angleChange: number, radiusM: number): void => {
+    const direction = Math.sign(angleChange);
+    const arcLengthM = Math.abs(angleChange) * radiusM;
+    const steps = Math.max(2, Math.ceil(arcLengthM / 12));
+    const origin = position;
+    const initialHeading = heading;
+    for (let step = 1; step <= steps; step++) {
+      const nextHeading = initialHeading + angleChange * step / steps;
+      position = {
+        x: origin.x + radiusM * direction * (Math.sin(nextHeading) - Math.sin(initialHeading)),
+        y: origin.y + radiusM * direction * (Math.cos(initialHeading) - Math.cos(nextHeading))
+      };
+      route.push(position);
+    }
+    heading += angleChange;
+  };
+
+  for (let index = 0; index <= cornerCount; index++) {
+    const direction = index % 2 === 0 ? 1 : -1;
+    const corner = corners[index];
+    const nextHeading = corner ? Math.PI / 2 - direction * corner.angle / 2 : heading;
+    const meanderAngle = 0.35 + rand() * 0.20;
+    const middleHeading = direction > 0 ? Math.max(heading, nextHeading) + meanderAngle : Math.min(heading, nextHeading) - meanderAngle;
+    const entryAngle = middleHeading - heading;
+    const exitAngle = nextHeading - middleHeading;
+    const meanderRadiusM = connectingLengthM / (Math.abs(entryAngle) + Math.abs(exitAngle));
+    appendArc(entryAngle, meanderRadiusM);
+    appendArc(exitAngle, meanderRadiusM);
+    if (corner) appendArc(corner.angle * direction, corner.radiusM * scale);
+  }
+
+  const mirror = rand() < 0.5 ? -1 : 1;
+  const cosine = Math.cos(rotation);
+  const sine = Math.sin(rotation);
+  return route.map(point => ({
+    x: point.x * cosine - point.y * mirror * sine,
+    y: point.x * sine + point.y * mirror * cosine
+  }));
 }
 
 /**
@@ -326,18 +362,6 @@ function segmentsIntersect(
 }
 
 export function createPointToPointTrackDefinition(seed: number): TrackDefinition {
-  // HACK/TODO: Retry logic to avoid self-intersections and straights
-  // 
-  // PROBLEM: This makes tracks samey and boring! Hairpins often cause loops,
-  // so they get rejected. We end up with only "safe" boring tracks.
-  //
-  // BETTER SOLUTION NEEDED:
-  // - Smarter hairpin placement (check if they'll loop BEFORE placing)
-  // - Better "turn away" logic that preserves corner types
-  // - Or: Accept some visual overlaps if they're not driveable intersections
-  //
-  // For now, this ensures NO broken tracks, but at the cost of variety.
-  
   const maxAttempts = 15; // More attempts for stricter criteria
   
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -394,153 +418,7 @@ function tryCreatePointToPointTrackDefinition(seed: number): TrackDefinition {
   const distance = minDistance + rand() * (maxDistance - minDistance);
   const angle = rand() * Math.PI * 2;
   
-  // CORNER-BASED APPROACH: Plan out corners first, then generate between them
-  // FEWER corners = more space = less overlap
-  const numCorners = 5 + Math.floor(rand() * 3); // 5-7 corners (reduced from 6-9)
-  const corners: Corner[] = [];
-  
-  for (let i = 0; i < numCorners; i++) {
-    const r = rand();
-    const direction = rand() > 0.5 ? 1 : -1;
-    
-    let cornerType: CornerType;
-    // Reduce hairpins to avoid self-intersections
-    if (r < 0.20) {
-      cornerType = "hairpin";   // 20% - Some hairpins for excitement
-    } else if (r < 0.45) {
-      cornerType = "sharp";     // 25%
-    } else if (r < 0.70) {
-      cornerType = "medium";    // 25%
-    } else if (r < 0.85) {
-      cornerType = "gentle";    // 15%
-    } else {
-      cornerType = "chicane";   // 15%
-    }
-    
-    corners.push(createCorner(cornerType, direction as 1 | -1));
-  }
-  
-  // Calculate total control points needed
-  const totalControlPointsForCorners = corners.reduce((sum, c) => sum + c.controlPointsNeeded, 0);
-  const controlPointsForStraights = Math.max(5, Math.floor(totalControlPointsForCorners * 0.3)); // 30% for straights
-  const totalControlPoints = totalControlPointsForCorners + controlPointsForStraights;
-  
-  const segmentLength = distance / totalControlPoints;
-  
-  // Generate control points
-  const controlPoints: Vec2[] = [];
-  let currentX = 0;
-  let currentY = 0;
-  let currentAngle = angle;
-  
-  // Generate track with planned corners
-  let cornerIndex = 0;
-  let controlPointsUntilNextCorner = Math.floor(controlPointsForStraights / (corners.length + 1));
-  
-  for (let i = 0; i < totalControlPoints; i++) {
-    controlPoints.push({ x: currentX, y: currentY });
-    
-    // Determine if we're in a corner or on a straight
-    let angleChange = 0;
-    
-    if (controlPointsUntilNextCorner <= 0 && cornerIndex < corners.length) {
-      // We're inside a corner
-      const corner = corners[cornerIndex];
-      const cornerProgress = Math.abs(controlPointsUntilNextCorner); // How many points into this corner
-      
-      if (corner.type === "chicane") {
-        // Chicane: quick alternating turns
-        const chicaneHalf = corner.controlPointsNeeded / 2;
-        if (cornerProgress < chicaneHalf) {
-          angleChange = (Math.PI * 0.3 * corner.direction) / chicaneHalf; // Turn one way
-        } else {
-          angleChange = -(Math.PI * 0.3 * corner.direction) / chicaneHalf; // Turn back
-        }
-      } else {
-        // Regular corner: distribute angle change evenly across control points
-        angleChange = corner.angleChange / corner.controlPointsNeeded;
-      }
-      
-      controlPointsUntilNextCorner--;
-      
-      // Check if corner is complete
-      if (Math.abs(controlPointsUntilNextCorner) >= corner.controlPointsNeeded) {
-        cornerIndex++;
-        if (cornerIndex < corners.length) {
-          // Calculate straight section length until next corner
-          controlPointsUntilNextCorner = Math.floor(controlPointsForStraights / (corners.length - cornerIndex + 1));
-        }
-      }
-    } else {
-      // Straight section - add gentle meandering
-      angleChange = (rand() - 0.5) * 0.2; // ±5 degrees gentle wander
-      controlPointsUntilNextCorner--;
-    }
-    
-    // AGGRESSIVE COLLISION AVOIDANCE: Turn AWAY from old track sections
-    // This prevents both loops AND straight sections
-    if (controlPoints.length > 8) {
-      const testX = currentX + Math.cos(currentAngle + angleChange) * segmentLength;
-      const testY = currentY + Math.sin(currentAngle + angleChange) * segmentLength;
-      
-      const checkRadiusM = 180; // Check within 180m radius (wider search)
-      const minSeparationM = 70; // Minimum 70m between segments (more separation)
-      
-      let closestOldPoint: Vec2 | null = null;
-      let closestDist = Infinity;
-      
-      // Find the closest old point
-      for (let checkIdx = 0; checkIdx < controlPoints.length - 8; checkIdx++) {
-        const oldPoint = controlPoints[checkIdx];
-        const roughDist = Math.hypot(currentX - oldPoint.x, currentY - oldPoint.y);
-        if (roughDist > checkRadiusM) continue;
-        
-        const distToOld = Math.hypot(testX - oldPoint.x, testY - oldPoint.y);
-        if (distToOld < closestDist) {
-          closestDist = distToOld;
-          closestOldPoint = oldPoint;
-        }
-      }
-      
-      if (closestOldPoint && closestDist < minSeparationM) {
-        // We're too close! Calculate angle AWAY from the closest old point
-        const angleToOldPoint = Math.atan2(closestOldPoint.y - currentY, closestOldPoint.x - currentX);
-        const angleAwayFromOldPoint = angleToOldPoint + Math.PI; // Opposite direction
-        
-        // Adjust our current angle to point away
-        let targetAngle = angleAwayFromOldPoint;
-        
-        // Normalize angle difference
-        let angleDiff = targetAngle - currentAngle;
-        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-        
-        // Turn AWAY AGGRESSIVELY - override the planned corner!
-        // The closer we are, the more we turn away
-        const urgency = Math.max(0, 1 - (closestDist / minSeparationM)); // 0-1, higher = more urgent
-        angleChange = angleDiff * (0.5 + urgency * 0.5); // 50-100% turn away based on urgency
-      }
-    }
-    
-    // Apply angle change and move to next position
-    currentAngle += angleChange;
-    currentX += Math.cos(currentAngle) * segmentLength;
-    currentY += Math.sin(currentAngle) * segmentLength;
-  }
-  
-  // Remove any control points that are too close together (can happen with aggressive angle dampening)
-  const filteredControlPoints: Vec2[] = [controlPoints[0]];
-  for (let i = 1; i < controlPoints.length; i++) {
-    const prev = filteredControlPoints[filteredControlPoints.length - 1];
-    const curr = controlPoints[i];
-    const dist = Math.hypot(curr.x - prev.x, curr.y - prev.y);
-    if (dist > 5) { // Minimum 5m between control points
-      filteredControlPoints.push(curr);
-    }
-  }
-  
-  // Sample the main route - fewer samples to preserve angles better
-  const routePoints = sampleOpenCatmullRom(filteredControlPoints, 3);
+  const routePoints = createSeparatedRoute(rand, distance, angle);
   
   // Calculate direction at start and end of route
   const startDir = { 
@@ -732,31 +610,6 @@ function tryCreatePointToPointTrackDefinition(seed: number): TrackDefinition {
     endCity,
     meta: { name: `Route ${seed}`, seed, source: "point-to-point", theme: stageMeta.theme, zones: stageMeta.zones }
   };
-}
-
-// Sample Catmull-Rom spline for OPEN paths (not closed loops)
-function sampleOpenCatmullRom(control: Vec2[], steps: number): Vec2[] {
-  if (control.length < 2) return control;
-  
-  const out: Vec2[] = [];
-  
-  for (let i = 0; i < control.length - 1; i++) {
-    // For open paths, we need to handle endpoints differently
-    const p0 = i === 0 ? control[0] : control[i - 1];
-    const p1 = control[i];
-    const p2 = control[i + 1];
-    const p3 = i === control.length - 2 ? control[i + 1] : control[i + 2];
-    
-    for (let s = 0; s < steps; s++) {
-      const t = s / steps;
-      out.push(catmullRom(p0, p1, p2, p3, t));
-    }
-  }
-  
-  // Add final point
-  out.push(control[control.length - 1]);
-  
-  return out;
 }
 
 function buildTrackFromPoints(points: Vec2[], widthM: number, segmentWidthsM?: number[]): Track {

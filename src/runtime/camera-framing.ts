@@ -33,7 +33,7 @@ export function computeCameraFraming(opts: CameraFramingOptions): CameraFramingR
 
   // Reserve space for touch controls at the bottom so the car remains visible.
   // (The controls are HTML overlays and can obscure the canvas.)
-  const bottomUiSafePx = isTouch ? Math.min(280, height * 0.34) : 0;
+  const bottomUiSafePx = isTouch ? Math.min(280, height * 0.30) : 0;
   const marginPx = isTouch ? 12 : 0;
   const minCarYPx = marginPx;
   const maxCarYPx = height - bottomUiSafePx - marginPx;
@@ -41,8 +41,11 @@ export function computeCameraFraming(opts: CameraFramingOptions): CameraFramingR
   // In runner mode, the camera rotates so "forward" is up on the screen (driver).
   // For navigator (rotated 90°), "forward" is toward the right edge of the screen.
   // Keep the car lower on screen so driver sees more ahead.
-  const desiredCarYFrac = cameraMode === "runner" ? (isTouch ? 0.72 : 0.78) : 0.64;
-  const screenCenterYCssPxForZoom = clamp(height * desiredCarYFrac, minCarYPx, maxCarYPx);
+  const desiredCarYFrac = cameraMode === "runner" ? (isTouch ? 0.74 : 0.80) : 0.64;
+  const driverScreenCenterYCssPx = clamp(height * desiredCarYFrac, minCarYPx, maxCarYPx);
+  const previousBottomUiSafePx = isTouch ? Math.min(280, height * 0.34) : 0;
+  const zoomYFrac = cameraMode === "runner" ? (isTouch ? 0.72 : 0.78) : 0.64;
+  const screenCenterYCssPxForZoom = clamp(height * zoomYFrac, minCarYPx, height - previousBottomUiSafePx - marginPx);
 
   const marginXPx = isTouch ? 12 : 0;
   // Navigator: keep the car just to the right of the large bottom-left minimap on touch.
@@ -51,29 +54,24 @@ export function computeCameraFraming(opts: CameraFramingOptions): CameraFramingR
   const screenCenterXCssPxOverride =
     cameraMode === "runner" && role === "navigator" ? clamp(width * desiredCarXFrac, marginXPx, width - marginXPx) : undefined;
 
-  // Target meters of view ahead of the car.
-  // - Driver runner: ahead is toward the top (screenCenterY pixels)
-  // - Navigator runner (rotated): ahead is toward the right (width - screenCenterX pixels)
-  const targetAheadMeters =
-    cameraMode === "runner" ? (role === "navigator" ? (isTouch ? 20 : 26) : (isTouch ? 14 : 18)) : 14;
-  const aheadPx =
-    cameraMode === "runner" && role === "navigator"
-      ? Math.max(1, width - (screenCenterXCssPxOverride ?? width / 2))
-      : Math.max(1, screenCenterYCssPxForZoom);
-  const pixelsPerMeter = clamp(aheadPx / Math.max(1e-6, targetAheadMeters), minPixelsPerMeter, basePixelsPerMeter);
+  const driverAheadMeters = cameraMode === "runner" ? (isTouch ? 14 : 18) : 14;
+  const driverPixelsPerMeter = clamp(Math.max(1, screenCenterYCssPxForZoom) / driverAheadMeters, minPixelsPerMeter, basePixelsPerMeter);
+  const pixelsPerMeter = role === "navigator" ? driverPixelsPerMeter * 0.86 : driverPixelsPerMeter;
 
   // Fallback look-ahead for non-runner (no camera rotation): keep a small forward offset.
   let offsetXM = 0;
   let offsetYM = 0;
   let screenCenterYCssPxOverride: number | undefined = undefined;
   if (cameraMode === "runner") {
-    screenCenterYCssPxOverride = screenCenterYCssPxForZoom;
-  } else {
+    screenCenterYCssPxOverride = role === "navigator" ? height / 2 : driverScreenCenterYCssPx;
+  } else if (role === "driver") {
     const cosH = Math.cos(carHeadingRad);
     const sinH = Math.sin(carHeadingRad);
     const lookAheadM = 4.5;
     offsetXM = cosH * lookAheadM;
     offsetYM = sinH * lookAheadM;
+  } else {
+    screenCenterYCssPxOverride = height / 2;
   }
 
   return {

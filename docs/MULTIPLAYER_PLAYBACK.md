@@ -3,9 +3,12 @@
 The current multiplayer model is:
 
 - **Host authoritative** simulation.
-- Client is primarily **render-only** and receives snapshots.
+- Client receives authoritative vehicle/stage snapshots, but navigator projectiles/hit detection are locally simulated (see [MULTIPLAYER.md](MULTIPLAYER.md)).
+- Navigator weather distances stay inside the minimap, with D debris-patch markers instead of NARROW/DEBRIS distance labels; smoothing, replay or role changes must not reintroduce floating P2 callouts or duplicate network zoom scaling.
 
 This document captures the remaining “client feels wonky / slight drift” issue so `TASKS.md` can stay slim.
+
+Status audit (2026-10-12): component position/heading/velocity smoothing and forward prediction already exist in the runtime. The symptom below is a historical report, not a newly reproduced failure. Reproduce under controlled jitter before changing smoothing; evaluate a snapshot queue, stable timebase and correction policy rather than re-adding component interpolation.
 
 ## Symptom
 
@@ -29,6 +32,7 @@ This document captures the remaining “client feels wonky / slight drift” iss
 - Use that to drive interpolation instead of local `Date.now()`.
 
 3) **Interpolation by state components**
+- Already implemented in the runtime; validate and tune rather than rebuild.
 - Position: lerp.
 - Heading: shortest-arc lerp.
 - Velocity: lerp + clamp spikes.

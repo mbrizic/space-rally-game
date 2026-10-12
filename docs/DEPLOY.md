@@ -152,6 +152,12 @@ For the current domain, set remote `TURN_URLS` to
 `turn:spacerally.hexagonflux.hr:3478?transport=udp,turn:spacerally.hexagonflux.hr:3478?transport=tcp`.
 Changing a profile export alone does not update an already-running container.
 
+The TURN hostname must resolve directly to the relay server (DNS-only), unless
+a separate TCP/UDP proxy explicitly supports TURN. Cloudflare's normal web proxy
+does not relay port 3478. Keep the website proxied only if TURN uses a separate
+DNS-only hostname. An HTTP 200 from `/api/turn` verifies credential/URL delivery,
+not successful relay connectivity.
+
 #### Deploy with TURN enabled
 
 From your local machine:

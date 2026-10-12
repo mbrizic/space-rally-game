@@ -13,7 +13,7 @@ describe("camera framing", () => {
     });
 
     // Touch bottom safe area clamps the Y center.
-    expect(res.screenCenterYCssPx).toBe(384);
+    expect(res.screenCenterYCssPx).toBe(408);
     expect(res.screenCenterXCssPx).toBeUndefined();
     // Zoom clamped to basePixelsPerMeter.
     expect(res.pixelsPerMeter).toBe(24);
@@ -21,7 +21,7 @@ describe("camera framing", () => {
     expect(res.offsetYM).toBe(0);
   });
 
-  it("computes runner navigator X bias and zoom from right-edge ahead pixels", () => {
+  it("keeps navigator X bias with a wider world view than the driver", () => {
     const res = computeCameraFraming({
       widthCssPx: 800,
       heightCssPx: 600,
@@ -32,9 +32,36 @@ describe("camera framing", () => {
     });
 
     expect(res.screenCenterXCssPx).toBe(272);
-    expect(res.screenCenterYCssPx).toBe(384);
-    // aheadPx is derived from (width - screenCenterX), so still clamped to basePixelsPerMeter.
-    expect(res.pixelsPerMeter).toBe(24);
+    expect(res.screenCenterYCssPx).toBe(300);
+    expect(res.pixelsPerMeter).toBeCloseTo(24 * 0.86, 6);
+  });
+
+  it("never zooms the navigator in more than the driver in landscape", () => {
+    for (const [widthCssPx, heightCssPx] of [[844, 390], [932, 430], [640, 320], [1280, 720]]) {
+      for (const isTouch of [true, false]) {
+        for (const cameraMode of ["runner", "follow"] as const) {
+          const options = { widthCssPx, heightCssPx, isTouch, cameraMode, carHeadingRad: 0 };
+          const driver = computeCameraFraming({ ...options, role: "driver" });
+          const navigator = computeCameraFraming({ ...options, role: "navigator" });
+          expect(navigator.pixelsPerMeter).toBeCloseTo(driver.pixelsPerMeter * 0.86, 6);
+          expect(navigator.screenCenterYCssPx).toBe(heightCssPx / 2);
+          expect(navigator.offsetXM).toBe(0);
+          expect(navigator.offsetYM).toBe(0);
+          expect(widthCssPx / navigator.pixelsPerMeter).toBeGreaterThan(widthCssPx / driver.pixelsPerMeter);
+          if (cameraMode === "runner") {
+            const driverAheadM = driver.screenCenterYCssPx! / driver.pixelsPerMeter;
+            const navigatorAheadM = (widthCssPx - navigator.screenCenterXCssPx!) / navigator.pixelsPerMeter;
+            expect(navigatorAheadM).toBeGreaterThan(driverAheadM);
+          }
+        }
+      }
+    }
+  });
+
+  it("moves the phone driver down slightly without changing driver zoom", () => {
+    const driver = computeCameraFraming({ widthCssPx: 844, heightCssPx: 390, isTouch: true, cameraMode: "runner", role: "driver", carHeadingRad: 0 });
+    expect(driver.screenCenterYCssPx).toBeCloseTo(390 * 0.70 - 12);
+    expect(driver.pixelsPerMeter).toBeCloseTo((390 * 0.66 - 12) / 14);
   });
 
   it("computes follow-mode look-ahead offset from heading", () => {

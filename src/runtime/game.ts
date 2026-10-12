@@ -14,7 +14,7 @@ import {
   type TrackProjection
 } from "../sim/track";
 import { surfaceForTrackSM, type Surface } from "../sim/surface";
-import { quietZonesFromSeed, resolveStageTheme, stageMetaFromSeed, zoneEdgeFade, zoneIntensityAtTrackDistance, zonesAtTrackDistance, type QuietZone, type StageThemeKind, type TrackZone, type TrackZoneKind } from "../sim/stage";
+import { quietZonesFromSeed, resolveStageTheme, stageBriefing, stageName, stageMetaFromSeed, zoneEdgeFade, zoneIntensityAtTrackDistance, zonesAtTrackDistance, type QuietZone, type StageThemeKind, type TrackZone, type TrackZoneKind } from "../sim/stage";
 import { generateDebris, generateEdgeRocks, generateTrees, generateWaterBodies, pointToSegmentDistance, type CircleObstacle, type DebrisObstacle, type WaterBody } from "../sim/props";
 import { DriftDetector, DriftState, type DriftInfo } from "../sim/drift";
 import { createEngineState, defaultEngineParams, stepEngine, rpmFraction, shiftUp, shiftDown, type EngineState } from "../sim/engine";
@@ -195,6 +195,8 @@ export class Game {
   private lastSurface: Surface = { name: "tarmac", frictionMu: 1, rollingResistanceN: 260 };
   private currentStageThemeKind: StageThemeKind = "temperate";
   private currentStageZones: TrackZone[] = [];
+  private readonly stageIntro = document.getElementById("stage-intro");
+  private stageIntroStartedAtMs: number | null = null;
   private showDebugMenu = false; // F to toggle debug/tires/tuning panels
   private showMinimap = true;
   private gear: "F" | "R" = "F";
@@ -269,7 +271,6 @@ export class Game {
   private prevCarY = 0;
 
   private lastDebrisWarnId: number | null = null;
-  private lastDebrisWarnAtSeconds = -999;
 
   // Simple frame timing breakdown (shown in debug menu).
   // Raw instantaneous values for internal tracking.
@@ -882,7 +883,8 @@ export class Game {
       const seed = pb.rec.seed;
       const timeS = this.finishTimeSeconds !== null ? this.finishTimeSeconds.toFixed(2) : "--";
       const status = pb.ended ? "(END)" : "";
-      if (this.replayPanel.sub) this.replayPanel.sub.textContent = `MODE: STATE | Track: ${seed} | Frame: ${idx}/${total} | Time: ${timeS}s ${status}`.trim();
+      const route = stageName(/^\d+$/.test(seed) ? Number(seed) : undefined);
+      if (this.replayPanel.sub) this.replayPanel.sub.textContent = `MODE: STATE | ${route} | Frame: ${idx}/${total} | Time: ${timeS}s ${status}`.trim();
       return;
     }
 
@@ -890,7 +892,8 @@ export class Game {
       const seed = ipb.rec.seed;
       const timeS = this.finishTimeSeconds !== null ? this.finishTimeSeconds.toFixed(2) : "--";
       const status = ipb.ended ? "(END)" : "";
-      if (this.replayPanel.sub) this.replayPanel.sub.textContent = `MODE: INPUTS | Track: ${seed} | Time: ${timeS}s ${status}`.trim();
+      const route = stageName(/^\d+$/.test(seed) ? Number(seed) : undefined);
+      if (this.replayPanel.sub) this.replayPanel.sub.textContent = `MODE: INPUTS | ${route} | Time: ${timeS}s ${status}`.trim();
     }
   }
 
@@ -1002,7 +1005,7 @@ export class Game {
     }
 
     const timeS = this.finishTimeSeconds !== null ? this.finishTimeSeconds.toFixed(2) : "--";
-    if (this.finishPanel.sub) this.finishPanel.sub.textContent = `Time: ${timeS}s`;
+    if (this.finishPanel.sub) this.finishPanel.sub.textContent = `${stageName(this.trackDef.meta?.seed)} / Time: ${timeS}s`;
     if (this.finishPanel.record) this.finishPanel.record.textContent = "";
     if (this.finishPanel.msg) this.finishPanel.msg.textContent = "";
 
@@ -1012,6 +1015,7 @@ export class Game {
   private async refreshFinishPanelData(): Promise<void> {
     const seed = this.finishPanelSeed;
     if (!seed) return;
+    const routeName = stageName(this.trackDef.meta?.seed);
 
     const key = `spaceRallyVote:${seed}`;
     const voted = ((): "up" | "down" | null => {
@@ -1037,7 +1041,7 @@ export class Game {
         this.finishPanel.newTrack.textContent = "LEAVE ROOM";
         this.finishPanel.newTrack.disabled = false;
       } else {
-        this.finishPanel.newTrack.textContent = "NEW TRACK";
+        this.finishPanel.newTrack.textContent = "NEW ROUTE";
         this.finishPanel.newTrack.disabled = false;
       }
     }
@@ -1056,7 +1060,9 @@ export class Game {
         || (localStorage.getItem("spaceRallyName") ?? "").trim().slice(0, 40)
         || "anonymous";
 
-      if (!scores.ok || playerScoreMs === null) {
+      if (this.netMode === "client") {
+        this.finishPanel.record.textContent = "P1 driver will request a new job. Please wait; dispatch is pretending to be busy.";
+      } else if (!scores.ok || playerScoreMs === null) {
         this.finishPanel.record.textContent = "";
       } else {
         const rows = scores.scores;
@@ -1074,17 +1080,17 @@ export class Game {
         if (!wouldBeBest) {
           this.finishPanel.record.textContent = "";
         } else if (!hasAny) {
-          this.finishPanel.record.textContent = "Congrats — you're the first recorded finisher on this seed (0 others so far). Submit to claim #1.";
+          this.finishPanel.record.textContent = `First finisher on ${routeName}! Fastest by default. Competition: currently theoretical. Submit to make it official.`;
         } else if (isTie) {
           if (bestTieCount >= 2) {
             const others = Math.max(0, bestTieCount - 1);
-            this.finishPanel.record.textContent = `Congrats — you're tied for #1. (${others} ${others === 1 ? "other" : "others"} share the best time.)`;
+            this.finishPanel.record.textContent = `Congrats — you're tied for #1 on ${routeName}. (${others} ${others === 1 ? "other" : "others"} share the best time.)`;
           } else {
-            this.finishPanel.record.textContent = "Congrats — you're currently #1 on this seed.";
+            this.finishPanel.record.textContent = `Congrats — you're currently #1 on ${routeName}.`;
           }
         } else {
           const prevBestS = bestMs !== null ? (bestMs / 1000).toFixed(3) : "--";
-          this.finishPanel.record.textContent = `Congrats — you're currently #1 on this seed (previous best: ${prevBestS}s). ${otherFinishers} ${otherFinishersLabel} have recorded a finish.`;
+          this.finishPanel.record.textContent = `Congrats — you're currently #1 on ${routeName} (previous best: ${prevBestS}s). ${otherFinishers} ${otherFinishersLabel} have recorded a finish.`;
         }
       }
     }
@@ -1097,7 +1103,7 @@ export class Game {
     }
 
     lines.push("");
-    lines.push("TOP TIMES (THIS TRACK)");
+    lines.push(`TOP TIMES / ${routeName}`);
 
     if (scores.ok && scores.scores.length > 0) {
       const showN = Math.min(6, scores.scores.length);
@@ -2006,7 +2012,16 @@ export class Game {
     }
   }
 
+  private isMinimapOnlyCallout(text: string): boolean {
+    return this.role === PlayerRole.NAVIGATOR && /^(RAIN|DEBRIS|NARROW|FOG|SANDSTORM|ECLIPSE|ELECTRICAL)\s+IN\b/i.test(text);
+  }
+
+  private shouldShowScreenNotification(text: string): boolean {
+    return !this.isMinimapOnlyCallout(text) && !(text === "GO!" && this.stageIntro && !this.stageIntro.hidden);
+  }
+
   private showNotification(text: string): void {
+    if (this.isMinimapOnlyCallout(text)) return;
     this.notificationText = text;
     this.notificationTimeSeconds = this.state.timeSeconds;
   }
@@ -2804,6 +2819,13 @@ export class Game {
     this.trackDef = def;
     this.track = createTrackFromDefinition(def);
 
+    const briefing = stageBriefing(def.meta?.seed, themeRef.kind, this.track.totalLengthM);
+    const introTitle = document.getElementById("stage-intro-title");
+    const introTagline = document.getElementById("stage-intro-tagline");
+    if (introTitle) introTitle.textContent = briefing.title;
+    if (introTagline) introTagline.textContent = briefing.tagline;
+    this.stageIntroStartedAtMs = null;
+
     for (let i = 0; i < this.track.points.length; i++) {
       const midSM = this.track.cumulativeLengthsM[i] + this.track.segmentLengthsM[i] * 0.5;
       const surface = surfaceForTrackSM(this.track.totalLengthM, midSM, false, trackSeed, themeRef.kind);
@@ -3225,7 +3247,6 @@ export class Game {
     const projectionFinal = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
     this.updateCheckpointsAndRace(projectionFinal);
 
-    this.updateDebrisWarnings(projectionFinal);
 
     this.resolveTreeCollisions();
     this.updateDebris(dtSeconds);
@@ -3267,6 +3288,14 @@ export class Game {
 
   private render(): void {
     const { width, height } = this.renderer.resizeToDisplay();
+
+    if (this.stageIntro && document.body.classList.contains("started")) {
+      const nowMs = performance.now();
+      if (this.stageIntroStartedAtMs === null) this.stageIntroStartedAtMs = nowMs;
+      const elapsedMs = nowMs - this.stageIntroStartedAtMs;
+      this.stageIntro.hidden = elapsedMs >= 7000 || this.damage01 >= 1 || this.raceFinished;
+      this.stageIntro.style.opacity = String(clamp((7000 - elapsedMs) / 800, 0, 1));
+    }
 
     // Independent render-time decay (net client may not advance sim time).
     {
@@ -3403,8 +3432,7 @@ export class Game {
       carHeadingRad: this.state.car.headingRad
     });
 
-    // P2 (client navigator) gets extra zoom-out for better situational awareness.
-    const pixelsPerMeter = framing.pixelsPerMeter * (this.netMode === "client" ? 0.78 : 1.0);
+    const pixelsPerMeter = framing.pixelsPerMeter;
     const offsetX = framing.offsetXM;
     const offsetY = this.netMode === "client" ? 0 : framing.offsetYM;
     const screenCenterXCssPx = framing.screenCenterXCssPx;
@@ -3568,9 +3596,6 @@ export class Game {
     // Zone-based visibility effects (screen-space overlays). Keep these under HUD.
     const proj = projectToTrack(this.track, { x: this.state.car.xM, y: this.state.car.yM });
 
-    // Client navigator doesn't run `step()`, so emit deterministic cues here too.
-    this.updateDebrisWarnings(proj);
-
     let rainIntensity = 0;
     let fogIntensity = 0;
     let eclipseIntensity = 0;
@@ -3719,8 +3744,6 @@ export class Game {
       const calloutsEnabled = proj.sM >= this.checkpointSM[0];
       const calloutLookaheadM = 150;
       const rainLookaheadM = calloutLookaheadM;
-      const narrowLookaheadM = calloutLookaheadM;
-      const debrisLookaheadM = calloutLookaheadM;
       const hideImminentM = 10;
       const loops = this.track.points.length > 2
         ? Math.hypot(
@@ -3766,41 +3789,6 @@ export class Game {
           }
         }
 
-        // Upcoming narrow road segments (based on per-segment width profile)
-        if (this.track.segmentWidthsM && this.track.segmentWidthsM.length > 0) {
-          const base = this.track.widthM;
-          // Only warn for VERY narrow segments (avoid spamming on mild squeezes).
-          const narrowThreshold = base * 0.64;
-          const currentW = this.track.segmentWidthsM[proj.segmentIndex] ?? base;
-          if (currentW > narrowThreshold) {
-            let best = Infinity;
-            for (let i = 0; i < this.track.segmentWidthsM.length; i++) {
-              const idx = loops ? (proj.segmentIndex + i) % this.track.segmentWidthsM.length : proj.segmentIndex + i;
-              if (idx < 0 || idx >= this.track.segmentWidthsM.length) break;
-              const w = this.track.segmentWidthsM[idx] ?? base;
-              if (w >= narrowThreshold) continue;
-              const segStart = this.track.cumulativeLengthsM[idx] ?? 0;
-              const d = forwardDistM(segStart);
-              if (d > narrowLookaheadM && !loops) break;
-              if (d >= 0 && d <= narrowLookaheadM) best = Math.min(best, d);
-            }
-            if (Number.isFinite(best) && best <= narrowLookaheadM && best > hideImminentM) {
-              warningTextLines.push(`NARROW IN ${Math.round(best)}m`);
-            }
-          }
-        }
-
-        // Upcoming debris
-        if (this.debris.length > 0) {
-          let best = Infinity;
-          for (const d of this.debris) {
-            const dist = forwardDistM(d.sM);
-            if (dist >= 0 && dist <= debrisLookaheadM) best = Math.min(best, dist);
-          }
-          if (Number.isFinite(best) && best <= debrisLookaheadM && best > hideImminentM) {
-            warningTextLines.push(`DEBRIS IN ${Math.round(best)}m`);
-          }
-        }
       }
 
       const miniMapSize = this.role === PlayerRole.NAVIGATOR
@@ -3832,7 +3820,7 @@ export class Game {
         start: startMM,
         finish: finishMM,
         offsetX: minimapOffsetX,
-        offsetY: height - miniMapSize - ((isTouch && this.role === PlayerRole.NAVIGATOR) ? hudPadding : (isTouch ? 0 : hudPadding)),
+        offsetY: height - miniMapSize - ((isTouch && this.role === PlayerRole.NAVIGATOR) ? hudPadding + 84 : (isTouch ? 0 : hudPadding)),
         size: miniMapSize,
         minimapBgColor: theme.minimapBgColor,
         zones: this.role === PlayerRole.NAVIGATOR ? this.currentStageZones : undefined,
@@ -3840,7 +3828,7 @@ export class Game {
         statusTextLines: (this.role === PlayerRole.NAVIGATOR && electricalIntensity > 0.05)
           ? ["ERROR", "ELECTRICAL STORM"]
           : undefined,
-        warningTextLines: this.netMode === "client" ? [] : warningTextLines
+        warningTextLines
       });
     }
 
@@ -3890,7 +3878,7 @@ export class Game {
           `ms (avg): hud ${perf.hud.toFixed(1)}  overlays ${perf.overlays.toFixed(1)}  rain ${perf.rain.toFixed(1)}`,
           `t: ${this.state.timeSeconds.toFixed(2)}s`,
           `track: ${this.trackDef.meta?.name ?? "Custom"}${this.trackDef.meta?.seed ? ` (seed ${this.trackDef.meta.seed})` : ""}`,
-          `stage: ${this.trackDef.meta?.seed ?? this.proceduralSeed}`,
+          `route: ${stageName(this.trackDef.meta?.seed)}`,
           `theme: ${theme.name} (${theme.kind})`,
           `zones: ${zoneSummary}`,
           `zones now: ${activeSummary}  rain:${rainIntensity.toFixed(2)} fog:${fogIntensity.toFixed(2)} elec:${electricalIntensity.toFixed(2)}`,
@@ -3991,7 +3979,7 @@ export class Game {
 
     // Notification (if recent)
     const timeSinceNotification = this.state.timeSeconds - this.notificationTimeSeconds;
-    if (this.notificationText && timeSinceNotification < 2.5) {
+    if (this.notificationText && this.shouldShowScreenNotification(this.notificationText) && timeSinceNotification < 2.5) {
       this.renderer.drawNotification(this.notificationText, timeSinceNotification);
     }
 
@@ -4064,7 +4052,8 @@ export class Game {
     if (this.damage01 >= 1) {
       this.renderer.drawCenterText({
         text: "DELIVERY FAILED",
-        subtext: "Also, you've wrecked your car and almost died."
+        subtext: "Also, you've wrecked your car and almost died.",
+        centerYFraction: 0.40
       });
     }
 
@@ -4243,6 +4232,7 @@ export class Game {
   private reset(): void {
     this.stopReplayPlayback();
     this.stopReplayRecording(false);
+    this.stageIntroStartedAtMs = null;
 
     // Reset transient gameplay state (debug hard-reset)
     this.bulletTimeRemainingS = this.bulletTimeBudgetS;
@@ -4311,46 +4301,6 @@ export class Game {
     this.debris = generateDebris(this.track, { seed: treeSeed + 3333, themeKind: this.currentStageThemeKind, quietZones: this.currentQuietZones });
   }
 
-  private wrapDeltaSForward(fromSM: number, toSM: number): number {
-    const L = this.track.totalLengthM;
-    let d = toSM - fromSM;
-    while (d < 0) d += L;
-    while (d >= L) d -= L;
-    return d;
-  }
-
-  private updateDebrisWarnings(proj: TrackProjection): void {
-    if (!this.debris.length) return;
-    // Only the navigator should get this cue.
-    if (this.role !== PlayerRole.NAVIGATOR) return;
-    // P2 shouldn't get on-screen callouts.
-    if (this.netMode === "client") return;
-    // No callouts until after leaving the start city.
-    if (proj.sM < this.checkpointSM[0]) return;
-
-    const nowS = proj.sM;
-    let best: DebrisObstacle | null = null;
-    let bestDelta = Infinity;
-
-    for (const d of this.debris) {
-      if (d.integrity01 <= 0.05) continue;
-      const delta = this.wrapDeltaSForward(nowS, d.sM);
-      if (delta < 1) continue;
-      if (delta < bestDelta) {
-        bestDelta = delta;
-        best = d;
-      }
-    }
-
-    // Only warn when it's close but not already visually imminent.
-    if (!best || bestDelta < 10 || bestDelta > 150) return;
-    if (this.lastDebrisWarnId === best.id && (this.state.timeSeconds - this.lastDebrisWarnAtSeconds) < 4.0) return;
-
-    this.lastDebrisWarnId = best.id;
-    this.lastDebrisWarnAtSeconds = this.state.timeSeconds;
-    this.showNotification(`DEBRIS IN ${Math.round(bestDelta)}m`);
-  }
-
   private resolveDebrisCollisions(): void {
     if (this.debris.length === 0) return;
     if (this.damage01 >= 1) return;
@@ -4404,9 +4354,9 @@ export class Game {
       const sinH = Math.sin(this.state.car.headingRad);
       const sideSign = Math.sign(nx * sinH - ny * cosH) || 1;
       const twist = clamp(speed / 28, 0, 1);
-      this.state.car.yawRateRadS += sideSign * (0.24 + 0.55 * twist);
-      this.state.car.vxMS *= 0.985;
-      this.state.car.vyMS *= 0.985;
+      this.state.car.yawRateRadS += sideSign * (0.27 + 0.62 * twist);
+      this.state.car.vxMS *= 0.983;
+      this.state.car.vyMS *= 0.983;
       if (speed > 18) {
         this.damage01 = clamp(this.damage01 + 0.0012 * twist, 0, 1);
       }
@@ -5395,15 +5345,15 @@ export class Game {
         const isTank = enemy.type === "tank";
         const isColossus = enemy.type === "colossus";
         const isZombie = enemy.type === "zombie";
-        const push = isColossus ? 0.95 : (isTank ? 0.35 : (isZombie ? 0.12 : 0.22));
+        const push = isColossus ? 0.95 : (isTank ? 0.35 : (isZombie ? 0.135 : 0.22));
         this.state.car.xM += nx * overlap * push;
         this.state.car.yM += ny * overlap * push;
 
         // Type-specific physics
         // Colossus should feel like a catastrophic collision.
         // Tanks should feel less like immovable walls
-        const speedReduction = isColossus ? 0.55 : (isTank ? 0.78 : (isZombie ? 0.92 : 0.86));
-        const distortionMultiplier = isColossus ? 0.65 : (isTank ? 0.25 : (isZombie ? 0.06 : 0.12));
+        const speedReduction = isColossus ? 0.55 : (isTank ? 0.78 : (isZombie ? 0.91 : 0.86));
+        const distortionMultiplier = isColossus ? 0.65 : (isTank ? 0.25 : (isZombie ? 0.067 : 0.12));
         // Damage from enemy impacts
         const damageRate = isColossus ? 0.11 : (isTank ? 0.03 : (isZombie ? 0.0035 : 0.008));
         const baseDamage = isColossus ? 0.18 : 0;
@@ -5418,7 +5368,7 @@ export class Game {
         this.damage01 = clamp(this.damage01 + baseDamage + contactSeverity * damageRate, 0, 1);
 
         // Camera shake
-        const shakeIntensity = Math.min(contactSeverity * (isColossus ? 0.85 : (isTank ? 0.5 : (isZombie ? 0.12 : 0.22))), 3.2);
+        const shakeIntensity = Math.min(contactSeverity * (isColossus ? 0.85 : (isTank ? 0.5 : (isZombie ? 0.135 : 0.22))), 3.2);
         if (isColossus) {
           // Deterministic shove-based shake for the boss.
           this.cameraShakeX = nx * shakeIntensity * 0.55;
@@ -5427,7 +5377,7 @@ export class Game {
           this.cameraShakeX = (Math.random() - 0.5) * shakeIntensity;
           this.cameraShakeY = (Math.random() - 0.5) * shakeIntensity;
         }
-        this.collisionFlashAlpha = Math.min(contactSeverity * (isColossus ? 0.22 : (isTank ? 0.15 : (isZombie ? 0.03 : 0.06))), 0.65);
+        this.collisionFlashAlpha = Math.min(contactSeverity * (isColossus ? 0.22 : (isTank ? 0.15 : (isZombie ? 0.033 : 0.06))), 0.65);
 
         // Kill/Damage enemy on impact (usually kills zombies immediately).
         // The colossus should not be damaged by touching the car.

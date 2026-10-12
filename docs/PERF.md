@@ -36,7 +36,7 @@ These are intentionally stable, deterministic-ish, and easy to run in CI.
 
 ## Where Results Are Stored
 
-- Append-only history: [perf/perf-history.tsv](perf/perf-history.tsv)
+- Append-only history: [perf/perf-history.tsv](../perf/perf-history.tsv)
 - Per-run JSON snapshots: `perf/runs/*.json` (gitignored)
 
 ### Percent Change Columns
@@ -57,17 +57,19 @@ We want an “official” rendering perf test that can answer:
 
 ### Recommended Approach: Record + Deterministic Playback
 
+Input/state recording and playback already exist in the game (see [dormant features](DORMANT_FEATURES.md)); reuse them rather than implementing a second recorder. Render-phase timings also exist, but the browser runner, fixed stress scenes, fine-grained simulation/particle timings and exported benchmark summaries remain pending in [TASKS.md](TASKS.md).
+
 1. Add a `?perf=1` mode in the client that locks down a stable scene:
    - Fixed seed / fixed stage
    - Fixed graphics settings
    - Optional invincibility / disable enemy damage to avoid diverging outcomes
 
-2. Add a run recorder:
-   - Records input state per tick (driver + navigator)
-   - Captures initial seed + settings
+2. Reuse the existing run recorder:
+   - Confirm the benchmark trace captures all required driver/navigator input
+   - Include initial seed and the benchmark graphics/settings preset
 
-3. Add playback:
-   - Feeds the recorded input stream at a fixed tick rate
+3. Drive existing playback from the benchmark mode:
+   - Feed the recorded input stream at a fixed tick rate
    - Outputs frame stats (avg FPS, p50/p95 frame time, worst frame time)
    - Exposes a final summary via `window.__perfResults`
 

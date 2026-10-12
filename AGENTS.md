@@ -10,8 +10,11 @@
 
 ## Workflow
 - Keep changes scoped and preserve the existing module boundaries; do not introduce a new physics engine or framework without agreement.
+- P2 weather-distance callouts belong only inside the minimap, never in floating notifications. Do not show NARROW/DEBRIS distance labels anywhere; show concentrated debris patches as D markers. Enforce this in solo/host/client modes.
+- Do not commit or push automatically. Wait for manual feature acceptance, then commit/push only when the user explicitly asks.
 - Install with `npm install`; develop with `npm run dev`.
 - After code changes, run `npx tsc --noEmit` and `npm test`; use nearby `*.test.ts` tests for focused checks.
+- For routine gameplay/UI tuning, use basic automated checks and hand off for user playtesting; do not run OCR/browser visual checks unless requested.
 - `npm run build` typechecks and bundles the frontend. Root typecheck/tests do not cover `server/src/`.
 - Use `npm run perf:run` for performance changes; see [performance notes](docs/PERF.md).
 - Do not hand-edit generated `dist/`, `coverage/`, dependencies, or build metadata.

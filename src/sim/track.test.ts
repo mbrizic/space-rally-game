@@ -8,6 +8,12 @@ import {
 } from "./track";
 
 describe("track generation", () => {
+  it("reproduces the complete point-to-point definition for the same seed", () => {
+    for (const seed of [1, 62, 315, 999]) {
+      expect(createPointToPointTrackDefinition(seed)).toEqual(createPointToPointTrackDefinition(seed));
+    }
+  });
+
   it("creates point-to-point track with valid properties", () => {
     const def = createPointToPointTrackDefinition(123);
 

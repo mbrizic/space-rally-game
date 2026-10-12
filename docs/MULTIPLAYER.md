@@ -15,6 +15,7 @@ This project’s multiplayer is **WebRTC DataChannel** based:
   - STUN (Google)
   - optional TURN (fetched from `/api/turn`)
 - Uses a single `RTCDataChannel` (“data”) for gameplay messages.
+- Navigator weather-distance warnings are minimap-only in every mode; do not generate NARROW/DEBRIS distance labels. Clients show D debris-patch markers and use the same role-based camera scale as local navigators, without an extra network zoom multiplier.
 
 **Signaling server (Bun, `server/`):**
 - Relays JSON messages between peers in a room:

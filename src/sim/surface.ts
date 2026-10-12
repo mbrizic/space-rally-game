@@ -12,6 +12,26 @@ function surfaceRand(seed: number): number {
   return x - Math.floor(x);
 }
 
+function surfaceSegmentCount(seed: number): number {
+  return 8 + Math.floor(surfaceRand(seed * 1.1) * 5);
+}
+
+export function trackSurfacePercentages(totalLengthM: number, seed: number, themeKind: StageThemeKind): { name: Surface["name"]; percent: number }[] {
+  const segmentCount = surfaceSegmentCount(seed);
+  const counts = new Map<Surface["name"], number>();
+  for (let index = 0; index < segmentCount; index++) {
+    const surface = surfaceForTrackSM(totalLengthM, (index + 0.5) * totalLengthM / segmentCount, false, seed, themeKind);
+    counts.set(surface.name, (counts.get(surface.name) ?? 0) + 1);
+  }
+  const surfaces = [...counts].sort((first, second) => second[1] - first[1]);
+  let remainingPercent = 100;
+  return surfaces.map(([name, count], index) => {
+    const percent = index === surfaces.length - 1 ? remainingPercent : Math.round(count * 100 / segmentCount);
+    remainingPercent -= percent;
+    return { name, percent };
+  });
+}
+
 function offtrackSurfaceForTheme(themeKind?: StageThemeKind): Surface {
   switch (themeKind) {
     case "desert":
@@ -68,7 +88,7 @@ export function surfaceForTrackSM(
   
   // Generate random surface transitions based on track seed
   // Create 8-12 surface segments with random order (more segments = shorter patches)
-  const numSegments = 8 + Math.floor(surfaceRand(seed * 1.1) * 5);
+  const numSegments = surfaceSegmentCount(seed);
   const segmentSize = 1.0 / numSegments;
   
   // Determine which segment we're in

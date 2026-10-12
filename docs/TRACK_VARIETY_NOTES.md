@@ -2,6 +2,22 @@
 
 This document tracks our experiments with procedural track generation, particularly around creating exciting, varied tracks without self-intersections or straight segments.
 
+## Current Implementation (2026-10-12)
+
+- The point-to-point generator now builds exact circular arcs in separated lanes, rather than overriding individual corners near old road.
+- In local coordinates, all headings remain between 0 and pi: the route advances along one axis even while turning back along the other. A seeded rotation/mirror changes its world orientation.
+- Five to seven major bends mix roughly 169-degree hairpins, 95-117-degree sharp corners, and 129-158-degree sweeping bends. Radii, connectors, and technical/flowing profiles vary by seed.
+- A length budget keeps cities and route within the existing stage-length limits. Widths, biome/surface rules, cities, and collision validation remain in place.
+- The first 100 seeds contain compact hairpins on 83 stages (previous generator: 7), and sustained long bends on 89. All 1,000 selectable seeds pass crossing and nonadjacent road-clearance checks, with a measured minimum clearance of 39.8 m.
+- Stage intros show a seeded Road/Passage/Detour/Salvage Run/Trail name, biome, and an "all", "mostly", or "mix of" surface description derived from the actual surface segments. Finish/replay copy uses the same name. Intros fade after seven real-time seconds; GO does not overlap them.
+- Fallen logs occupy a few concentrated patches (denser in rainforest), separated by clear route stretches and excluded from cities/quiet zones. Minimap patches use D markers, not debris-distance callouts.
+
+Acceptance: the user accepted the current track/UI/handling batch for commit and push on 2026-10-12. Future tuning still needs user playtesting; production deployment requires a separate explicit instruction.
+
+Compatibility: regeneration changes the layout associated with a seed, although saved full track definitions retain their geometry and the serialization format is unchanged. Existing leaderboard times remain intact by explicit user decision; the accepted comparability caveat is recorded in [production readiness](PRODUCTION-READINESS.md).
+
+The sections below describe earlier experiments, not the current generator.
+
 ## The Core Challenge
 
 Rally games need:
@@ -54,7 +70,7 @@ These requirements are in tension - hairpins naturally want to loop back!
 - By the end, so many points to avoid that it goes straight
 - Trade-off between safety and variety
 
-### 4. Corner-Based System (Current - Works but Boring)
+### 4. Corner-Based System (Previous - Worked but Boring)
 **What**: Pre-define corner types, place them strategically
 **Corner Types**:
 - Hairpin: ~178° over 6 control points
@@ -142,7 +158,7 @@ The retry logic creates a **selection bias**:
 3. Check straightness only in middle sections, allow straights at start/end
 4. Accept 95% quality instead of 100%
 
-## Current State
+## Previous State
 
 **Production**: Using corner-based with retry logic
 - 100% reliable (no broken tracks)

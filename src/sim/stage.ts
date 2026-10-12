@@ -1,4 +1,5 @@
 import { mulberry32 } from "./rng";
+import { trackSurfacePercentages } from "./surface";
 
 export type StageThemeKind = "temperate" | "rainforest" | "desert" | "arctic";
 
@@ -34,6 +35,32 @@ export type QuietZone = {
   start01: number;
   end01: number;
 };
+
+export function stageName(seed: number | undefined): string {
+  if (seed === undefined) return "Custom route";
+  const safeSeed = Math.floor(seed);
+  const names = ["Road", "Passage", "Detour", "Salvage Run", "Trail"];
+  const rand = mulberry32((safeSeed ^ 0x6d2b79f5) >>> 0);
+  return `${names[Math.floor(rand() * names.length)]} ${safeSeed}`;
+}
+
+export function stageBriefing(seed: number | undefined, themeKind: StageThemeKind, totalLengthM: number): { title: string; tagline: string } {
+  const biomeNames: Record<StageThemeKind, string> = {
+    temperate: "Temperate",
+    rainforest: "Rainforest",
+    desert: "Desert",
+    arctic: "Arctic"
+  };
+  const surfaces = trackSurfacePercentages(totalLengthM, seed ?? 1, themeKind);
+  const surfaceNames = surfaces.map(surface => surface.name === "tarmac" ? "asphalt" : surface.name);
+  const mix = surfaces.length === 1 ? `all ${surfaceNames[0]}`
+    : surfaces[0].percent >= 70 ? `mostly ${surfaceNames[0]}`
+    : `mix of ${surfaceNames.slice(0, -1).join(", ")} and ${surfaceNames[surfaceNames.length - 1]}`;
+  return {
+    title: stageName(seed),
+    tagline: `${biomeNames[themeKind]} / ${mix}`
+  };
+}
 
 export function resolveStageTheme(ref: StageThemeRef): StageTheme {
   switch (ref.kind) {

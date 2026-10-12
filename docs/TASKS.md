@@ -2,90 +2,93 @@
 
 This file is the **master list of all things we might want** (tasks + ideas). Keep it compact: one-liners only, link out for details. As soon as something is done, remove it from this file, as the ideal length of this file should be zero.
 
+Navigator UI rule: weather distances are minimap-only in every network mode. No NARROW/DEBRIS distance labels; debris patches use D markers and narrow roads are read visually.
+
 ## Co-op Mode
 
-- [ ] Prevent/mitigate cheating vectors (e.g. resize / zoom / debug toggles) (details: `COOP_MODE.md`)
-- post replays to backend automatically for verification
+- [ ] Prevent information/cheating leaks via resize, zoom and debug toggles (details: [COOP_MODE.md](COOP_MODE.md)).
+- [ ] Improve navigator map interactions/annotations while keeping P2 hazard distances strictly minimap-only (details: [COOP_MODE.md](COOP_MODE.md)).
+- [ ] Investigate reconnect reliability and add regression coverage (details: [MULTIPLAYER.md](MULTIPLAYER.md)).
+- [ ] Validate client drift/twitch under jitter; evaluate buffered playback, timebase and large-correction handling (details: [MULTIPLAYER_PLAYBACK.md](MULTIPLAYER_PLAYBACK.md)).
 
 ## Track / Stage Generation
 
-- [ ] Improve track variety without breaking safety constraints (details: `TRACK_VARIETY_NOTES.md`)
-- [ ] Track generator: reduce “safe/repetitive” bias from overlap-retry logic (details: `TRACK_VARIETY_NOTES.md`)
+- [ ] Add rocky-road stretches with deterministic small-rock handling disturbances (details: [COOP_MODE.md](COOP_MODE.md)).
+- [ ] Add wide roadless sand crossings where only the navigator sees the route continuation (details: [COOP_MODE.md](COOP_MODE.md)).
+- [ ] Add rivers that cross the track, distinct from existing off-road water bodies.
+- [ ] Add route forks with clear navigation and checkpoint rules.
+- [ ] Add minefields and flying enemies that sweep across the route.
+
+## Events
+
+- [ ] Enable/tune generated desert sandstorms and complete their presentation (details: [DORMANT_FEATURES.md](DORMANT_FEATURES.md), [COOP_MODE.md](COOP_MODE.md)).
+- [ ] Add heat-wave events; decide whether heat haze alone or thermal/cooling mechanics are in scope (details: [COOP_MODE.md](COOP_MODE.md)).
+- [ ] Add full night stages and manual headlights with the optional fly-attraction effect, distinct from existing eclipse zones.
+- [ ] Add a warned persistent pursuit event with a storm/cloud or original shadow-monster presentation (details: [COOP_MODE.md](COOP_MODE.md)).
+- [ ] Review weather-zone overlap/readability without replacing the existing non-overlap generation rule.
+
+## Weapons / Interactions
+
+- [ ] Add a bazooka with projectile, ammo and area-damage rules (details: [COOP_MODE.md](COOP_MODE.md)).
+- [ ] Add an alternate alien/magician navigator loadout with lightning and fire (details: [COOP_MODE.md](COOP_MODE.md)).
+- [ ] Add navigator-assisted hacking/breaking gates and engine-fault manual/code puzzles (details: [COOP_MODE.md](COOP_MODE.md)).
+- [ ] Evaluate reactivating the existing Colossus boss separately from new on-foot boss fights (details: [DORMANT_FEATURES.md](DORMANT_FEATURES.md)).
+
+## Modes / Progression
+
+- [ ] Add a guided driving/co-op tutorial using practice-mode foundations (details: [COOP_MODE.md](COOP_MODE.md)).
+- [ ] Design story contracts and campaign progression/save rules (details: [COOP_MODE.md](COOP_MODE.md), [LORE.md](LORE.md)).
+- [ ] Add endurance mode with chained stages, carryover resources and survival scoring (details: [COOP_MODE.md](COOP_MODE.md)).
+- [ ] Restore replay watch/export/import UI using the existing recording/playback system (details: [DORMANT_FEATURES.md](DORMANT_FEATURES.md)).
+- [ ] Add volatile cargo stability, delivery deadlines and optional contract clauses (details: [LORE.md](LORE.md)).
+- [ ] Explore faction reputation and black-market vehicle/weapon mods (details: [LORE.md](LORE.md)).
 
 ## Performance
 
-- [ ] Rendering perf benchmark (browser): record + deterministic playback + Playwright runner (details: `PERF.md`)
-- [ ] Add perf parameter sweep runner (fog/rain/particles presets → FPS + frame-time stats) (details: `PERF.md`)
-- [ ] WebGPU particle system: 10x particle count, GPU compute/render (details: `WEBGPU_WASM.md`)
-- [ ] WASM physics: Rust-compiled car/enemy/track simulation (details: `WEBGPU_WASM.md`)
+- [ ] Add a fixed-scene browser FPS/frame-time benchmark and Playwright runner, reusing existing replay recording/playback (details: [PERF.md](PERF.md)).
+- [ ] Add fog/rain/particle preset sweeps with frame-time history (details: [PERF.md](PERF.md)).
+- [ ] Extend existing render timings with particle update/render, physics, projection and enemy timing/counts (details: [WEBGPU_WASM.md](WEBGPU_WASM.md)).
+- [ ] Add seeded particle stress tests and a browser particle-stress mode; record measured baselines (details: [WEBGPU_WASM.md](WEBGPU_WASM.md)).
+- [ ] Profile per-frame allocations before changing renderer/physics technology (details: [PERF.md](PERF.md)).
+- [ ] Evaluate an optional accelerated renderer only if browser baselines show Canvas2D is the bottleneck (details: [PERF.md](PERF.md)).
+- [ ] Explore WebGPU particles with CPU fallback, visual parity and bounded memory (details: [WEBGPU_WASM.md](WEBGPU_WASM.md)).
+- [ ] Explore WASM car/track/enemy hot paths with JS fallback and deterministic parity tests (details: [WEBGPU_WASM.md](WEBGPU_WASM.md)).
+- [ ] Evaluate a physics worker, WASM/JS boundary overhead and optional SharedArrayBuffer after baseline measurements (details: [WEBGPU_WASM.md](WEBGPU_WASM.md)).
+
+## Audio / Presentation
+
+- [ ] Build generative/dynamic music tooling and hazard-safe mixing
+- [ ] Add speed-based wind and biome ambience (details: [../src/audio/README.md](../src/audio/README.md)).
+- [ ] Explore Doppler/positional effects and tunnel/canyon reverb (details: [../src/audio/README.md](../src/audio/README.md)).
+- [ ] Add audio-mix visualization for debugging (details: [../src/audio/README.md](../src/audio/README.md)).
+- [ ] Evaluate optional tutorial/accessibility voice callouts without restoring automatic turn pacenotes by default (details: [PACENOTES.md](PACENOTES.md), [../src/audio/README.md](../src/audio/README.md)).
 
 ## Backend
-- HTML pages are under /api/, this should be cleaned up
-- audit backend for safety, injections, etc.
-- joke message when you're first one so you're automatically the fastest
-- change all high score inputs to say "team name"
+
+- [ ] Move HTML pages out of the /api/ namespace.
+- [ ] Audit backend input validation, injection risks and score/hit authority boundaries.
 
 ## Cleanups
-- Tune surfaces + audio feel (gravel slide vs drift intensity, ice feel)
-- audit code for abbreviations and make them cleaner (like quietZoneContainsSM)
-- remove unused functions and classes
-- try some code analyzer that can find bugs
 
-- move P2 gun switcher to the left of the screen, right next to the bullet time slot
-- reconnect doesnt' work reliably?
-- add rivers that cross the track
-- for practice runs, don't even show the submit/upvote menu
-- overlapping track zones?
-- night tracks?
-- Expand the lore document with some funny bits how driver has a really poor eyesight and co-drivers brings a lot more gunpower than needed
-- gates that you need to hack or break through (minigame with symbols they need to input)
-- minefield
-- forks in the road
-- driver shouldn't see enemy health
-- flying monsters that sweep from left to right
-- headlights button that you need to turn on yourself, but they gather flies
-- engine breaks with a partially visible code, P2 check manual (answer depends on track type)
-    - press brake and gas at the same time, gas and handbrake
-    - press one of the buttons: lights, coolant; but press only when something is on screen; press gas and one of the buttons, press in sequence
-    - some buttons on/off toggles, some you need to hold
-    - press speedometer
+- [ ] Tune surface/audio feel, especially gravel sliding and ice.
+- [ ] Audit abbreviations, unused functions/classes and static-analysis options.
+- [ ] Hide score submission as well as voting for practice finishes; voting is already hidden.
+- [ ] Restrict enemy-health information to the intended role, including desktop views.
+- [ ] Improve manual gearbox UX on mobile.
+- [ ] Expand driver-poor-eyesight and navigator-excessive-firepower lore.
 
+## Sequel / Deferred Extra Players
 
-## Bigger Ideas (P3/P4, Weather, etc.)
-- [ ] Something is after you: a sandstorm, dark clouds, something, and you need to run from it
-- [ ] Player 3 (Engineer): power distribution (shield/engine/weapons) + damage control
-- [ ] Player 4 (Intel/Hacker): forward-scout drone + tagging/hacking gates
-- [ ] Boss fights - ultra big enemy on the stage that shoots at players - they leave the car and then the game becomes a top-down shooter until they get rid of him (will need to implement completely different, Crimsonland-like gameplay)
-- [ ] Manual gearbox UX on mobile
+- [ ] Explore optional P3 engineer diagnostics/repairs for lights, radar, AC/cooling, alignment, power and cargo (details: [COOP_MODE.md](COOP_MODE.md)).
+- [ ] Prototype an optional P4 passenger/music role with confetti and a pettable dog after generative music tooling (details: [COOP_MODE.md](COOP_MODE.md)).
+- [ ] Preserve Intel/Hacker as an alternative specialist role with scouting, tagging and gate hacking (details: [COOP_MODE.md](COOP_MODE.md)).
+- [ ] Design 3-4-player room/role schemas and missing-role fallbacks; compare host-client and mesh before choosing (details: [COOP_MODE.md](COOP_MODE.md)).
+- [ ] Explore on-foot top-down boss encounters as a separate mode/expansion, not merely re-enabling Colossus.
 
 ## Discarded ideas
+
 - shake the phone to reload gun
 
 ## Deployment
 
-- [ ] Redeploy the backend play link and migrate live TURN_URLS to spacerally.hexagonflux.hr (details: [DEPLOY.md](DEPLOY.md)).
-
-## Infrastructure (P3/P4)
-
-- [ ] Mesh networking for 3-4 players: WebRTC mesh topology (see notes below)
-
-### Mesh Networking Notes
-
-Current architecture is host-client (2 players). For 3-4 players, mesh networking is preferred:
-
-**Why mesh over host-client for 3+ players:**
-- Direct P2P between all players reduces latency (no relay through host)
-- No single point of failure (host disconnect doesn't kill session)
-- Natural fit for role-based authority (driver owns car state, gunner owns projectiles)
-
-**Architecture:**
-- Each player connects to every other player via WebRTC DataChannel
-- Soft authority model: simulation host for physics, but each role authoritative for their actions
-- Use existing signaling server for peer discovery + ICE exchange
-
-**Complexity:**
-- Need consensus on game state (or clear authority rules)
-- More connections to manage (N players = N×(N-1)/2 connections)
-- Bandwidth scales with player count
-
-**Recommendation:** Only implement if P3/P4 roles become a priority. Current 2-player architecture is simpler and sufficient for driver+navigator co-op.
+- [ ] Make the TURN hostname DNS-only (or approve a separate DNS-only relay host) and verify a forced TURN session; backend/play-link/URL migration is complete (details: [DEPLOY.md](DEPLOY.md)).

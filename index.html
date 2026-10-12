@@ -41,6 +41,37 @@
       display: block;
     }
 
+    #stage-intro {
+      position: absolute;
+      top: max(calc(var(--safe-top) + 60px), 17%);
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(560px, calc(100% - 32px));
+      z-index: 90;
+      text-align: center;
+      pointer-events: none;
+      color: #f5f8ff;
+      text-shadow: 0 2px 4px #000, 0 0 12px #000;
+    }
+
+    body:not(.started) #stage-intro {
+      display: none;
+    }
+
+    #stage-intro-title {
+      font-size: 22px;
+      font-weight: 800;
+      line-height: 1.2;
+      text-transform: uppercase;
+    }
+
+    #stage-intro-tagline {
+      margin-top: 6px;
+      font-size: 14px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+
     /* Simplified Net / Invite UI */
     #net-panel {
       position: absolute;
@@ -310,6 +341,7 @@
       #finish-panel {
         position: absolute;
         inset: 0;
+        box-sizing: border-box;
         display: none;
         align-items: center;
         justify-content: center;
@@ -322,20 +354,30 @@
       /* Visibility is controlled by game logic (JS). */
 
       #finish-panel .card {
-        width: min(640px, 92vw);
+        box-sizing: border-box;
+        width: min(960px, 100%);
+        max-height: 100%;
+        min-height: 0;
+        overflow: auto;
+        overscroll-behavior: contain;
+        touch-action: pan-y;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 20px;
         background: rgba(15, 18, 24, 0.92);
         border: 1px solid rgba(255, 255, 255, 0.14);
-        border-radius: 14px;
-        padding: 18px;
+        border-radius: 8px;
+        padding: 16px;
         box-shadow: 0 16px 45px rgba(0, 0, 0, 0.45);
         backdrop-filter: blur(8px);
       }
 
       #finish-panel .title {
-        font-size: 30px;
+        font-size: 24px;
         font-weight: 950;
-        letter-spacing: 0.10em;
-        text-align: center;
+        letter-spacing: 0;
+        line-height: 1.15;
+        text-align: left;
         color: rgba(255, 255, 255, 0.96);
       }
 
@@ -344,7 +386,7 @@
         color: rgba(255, 255, 255, 0.70);
         font-size: 14px;
         line-height: 1.25;
-        text-align: center;
+        text-align: left;
       }
 
       #finish-panel .row {
@@ -355,11 +397,16 @@
         align-items: center;
       }
 
+      #finish-panel .finish-overview {
+        min-width: 0;
+      }
+
       #finish-panel input.name-input {
-        flex: 1;
-        min-width: 170px;
+        box-sizing: border-box;
+        flex: 1 1 110px;
+        min-width: 0;
         height: 44px;
-        border-radius: 10px;
+        border-radius: 6px;
         border: 1px solid rgba(255, 255, 255, 0.18);
         background: rgba(0, 0, 0, 0.35);
         color: rgba(255, 255, 255, 0.92);
@@ -370,15 +417,25 @@
 
       #finish-panel .finish-btn {
         min-height: 44px;
-        padding: 10px 14px;
-        border-radius: 10px;
+        min-width: 0;
+        padding: 8px 12px;
+        border-radius: 6px;
         border: 1px solid rgba(255, 255, 255, 0.16);
         background: rgba(70, 90, 255, 0.85);
         color: rgba(255, 255, 255, 0.95);
         font-weight: 800;
-        letter-spacing: 0.02em;
+        font-size: 12px;
+        letter-spacing: 0;
         cursor: pointer;
         user-select: none;
+      }
+
+      #finish-row-vote .finish-btn {
+        flex: 1 1 90px;
+      }
+
+      #finish-row-nav .finish-btn {
+        width: 100%;
       }
 
       #finish-panel .finish-btn:active {
@@ -417,19 +474,63 @@
       }
 
       #finish-panel .hint {
-        margin-top: 10px;
+        margin-top: 8px;
         color: rgba(255, 255, 255, 0.62);
         font-size: 12px;
+        line-height: 1.4;
+        overflow-wrap: anywhere;
+      }
+
+      #finish-panel .hint:empty {
+        display: none;
       }
 
       #finish-panel .board {
-        margin-top: 12px;
-        padding-top: 10px;
-        border-top: 1px solid rgba(255, 255, 255, 0.10);
+        min-width: 0;
+        padding-left: 16px;
+        border-left: 1px solid rgba(255, 255, 255, 0.10);
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         color: rgba(255, 255, 255, 0.78);
         font-size: 12px;
-        white-space: pre;
+        line-height: 1.55;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      @media (orientation: landscape) and (max-height: 500px) {
+        #finish-panel .card {
+          gap: 12px;
+          padding: 12px;
+        }
+
+        #finish-panel .title {
+          font-size: 20px;
+        }
+
+        #finish-panel .row {
+          margin-top: 8px;
+          gap: 8px;
+        }
+
+        #finish-panel .sub,
+        #finish-panel .board {
+          font-size: 12px;
+        }
+      }
+
+      @media (orientation: portrait) {
+        #finish-panel .card {
+          width: min(640px, 100%);
+          grid-template-columns: minmax(0, 1fr);
+          gap: 12px;
+        }
+
+        #finish-panel .board {
+          padding-left: 0;
+          padding-top: 12px;
+          border-left: 0;
+          border-top: 1px solid rgba(255, 255, 255, 0.10);
+        }
       }
 
     #net-invite {
@@ -568,11 +669,10 @@
       background: rgba(255, 255, 255, 0.16);
     }
 
-    /* Navigator ammo indicator (above weapon buttons) */
+    /* Navigator ammo indicator (beside weapon buttons) */
     #ammo-display {
-      position: absolute;
-      right: calc(var(--pad) + var(--safe-right));
-      bottom: calc(var(--pad) + var(--safe-bottom) + var(--btn-sm) + 10px);
+      position: static;
+      align-self: center;
       padding: 8px 10px;
       border-radius: 14px;
       background: rgba(0, 0, 0, 0.35);
@@ -666,7 +766,7 @@
       position: absolute;
       left: 50%;
       transform: translateX(-50%);
-      bottom: calc(var(--pad) + var(--safe-bottom) + min(240px, 34vh));
+      top: min(calc(50% + 72px), calc(100% - var(--pad) - var(--safe-bottom) - 52px));
       z-index: 140;
       pointer-events: auto;
 
@@ -679,7 +779,7 @@
       background: rgba(255, 255, 255, 0.10);
       color: rgba(255, 255, 255, 0.95);
       font-weight: 950;
-      letter-spacing: 0.08em;
+      letter-spacing: 0;
       user-select: none;
       box-shadow: 0 12px 26px rgba(0, 0, 0, 0.28);
     }
@@ -793,12 +893,13 @@
       touch-action: none;
     }
 
-    /* Navigator weapon buttons float bottom-right; shooting is tap/hold anywhere in aim-zone */
+    /* Navigator weapon buttons sit beside Slow; shooting is tap/hold anywhere in aim-zone */
     #weapon-zone {
       position: absolute;
-      right: calc(var(--pad) + var(--safe-right));
+      left: calc(var(--pad) + var(--safe-left) + var(--btn-sm) + 12px);
       bottom: calc(var(--pad) + var(--safe-bottom));
       display: flex;
+      align-items: center;
       gap: 10px;
       pointer-events: auto;
       z-index: 170;
@@ -862,6 +963,10 @@
 <body>
   <div id="app">
     <canvas id="game"></canvas>
+    <div id="stage-intro" role="status" hidden>
+      <div id="stage-intro-title"></div>
+      <div id="stage-intro-tagline"></div>
+    </div>
 
     <div id="fps-counter">-- FPS</div>
 
@@ -869,26 +974,28 @@
     <button id="btn-new-track" type="button">NEW TRACK</button>
 
       <div id="finish-panel">
-        <div class="card">
-          <div class="title">CONTRACT COMPLETE</div>
-          <div class="sub" id="finish-sub">Time: -- | Track: --</div>
+        <div class="card" role="dialog" aria-modal="true" aria-labelledby="finish-title">
+          <div class="finish-overview">
+            <div class="title" id="finish-title">CONTRACT COMPLETE</div>
+            <div class="sub" id="finish-sub">Time: --</div>
+            <div id="finish-record" class="hint"></div>
 
-          <div class="row" id="finish-row-submit">
-            <input id="finish-name" class="name-input" type="text" placeholder="Name" maxlength="40" />
-            <button id="finish-submit" class="finish-btn" type="button">SUBMIT SCORE</button>
+            <div class="row" id="finish-row-submit">
+              <input id="finish-name" class="name-input" type="text" placeholder="Team name" aria-label="Team name" maxlength="40" />
+              <button id="finish-submit" class="finish-btn" type="button">SUBMIT SCORE</button>
+            </div>
+
+            <div class="row" id="finish-row-vote">
+              <button id="finish-vote-up" class="finish-btn up" type="button">👍 UPVOTE</button>
+              <button id="finish-vote-down" class="finish-btn down" type="button">👎 DOWNVOTE</button>
+            </div>
+
+            <div class="row" id="finish-row-nav">
+              <button id="finish-new-track" class="finish-btn secondary" type="button">NEW ROUTE</button>
+            </div>
+
+            <div id="finish-msg" class="hint" role="status"></div>
           </div>
-
-          <div class="row" id="finish-row-vote">
-            <button id="finish-vote-up" class="finish-btn up" type="button">👍 UPVOTE TRACK</button>
-            <button id="finish-vote-down" class="finish-btn down" type="button">👎 DOWNVOTE TRACK</button>
-          </div>
-
-          <div class="row" id="finish-row-nav">
-            <button id="finish-new-track" class="finish-btn secondary" type="button">NEW TRACK</button>
-          </div>
-
-          <div id="finish-record" class="hint"></div>
-          <div id="finish-msg" class="hint"></div>
           <div id="finish-board" class="board"></div>
         </div>
       </div>
@@ -1179,12 +1286,12 @@
       <!-- Navigator Controls -->
       <div id="navigator-group" class="control-group">
         <div id="aim-zone" class="touch-auto"></div>
-        <div id="ammo-display"></div>
         <div id="weapon-zone" class="touch-auto">
           <div class="mobile-button weapon" data-weapon-index="0">HG</div>
           <div class="mobile-button weapon" data-weapon-index="1">RIF</div>
           <div class="mobile-button weapon" data-weapon-index="2">AK</div>
           <div class="mobile-button weapon" data-weapon-index="3">SHT</div>
+          <div id="ammo-display"></div>
         </div>
       </div>
     </div>

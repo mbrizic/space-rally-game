@@ -48,6 +48,8 @@ This doc covers the technical approach for migrating performance-critical system
 
 Before changing anything, establish performance baselines. Without these, you can't prove improvements.
 
+Status audit (2026-10-12): the runtime already measures render phases (`frame`, `bg`, `world`, `hud`, `overlays`, `rain`) and has replay recording/playback. The finer timings and stress/automation work below remain proposed; numeric estimates are not measured baselines. Track pending work in [TASKS.md](TASKS.md).
+
 ### 0.1 Add Particle-Specific Timing
 
 Add instrumentation to `src/runtime/game.ts`:
@@ -644,7 +646,7 @@ const enemyPositions = new Float64Array(sharedBuffer, 128, 1000); // Next 8KB
 ## Checklist
 
 ### Phase 0 (Baselines)
-- [ ] Add `perfTimings` instrumentation to game loop
+- [ ] Extend existing render timings with particle update/render, physics, track projection and enemy timings/counts
 - [ ] Create particle stress test in perf harness
 - [ ] Add `?perf=particles` stress mode
 - [ ] Record baseline numbers in this doc

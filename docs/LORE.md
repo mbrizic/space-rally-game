@@ -125,7 +125,7 @@ The comedy comes from competence under absurd constraints.
 
 Volatile cargo is the narrative reason you can’t “just stop and fight,” and it’s also a clean gameplay lever.
 
-Baseline (P2 / current game):
+Planned baseline (two-player design, not implemented in the current game):
 - The cargo has a stability meter affected by:
   - impacts
   - prolonged drifting
@@ -158,6 +158,8 @@ Every stage can be framed as a contract with clauses:
 - “Collect salvage”
 
 This supports replayability without over-narrating.
+
+These cargo, contract and progression mechanics are design hooks, not a description of shipped gameplay. Extra-player engineer/passenger concepts are expanded in [co-op notes](COOP_MODE.md#sequel--optional-extra-players).
 
 ## Future expansion ideas (Lore that becomes mechanics)
 

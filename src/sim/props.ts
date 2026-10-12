@@ -567,53 +567,44 @@ export function generateDebris(track: Track, opts?: { seed?: number; themeKind?:
 
   // Place debris clusters with biome tuning.
   // Reduce overall density to make debris feel like events, not constant spam.
-  const minSpacing = themeKind === "rainforest" ? 150 : (themeKind === "arctic" ? 240 : 185);
-  const maxSpacing = themeKind === "rainforest" ? 300 : (themeKind === "arctic" ? 430 : 340);
-  let nextAt = 100 + rand() * 80;
+  const desiredClusterCount = themeKind === "rainforest" ? 3 : themeKind === "temperate" ? 2 : 1;
+  const clusterSpanM = themeKind === "rainforest" ? 60 : 36;
+  const routeStartM = 150;
+  const routeEndM = track.totalLengthM - 180;
+  if (routeEndM - routeStartM < clusterSpanM) return debris;
+  const clusterGapM = 150;
+  const clusterCount = Math.min(desiredClusterCount, Math.floor((routeEndM - routeStartM + clusterGapM) / (clusterSpanM + clusterGapM)));
+  const slotLengthM = (routeEndM - routeStartM - (clusterCount - 1) * clusterGapM) / clusterCount;
   let id = 1;
 
-  for (let s = nextAt; s < track.totalLengthM - 140; s = nextAt) {
-    // Quiet stretches: avoid debris hazards.
-    if (quietZones.length > 0 && isQuietAtTrackDistance(track.totalLengthM, s, quietZones)) {
-      const z = quietZones.find((q) => quietZoneContainsTrackDistance(track.totalLengthM, s, q));
-      if (z) {
-        nextAt = Math.max(s + minSpacing, z.end01 * track.totalLengthM + minSpacing);
-        continue;
-      }
+  for (let clusterIndex = 0; clusterIndex < clusterCount; clusterIndex++) {
+    let clusterStartM: number | null = null;
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const startM = routeStartM + clusterIndex * (slotLengthM + clusterGapM) + rand() * Math.max(0, slotLengthM - clusterSpanM);
+      const endM = startM + clusterSpanM;
+      if (quietZones.some(zone => startM < zone.end01 * track.totalLengthM && endM > zone.start01 * track.totalLengthM)) continue;
+      clusterStartM = startM;
+      break;
     }
-
-    // Skip near start/end.
-    if (s < 120 || s > track.totalLengthM - 180) {
-      nextAt = s + minSpacing;
-      continue;
-    }
-
-    const { p, normal } = pointAndNormalOnTrack(track, s);
-    const tx = -normal.y;
-    const ty = normal.x;
-
-    // Logs per cluster.
-    const count = themeKind === "rainforest"
-      ? (1 + Math.floor(rand() * 3))
-      : (themeKind === "arctic" ? (1 + Math.floor(rand() * 2)) : (1 + Math.floor(rand() * 3)));
-
-    const tangentAngle = Math.atan2(ty, tx);
-
-    // Occasionally place a true "blocker" log roughly across the road, near center.
-    // Keep these rarer so they feel like events, not spam.
+    if (clusterStartM === null) continue;
+    const count = themeKind === "rainforest" ? 8 + Math.floor(rand() * 5)
+      : themeKind === "temperate" ? 3 + Math.floor(rand() * 3) : 2 + Math.floor(rand() * 2);
     const hasBlocker = rand() < 0.10;
 
     for (let i = 0; i < count; i++) {
+      const s = clusterStartM + (i + 0.2 + rand() * 0.6) * clusterSpanM / count;
+      const { p, normal } = pointAndNormalOnTrack(track, s);
+      const tx = -normal.y;
+      const ty = normal.x;
+      const tangentAngle = Math.atan2(ty, tx);
       const isBlocker = hasBlocker && i === 0;
 
       // Keep mostly on-road, but with variation.
       const lateral = isBlocker
         ? (rand() * 2 - 1) * (roadHalfWidthM * 0.10)
         : (rand() * 2 - 1) * (roadHalfWidthM * 0.65);
-      const along = isBlocker ? (rand() - 0.5) * 6 : (rand() - 0.5) * 18;
-
-      const x = p.x + normal.x * lateral + tx * along;
-      const y = p.y + normal.y * lateral + ty * along;
+      const x = p.x + normal.x * lateral;
+      const y = p.y + normal.y * lateral;
 
       // Rotation styles: along-road, diagonal, and (rarer) across-road.
       const styleRoll = rand();
@@ -659,7 +650,6 @@ export function generateDebris(track: Track, opts?: { seed?: number; themeKind?:
       });
     }
 
-    nextAt = s + minSpacing + rand() * (maxSpacing - minSpacing);
   }
 
   return debris;

@@ -11,7 +11,7 @@ Rationale:
 - Pacenotes UI/logic was distracting and not robust.
 
 Code note:
-- `src/sim/pacenotes.ts` is now a stub returning `null`.
+- There is no current `src/sim/pacenotes.ts` module. Navigator weather/zone distances are minimap-only, never floating P2 notifications. NARROW/DEBRIS distance labels are removed; concentrated debris patches use D markers. These are not automated turn pacenotes; the rule applies in solo, host and client roles.
 
 ## Related
 

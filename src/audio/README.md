@@ -124,6 +124,8 @@ This ensures no single channel can dominate while allowing all to be heard simul
 - [ ] 3D positional audio for multiplayer
 - [ ] Reverb/echo for tunnels or canyons
 - [ ] Wind noise based on speed
-- [ ] Co-driver voice callouts
+- [ ] Evaluate opt-in tutorial/accessibility voice callouts; automatic turn pacenotes remain intentionally removed (see [pacenotes](../../docs/PACENOTES.md))
 - [ ] Dynamic music system
 - [ ] Audio visualization for debugging
+
+Pending audio ideas are indexed in [the backlog](../../docs/TASKS.md); generative music is a prerequisite for the deferred [passenger/music role](../../docs/COOP_MODE.md#p4-passenger--music).

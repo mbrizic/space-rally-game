@@ -325,7 +325,7 @@ export class Renderer2D {
     const flashBoost = Math.pow(flash01, 0.7);
     // Flash should briefly feel like "almost normal" visibility.
     const beamLength = (280 + 100 * intensity01 + 340 * flashBoost) * this.dpr;
-    const beamHalfAngle = 0.24 + 0.06 * intensity01 + 0.12 * flashBoost; // much wider on shot
+    const beamHalfAngle = 0.264 + 0.066 * intensity01 + 0.12 * flashBoost; // much wider on shot
     const beamSeparation = 0.12; // Angle between the two beams
 
     // Halo geometry (circle of visibility around the car).
@@ -1508,7 +1508,7 @@ export class Renderer2D {
     ctx.restore();
   }
 
-  drawCenterText(opts: { text: string; subtext?: string }): void {
+  drawCenterText(opts: { text: string; subtext?: string; centerYFraction?: number }): void {
     const ctx = this.ctx;
     ctx.save();
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -1516,7 +1516,7 @@ export class Renderer2D {
     const w = this.viewportWidthCssPx || this.canvas.clientWidth;
     const h = this.viewportHeightCssPx || this.canvas.clientHeight;
     const cx = w / 2;
-    const cy = h / 2;
+    const cy = h * (opts.centerYFraction ?? 0.5);
 
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -1938,10 +1938,12 @@ export class Renderer2D {
     const maxTextWidth = w - padding;
 
     const isCheckpoint = /^Checkpoint\s+\d+\s*\/\s*\d+$/i.test(text);
+    const isBulletTime = /^BULLET TIME$/i.test(text);
     const isCallout = /\b(RAIN|DEBRIS|NARROW|FOG|SANDSTORM|ECLIPSE|ELECTRICAL)\b/i.test(text);
 
     // Checkpoints + co-driver callouts should be readable but not gigantic.
-    let fontSize = isCheckpoint ? 34 : (isCallout ? 32 : 48);
+    let fontSize = isCheckpoint || isBulletTime ? 24 : (isCallout ? 32 : 48);
+    if (isCheckpoint || isBulletTime) alpha *= 0.72;
 
     ctx.font = `bold ${fontSize}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
     let metrics = ctx.measureText(text);
@@ -2072,7 +2074,7 @@ export class Renderer2D {
     carHeading: number;
     waterBodies?: { x: number; y: number; radiusX: number; radiusY: number; rotation: number }[];
     enemies?: { x: number; y: number; type?: string }[];
-    debris?: { x: number; y: number; lengthM: number; rotationRad: number; integrity01?: number }[];
+    debris?: { x: number; y: number; lengthM: number; rotationRad: number; integrity01?: number; sM?: number }[];
     segmentSurfaceNames?: ("tarmac" | "gravel" | "sand" | "ice" | "offtrack")[];
     start?: { x: number; y: number };
     finish?: { x: number; y: number };
@@ -2265,24 +2267,24 @@ export class Renderer2D {
       }
     }
 
-    // Draw debris (logs)
+    // Draw one marker per surviving debris patch.
     if (opts.debris) {
-      ctx.strokeStyle = "rgba(130, 85, 55, 0.85)";
+      const markers: { x: number; y: number; sM?: number }[] = [];
+      ctx.font = `bold ${13 / scale}px monospace`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "rgba(255, 190, 105, 0.98)";
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
       ctx.lineWidth = 2.4 / scale;
       for (const d of opts.debris) {
         const integrity = d.integrity01 === undefined ? 1 : Math.max(0, Math.min(1, d.integrity01));
         if (integrity <= 0.05) continue;
-        const halfL = Math.min(4.5, Math.max(1.0, d.lengthM * (0.35 + 0.65 * integrity))) * 0.5;
-        const cosR = Math.cos(d.rotationRad);
-        const sinR = Math.sin(d.rotationRad);
-        const ax = d.x - cosR * halfL;
-        const ay = d.y - sinR * halfL;
-        const bx = d.x + cosR * halfL;
-        const by = d.y + sinR * halfL;
-        ctx.beginPath();
-        ctx.moveTo(ax, ay);
-        ctx.lineTo(bx, by);
-        ctx.stroke();
+        if (markers.some(marker => d.sM !== undefined && marker.sM !== undefined
+          ? Math.abs(d.sM - marker.sM) <= 80
+          : Math.hypot(d.x - marker.x, d.y - marker.y) * scale < 14)) continue;
+        markers.push(d);
+        ctx.strokeText("D", d.x, d.y);
+        ctx.fillText("D", d.x, d.y);
       }
     }
 
@@ -2461,21 +2463,23 @@ export class Renderer2D {
       ctx.restore();
     }
 
-    // Warnings (e.g. incoming rain / narrow road). Rendered above the minimap.
+    // Warnings (e.g. incoming rain / narrow road) stay inside the minimap.
     if (opts.warningTextLines && opts.warningTextLines.length > 0) {
       ctx.save();
 
       const lines: string[] = [];
       for (let i = 0; i < Math.min(4, opts.warningTextLines.length); i++) {
         const raw = opts.warningTextLines[i] ?? "";
+        if (/^(NARROW|DEBRIS)\s+IN\b/i.test(raw)) continue;
         if (raw) lines.push(raw);
       }
 
       const boxH = 18;
       const gapY = 6;
-      const totalH = lines.length > 0 ? (lines.length * boxH + (lines.length - 1) * gapY) : 0;
-      const padAbove = 10;
-      const startY = Math.max(10, minimapY - padAbove - totalH);
+      const startY = minimapY + 10;
+      ctx.beginPath();
+      ctx.rect(minimapX, minimapY, minimapSize, minimapSize);
+      ctx.clip();
 
       ctx.translate(minimapX + 10, startY);
       ctx.textAlign = "left";

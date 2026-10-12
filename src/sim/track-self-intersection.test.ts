@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createPointToPointTrackDefinition, createTrackFromDefinition } from "./track";
+import { pointToSegmentDistance } from "./props";
 
 /**
  * Check if two line segments intersect
@@ -82,6 +83,28 @@ function findTrackNearOverlaps(track: ReturnType<typeof createTrackFromDefinitio
 }
 
 describe("Track Self-Intersection Prevention", () => {
+  it("keeps crossings and overlapping road lanes out of all 1000 selectable levels", () => {
+    let minimumClearanceM = Infinity;
+    for (let seed = 1; seed <= 1000; seed++) {
+      const track = createTrackFromDefinition(createPointToPointTrackDefinition(seed));
+      expect(findTrackSelfIntersections(track), `Level ${seed} crossings`).toHaveLength(0);
+      let clearanceM = Infinity;
+      for (let pointIndex = 0; pointIndex < track.points.length; pointIndex++) {
+        const point = track.points[pointIndex];
+        for (let segmentIndex = pointIndex + 1; segmentIndex < track.points.length - 1; segmentIndex++) {
+          if (track.cumulativeLengthsM[segmentIndex] - track.cumulativeLengthsM[pointIndex] < 75) continue;
+          const start = track.points[segmentIndex];
+          const end = track.points[segmentIndex + 1];
+          const distanceM = pointToSegmentDistance(point.x, point.y, start.x, start.y, end.x, end.y);
+          clearanceM = Math.min(clearanceM, distanceM);
+        }
+      }
+      expect(clearanceM, `Level ${seed} road-lane clearance`).toBeGreaterThanOrEqual(15);
+      minimumClearanceM = Math.min(minimumClearanceM, clearanceM);
+    }
+    console.log(`Selectable levels: 0/1000 crossings; minimum road-lane clearance ${minimumClearanceM.toFixed(1)}m`);
+  });
+
   it("tracks should have ZERO crossing segments (100 random tracks) - STRICT", () => {
     let tracksWithIntersections = 0;
     let worstSeed = -1;

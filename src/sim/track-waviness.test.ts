@@ -81,6 +81,48 @@ function countSignificantCorners(track: ReturnType<typeof createTrackFromDefinit
 }
 
 describe("Track Waviness (Rally Requirements)", () => {
+  it("preserves compact hairpins and sustained sweeping bends across stage seeds", () => {
+    let hairpinStages = 0;
+    let sweepingStages = 0;
+
+    for (let seed = 1; seed <= 100; seed++) {
+      const track = createTrackFromDefinition(createPointToPointTrackDefinition(seed));
+      const turns: { angle: number; lengthM: number }[] = [];
+      let angle = 0;
+      let lengthM = 0;
+      let direction = 0;
+
+      for (let index = 1; index < track.points.length - 1; index++) {
+        const before = track.points[index - 1];
+        const point = track.points[index];
+        const after = track.points[index + 1];
+        const incoming = { x: point.x - before.x, y: point.y - before.y };
+        const outgoing = { x: after.x - point.x, y: after.y - point.y };
+        const change = Math.atan2(
+          incoming.x * outgoing.y - incoming.y * outgoing.x,
+          incoming.x * outgoing.x + incoming.y * outgoing.y
+        );
+        const nextDirection = Math.abs(change) < 0.002 ? 0 : Math.sign(change);
+        if (nextDirection !== direction) {
+          if (direction !== 0) turns.push({ angle: Math.abs(angle), lengthM });
+          angle = 0;
+          lengthM = 0;
+          direction = nextDirection;
+        }
+        angle += change;
+        lengthM += Math.hypot(outgoing.x, outgoing.y);
+      }
+      if (direction !== 0) turns.push({ angle: Math.abs(angle), lengthM });
+
+      if (turns.some(turn => turn.angle >= Math.PI * 5 / 6 && turn.lengthM <= 200)) hairpinStages++;
+      if (turns.some(turn => turn.angle >= Math.PI / 2 && turn.lengthM >= 180)) sweepingStages++;
+    }
+
+    console.log(`Stage variety: ${hairpinStages}/100 compact hairpins; ${sweepingStages}/100 long bends`);
+    expect(hairpinStages).toBeGreaterThanOrEqual(35);
+    expect(sweepingStages).toBeGreaterThanOrEqual(30);
+  });
+
   it("tracks have sufficient curvature for rally gameplay", () => {
     const testSeeds = [100, 200, 300, 400, 500];
     const curvatures: number[] = [];
